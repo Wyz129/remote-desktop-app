@@ -1,0 +1,9 @@
+*.bak
+**/*.bak
+.test-data/**
+.vscode-test/**
+test/**
+scripts/**
+artifacts/**
+node_modules/**
+HANDOFF.md
