@@ -1,15 +1,17 @@
 # Remote Desktop
 
-在 VS Code 中使用 Remote-SSH 桌面和多个虚拟资源管理器窗口。项目位于 `C:\0_myfiles\new_projects\remote-desktop-demo`。
+在 VS Code 中使用 Remote-SSH 桌面和多个虚拟资源管理器窗口。项目位于 `C:\0_myfiles\new_projects\remote-desktop`。
 
 开发接手请先阅读 [项目交接文档](HANDOFF.md)，其中包含架构、消息协议、环境、测试边界、已知问题和回退方法。
 
 ## 安装与打开
 
 1. 在 VS Code 中连接 Remote-SSH。
-2. 将 `artifacts/remote-desktop-demo-0.0.5.vsix` 安装到 SSH 服务器端，检查扩展页显示版本 0.0.5。
+2. 将 `artifacts/remote-desktop-0.0.6.vsix` 安装到 SSH 服务器端，检查扩展页显示版本 0.0.6。
 3. 执行 `Developer: Reload Window`。
-4. 执行 `Remote Desktop: Open Demo`。
+4. 执行 `Remote Desktop: Open`。
+
+旧版扩展 ID 为 `local-demo.remote-desktop-demo`，新版为 `local-demo.remote-desktop`，安装新包前请在 SSH 端禁用或卸载旧版，避免两者同时注册命令。现有 `remoteDesktopDemo.*` 设置和服务器桌面配置继续兼容；`remoteDesktop.openDemo` 保留为隐藏命令别名。扩展 ID 改变后，旧 Webview 的窗口会话不迁移。
 
 本地开发可运行 `.\scripts\start-demo.ps1` 或在项目中按 F5。未连接远程时使用内置 Demo，远程连接中使用服务器真实文件。
 
@@ -23,6 +25,8 @@
 {
   "version": 1,
   "viewMode": "icons",
+  "wallpaper": "teal",
+  "showHiddenFiles": true,
   "positions": {},
   "pinnedApps": [{ "id": "pinned-vim", "label": "Vim", "program": "vim" }],
   "shortcuts": [
@@ -71,7 +75,9 @@
 
 底栏显示最近一次操作的 Linux 等效命令和结果。复制编号以后端实际生成的目标名称为准，路径以 shell 单引号转义。文件操作仍通过 VS Code API 执行，底栏文本不会作为 shell 命令再次执行；配置、固定应用等没有直接 Linux 命令的操作显示说明。
 
-桌面右键“切换全屏视图”调用 VS Code 禅模式，隐藏周围工作台。默认会进入系统全屏；是否全屏遵循 VS Code 的 `zenMode.fullScreen` 设置。再次选择该菜单或使用 VS Code 的退出禅模式操作即可恢复。
+顶栏右侧仅保留全屏和设置两个图标，栏高保持 32px；右键菜单不再包含全屏。全屏图标切换 VS Code 禅模式，并把当前工作区 `zenMode.centerLayout` 设为 `false`，使桌面铺满可用编辑区。没有打开工作区时使用用户级设置。系统全屏遵循 `zenMode.fullScreen`（默认 true）；再次点击图标或按两次 Esc 退出。桌面、最大化窗口和终端随容器尺寸变化自动适配。
+
+设置图标在桌面内打开设置窗口，可选择资源管理器详情/图标视图、青绿/暮紫/石墨背景，以及是否显示以点开头的隐藏文件。点击“应用”后保存到服务器桌面配置；成功后更新桌面和已打开的资源管理器。取消不更改，失败时保留原视图并提示重试。本地 Demo 设置保存在该 Webview 状态中。
 
 ## 测试与打包
 
@@ -85,14 +91,12 @@ npm.cmd run package
 - `test:terminal`：使用替身 PTY 验证模块定位、会话接口、输入与尺寸变化、关闭清理及错误路径。
 - `test:ui`：Playwright 验证 Webview 的多窗口、输入、拖动、菜单与消息交互，并生成截图。
 - `test:vscode`：启动本机隔离 Extension Host，验证激活、消息握手、文件打开与真正的 PTY 输入、输出和尺寸调整。
-- `package`：生成 0.0.5 VSIX，不发布到扩展市场。
+- `package`：生成 0.0.6 VSIX，不发布到扩展市场。
 
 工具栏使用随安装包附带的 Lucide 图标；终端的 xterm.js 与 FitAddon 也随包提供，不访问外部 CDN。许可证见 `media/*-LICENSE`；`vscode:prepublish` 从开发依赖复制静态资源。
 
-0.0.5 的后端 28 项、PTY 单测 10 项、UI 29 项和本机独立 VS Code Extension Host 31 项断言通过。新增简约界面、可编辑地址、窗口缩放、任务栏右键固定、文件名展开和全屏等验证，详见 [TESTING.md](TESTING.md) 与 [0.0.5 测试报告](artifacts/regression-005-20260917.md)。
+0.0.6 自动化结果与手测清单见 [TESTING.md](TESTING.md) 和 [0.0.6 测试报告](artifacts/regression-006-20260918.md)。本轮不使用电脑操作技能，未将新版安装到用户 SSH 窗口；自动化结果不等同于真实 SSH UI 验收。
 
-0.0.4 的历史真实 SSH 结果见 [0.0.4 测试报告](artifacts/regression-004-20260917.md)，包括永久删除确认/取消、同名复制编号、桌面内 Shell、Vim 单按键交互、htop、固定 Vim 的持久化和两处右键刷新。终端整段粘贴尝试未通过，中文输入与保存文件尚未覆盖。
-
-0.0.3 的历史观察保留在 [历史真实 UI 报告](artifacts/live-ui-test-20260916.md)。0.0.4 已修正隐藏 Webview 时零尺寸覆盖窗口位置的问题并通过相应自动化；历史通知可见性和跨窗口拖放问题未在本轮完成复测。
+0.0.5 后续 SSH 抽测已观察到跨窗口移动和 Vim 的 Ctrl+Shift+V 中文多行粘贴、保存成功，同时发现 F5 会触发 VS Code 调试选择器，详见 [历史抽测报告](docs/mcp-live-ui-review-20260917-b73f.md)。历史报告引用的截图及 VSIX 仅留在本机 `artifacts/`，Git 仓库保留文本报告。
 
 本插件不映射系统盘符，不解析 ODB，不自动运行作业。文件内容由 VS Code 按需打开。

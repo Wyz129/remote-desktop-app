@@ -118,6 +118,154 @@ async function openDesktopFolder(page, name) {
   const id = await win.getAttribute('data-window-id');
   return page.locator(`.window[data-window-id="${id}"]`);
 }
+
+test('Desktop settings wait for save acknowledgement, then apply views, wallpaper and hidden entries', () => scenario('settings-save-006', async page => {
+  const win = await openDesktopFolder(page, 'projects');
+  await page.evaluate(() => {
+    const root = window.mockRemote.rootPath;
+    window.mockRemote.directories[root].push({ name: '.hidden', type: 'file', path: `${root}/.hidden` });
+    window.mockRemote.directories[`${root}/projects`].push({ name: '.secret', type: 'file', path: `${root}/projects/.secret` });
+    window.sendRemoteState(true);
+  });
+  await receive(page, { type: 'remoteDirectory', path: `${remoteRoot}/projects`, entries: [entry(`${remoteRoot}/projects`, 'source.txt'), entry(`${remoteRoot}/projects`, '.secret')] });
+  await desktopIcon(page, '.hidden').waitFor();
+  await page.locator('#desktopSettings').click();
+  await page.locator('#settingsViewMode').selectOption('icons');
+  await page.locator('#settingsWallpaper').selectOption('purple');
+  await page.locator('#settingsHidden').uncheck();
+  await page.locator('#applySettings').click();
+  const request = await waitForMessage(page, 'saveDesktopConfig');
+  assert.ok(request.requestId.startsWith('settings-'));
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'teal');
+  assert.equal(await page.locator('#applySettings').isDisabled(), true);
+  await receive(page, { type: 'configSaved', requestId: 'unrelated', ok: true });
+  assert.ok(await page.locator('#settingsDialog').isVisible());
+  await receive(page, { type: 'configSaved', requestId: request.requestId, ok: true, config: request.config });
+  assert.equal(await page.locator('#settingsDialog').isVisible(), false);
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'purple');
+  assert.equal(await desktopIcon(page, '.hidden').count(), 0);
+  assert.equal(await windowEntry(win, `${remoteRoot}/projects`, '.secret').count(), 0);
+  assert.equal(await win.locator('.listing.icon-view').count(), 1);
+  await page.locator('#desktopSettings').click();
+  assert.equal(await page.locator('#settingsWallpaper').inputValue(), 'purple');
+  assert.equal(await page.locator('#settingsHidden').isChecked(), false);
+  await page.screenshot({ path: path.join(artifacts, 'settings-006.png'), fullPage: true });
+}));
+
+test('Settings cancel and failed save leave the desktop unchanged and permit retry', () => scenario('settings-failure-006', async page => {
+  await page.locator('#desktopSettings').click();
+  await page.locator('#settingsWallpaper').selectOption('slate');
+  await page.locator('#cancelSettings').click();
+  assert.equal((await messages(page, 'saveDesktopConfig')).length, 0);
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'teal');
+  await page.locator('#desktopSettings').click();
+  assert.equal(await page.locator('#settingsWallpaper').inputValue(), 'teal');
+  await page.locator('#settingsWallpaper').selectOption('slate');
+  await page.locator('#applySettings').click();
+  const failed = await waitForMessage(page, 'saveDesktopConfig');
+  await receive(page, { type: 'configSaved', requestId: failed.requestId, ok: false, error: 'Permission denied' });
+  assert.equal(await page.locator('#settingsError').textContent(), 'Permission denied');
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'teal');
+  assert.equal(await page.locator('#applySettings').isDisabled(), false);
+  await clearMessages(page); await page.locator('#applySettings').click();
+  const retry = await waitForMessage(page, 'saveDesktopConfig');
+  assert.notEqual(retry.requestId, failed.requestId);
+  await receive(page, { type: 'configSaved', requestId: failed.requestId, ok: true });
+  assert.ok(await page.locator('#settingsDialog').isVisible());
+  await receive(page, { type: 'configSaved', requestId: retry.requestId, ok: true });
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'slate');
+}));
+
+test('Refreshed hidden-file preferences clear invisible selections and removed fields restore defaults', () => scenario('settings-hidden-selection-006', async page => {
+  await page.evaluate(() => {
+    const root = window.mockRemote.rootPath;
+    window.mockRemote.directories[root].push({ name: '.hidden', type: 'file', path: `${root}/.hidden` });
+    window.sendRemoteState(true);
+  });
+  await desktopIcon(page, '.hidden').click();
+  await page.evaluate(() => {
+    window.mockRemote.config.showHiddenFiles = false;
+    window.mockRemote.config.wallpaper = 'purple';
+    window.sendRemoteState(true);
+  });
+  assert.equal(await desktopIcon(page, '.hidden').count(), 0);
+  await clearMessages(page); await page.keyboard.press('Delete');
+  await desktopMenu(page);
+  assert.equal(await page.locator('#context [data-action="delete"]').isDisabled(), true);
+  assert.equal((await messages(page, 'fileOperation')).length, 0);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { delete window.mockRemote.config.wallpaper; delete window.mockRemote.config.showHiddenFiles; window.sendRemoteState(true); });
+  await desktopIcon(page, '.hidden').waitFor();
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'teal');
+}));
+
+test('Settings retry retains pending icon positions without applying failed preferences on cancel', () => scenario('settings-retry-layout-006', async page => {
+  // Freeze the 220ms layout debounce so a real drag and settings submit share
+  // one request, matching a user opening settings immediately after a drag.
+  await page.clock.pauseAt(new Date());
+  const icon = desktopIcon(page, 'notes.txt'); const box = await icon.boundingBox();
+  await page.mouse.move(box.x + 40, box.y + 30); await page.mouse.down();
+  await page.mouse.move(box.x + 152, box.y + 142, { steps: 6 }); await page.mouse.up();
+  await page.locator('#desktopSettings').click(); await page.locator('#settingsWallpaper').selectOption('purple');
+  await page.locator('#applySettings').click();
+  const failed = await waitForMessage(page, 'saveDesktopConfig');
+  assert.ok(failed.config.positions?.[`${remoteRoot}/notes.txt`]);
+  await receive(page, { type: 'configSaved', requestId: failed.requestId, ok: false, error: 'Permission denied' });
+  await page.locator('#cancelSettings').click();
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'), 'teal');
+  await page.locator('#desktopSettings').click();
+  assert.equal(await page.locator('#settingsWallpaper').inputValue(), 'teal');
+  await clearMessages(page); await page.locator('#applySettings').click();
+  const retry = await waitForMessage(page, 'saveDesktopConfig');
+  assert.deepEqual(retry.config.positions, failed.config.positions);
+  assert.equal(retry.config.wallpaper, 'teal');
+  await receive(page, { type: 'configSaved', requestId: retry.requestId, ok: true });
+}, { clock: true }));
+
+test('Remote preferences override cached local values on reopening and local demo preferences survive reload', async () => {
+  await scenario('settings-remote-reload-006', async page => {
+    await page.evaluate(() => localStorage.setItem('demo-state', JSON.stringify({ wallpaper: 'slate', showHiddenFiles: true, viewMode: 'details' })));
+    await page.reload(); await desktopIcon(page, 'projects').waitFor();
+    await page.locator('#desktopSettings').click();
+    assert.equal(await page.locator('#settingsWallpaper').inputValue(), 'purple');
+    assert.equal(await page.locator('#settingsHidden').isChecked(), false);
+    assert.equal(await page.locator('#settingsViewMode').inputValue(), 'icons');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#settingsDialog').isVisible(), false);
+  }, { config: { wallpaper: 'purple', showHiddenFiles: false, viewMode: 'icons' } });
+  await scenario('settings-local-reload-006', async page => {
+    await receive(page, { type: 'remoteState', status: 'local' });
+    await page.locator('#desktopSettings').click();
+    await page.locator('#settingsWallpaper').selectOption('slate');
+    await page.locator('#settingsHidden').uncheck(); await page.locator('#applySettings').click();
+    assert.equal((await messages(page, 'saveDesktopConfig')).length, 0);
+    await page.reload(); await receive(page, { type: 'remoteState', status: 'local' });
+    await page.locator('#desktopSettings').click();
+    assert.equal(await page.locator('#settingsWallpaper').inputValue(), 'slate');
+    assert.equal(await page.locator('#settingsHidden').isChecked(), false);
+  }, { remote: false });
+});
+
+test('Fullscreen errors reenable the icon and container changes relayout maximized windows', () => scenario('fullscreen-fit-006', async page => {
+  const win = await openDesktopFolder(page, 'projects');
+  await windowAction(win, 'maximize').click();
+  await page.locator('#fullscreen').click(); await waitForMessage(page, 'toggleFullscreen');
+  await receive(page, { type: 'fullscreenResult', ok: false, message: 'Command failed' });
+  assert.equal(await page.locator('#fullscreen').isDisabled(), false);
+  assert.equal(await page.locator('#notice').textContent(), 'Command failed');
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 700, height: 500 }]) {
+    await page.setViewportSize(viewport);
+    await page.waitForFunction(() => Math.abs(document.querySelector('.window.maximized').clientWidth + 10 - document.querySelector('#windows').clientWidth) < 2);
+    const desktop = await page.locator('#desktop').boundingBox();
+    const box = await win.boundingBox();
+    assert.ok(Math.abs(desktop.x + desktop.width - viewport.width) <= 1);
+    assert.ok(Math.abs(desktop.height + 32 - viewport.height) <= 1);
+    assert.ok(box.x >= desktop.x && box.x + box.width <= viewport.width);
+  }
+  // A VS Code dock/side panel can change the container without window.resize.
+  await page.locator('#dock').evaluate(element => { element.style.width = '120px'; });
+  await page.waitForFunction(() => Math.abs(document.querySelector('.window.maximized').offsetWidth + 8 - document.querySelector('#windows').clientWidth) < 2);
+}));
 async function desktopMenu(page) {
   const box = await page.locator('#desktop').boundingBox();
   await page.locator('#desktop').click({ button: 'right', position: { x: box.width - 16, y: box.height - 64 } });
@@ -604,15 +752,20 @@ test('Compact desktop bar keeps identity and centered time while desktop actions
   assert.ok(bar.height <= 36, 'The top bar should leave the desktop more vertical room');
   assert.ok(account.x < 100);
   assert.ok(Math.abs(time.x + time.width / 2 - 720) < 2, 'Server time stays centered independently of account name width');
-  assert.equal(await page.locator('.toolbar button').count(), 0);
+  assert.equal(await page.locator('.toolbar button').count(), 2);
+  assert.equal(await page.locator('#fullscreen svg').count(), 1);
+  assert.equal(await page.locator('#fullscreen').textContent(), '');
   await desktopMenu(page);
-  for (const action of ['arrange', 'refresh', 'terminal', 'fullscreen']) assert.ok(await page.locator(`#context [data-action="${action}"]`).isVisible());
+  for (const action of ['arrange', 'refresh', 'terminal']) assert.ok(await page.locator(`#context [data-action="${action}"]`).isVisible());
+  assert.equal(await page.locator('#context [data-action="fullscreen"]').count(), 0);
   await page.locator('#context [data-action="arrange"]').click();
   await waitForMessage(page, 'saveDesktopConfig');
-  await desktopAction(page, 'fullscreen');
+  await page.locator('#fullscreen').click();
   await waitForMessage(page, 'toggleFullscreen');
   assert.equal((await messages(page, 'executeCommand')).length, 0);
-  await page.screenshot({ path: path.join(artifacts, 'desktop-005.png'), fullPage: true });
+  await receive(page, { type: 'fullscreenResult', ok: true, message: '全屏就绪' });
+  assert.equal(await page.locator('#fullscreen').isDisabled(), false);
+  await page.screenshot({ path: path.join(artifacts, 'desktop-006.png'), fullPage: true });
   const win = await openDesktopFolder(page, 'projects');
   assert.equal(await win.locator('.explorer-commandbar').count(), 0);
   await listingMenu(win);

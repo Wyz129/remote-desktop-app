@@ -4,8 +4,8 @@ const path = require('path');
 const projectRoot = path.resolve(__dirname, '..');
 const reportPath = path.join(projectRoot, 'artifacts', 'vscode-smoke.json');
 const testDataRoot = path.join(projectRoot, '.test-data');
-const executablePath = process.env.VSCODE_EXECUTABLE_PATH
-  || 'C:\\Users\\KunYu\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe';
+// Leave undefined to let @vscode/test-electron obtain its official runtime.
+const executablePath = process.env.VSCODE_EXECUTABLE_PATH || undefined;
 
 function writeFailureReport(error) {
   let existing = {};
@@ -48,8 +48,11 @@ async function main() {
   );
   const userDataDir = path.join(runDirectory, 'user-data');
   const extensionsDir = path.join(runDirectory, 'extensions');
+  const workspaceDir = path.join(runDirectory, 'workspace');
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(extensionsDir, { recursive: true });
+  fs.mkdirSync(path.join(workspaceDir, 'media'), { recursive: true });
+  fs.copyFileSync(path.join(projectRoot, 'README.md'), path.join(workspaceDir, 'README.md'));
   writeInitialReport();
 
   // Codex/Node hosts may export this flag; Code.exe must run as Electron.
@@ -61,7 +64,7 @@ async function main() {
       extensionDevelopmentPath: projectRoot,
       extensionTestsPath: path.join(projectRoot, 'test', 'vscode'),
       launchArgs: [
-        projectRoot,
+        workspaceDir,
         '--disable-extensions',
         '--skip-welcome',
         '--skip-release-notes',

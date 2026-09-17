@@ -1,5 +1,6 @@
-param([string]$CodePath = 'C:\Users\KunYu\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd')
+param([string]$CodePath = '')
 $ErrorActionPreference = 'Stop'
+if (-not $CodePath) { $CodePath = (Get-Command code.cmd -ErrorAction Stop).Source }
 $projectPath = Split-Path -Parent $PSScriptRoot
 $profilePath = Join-Path $projectPath '.test-data\demo-profile'
 $extensionsPath = Join-Path $projectPath '.test-data\demo-extensions'
@@ -19,4 +20,4 @@ if (-not (Test-Path -LiteralPath $settingsPath)) {
 }
 & $CodePath --new-window --user-data-dir $profilePath --extensions-dir $extensionsPath --extensionDevelopmentPath $projectPath --skip-welcome --skip-release-notes $projectPath
 if ($LASTEXITCODE -ne 0) { throw "VS Code exited with code $LASTEXITCODE" }
-Write-Output 'Demo development window launched. Command: Remote Desktop: Open Demo'
+Write-Output 'Demo development window launched. Command: Remote Desktop: Open'

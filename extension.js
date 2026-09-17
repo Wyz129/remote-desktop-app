@@ -38,7 +38,7 @@ function formatSize(bytes) {
 }
 
 function activate(context) {
-  const output = vscode.window.createOutputChannel('Remote Desktop Demo');
+  const output = vscode.window.createOutputChannel('Remote Desktop');
   let panel;
   let ready = false;
   let readyCount = 0;
@@ -50,6 +50,7 @@ function activate(context) {
   let configUri;
   let configError;
   let configQueue = Promise.resolve();
+  let fullscreenQueue = Promise.resolve();
   let initialization;
   let terminalManager;
   const pendingTerminalCommands = new WeakMap();
@@ -239,6 +240,8 @@ function activate(context) {
   function validateConfig(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('桌面配置必须是 JSON 对象。');
     if (value.viewMode !== undefined && !['icons', 'details'].includes(value.viewMode)) throw new Error('配置 viewMode 只能为 icons 或 details。');
+    if (value.wallpaper !== undefined && !['teal', 'purple', 'slate'].includes(value.wallpaper)) throw new Error('配置 wallpaper 只能为 teal、purple 或 slate。');
+    if (value.showHiddenFiles !== undefined && typeof value.showHiddenFiles !== 'boolean') throw new Error('配置 showHiddenFiles 必须是布尔值。');
     if (value.positions !== undefined && (!value.positions || typeof value.positions !== 'object' || Array.isArray(value.positions))) throw new Error('配置 positions 必须是对象。');
     if (value.shortcuts !== undefined && !Array.isArray(value.shortcuts)) throw new Error('配置 shortcuts 必须是数组。');
     if (value.pinnedApps !== undefined) {
@@ -293,8 +296,14 @@ function activate(context) {
     return desktopConfig;
   }
 
+  function queueConfigOperation(operation) {
+    const work = configQueue.then(operation);
+    configQueue = work.catch(() => {});
+    return work;
+  }
+
   function queueConfigWrite(mutator) {
-    const work = configQueue.then(async () => {
+    return queueConfigOperation(async () => {
       if (!remoteDesktopRoot || !configUri) throw new Error('远程桌面尚未就绪，无法保存配置。');
       let current;
       try { current = await readConfigFile(configUri); }
@@ -320,8 +329,6 @@ function activate(context) {
       configError = undefined;
       return next;
     });
-    configQueue = work.catch(() => {});
-    return work;
   }
 
   async function inspectRemoteDesktop() {
@@ -360,17 +367,20 @@ function activate(context) {
   }
 
   async function refreshRemote(message = {}, targetPanel = panel) {
-    await configQueue;
     if (initialization) await initialization;
     let refreshError;
     try {
-      if (!remoteDesktopRoot) remoteState = await inspectRemoteDesktop();
-      else {
-        const entries = await readRemoteDirectory(remoteDesktopRoot);
-        if (message.reloadConfig !== false) await loadDesktopConfig();
-        remoteState = { ...remoteState, status: 'ready', homePath: remoteHomeRoot.path, folder: remoteDesktopRoot.path, rootPath: remoteDesktopRoot.path, entries, config: desktopConfig, configError, message: undefined };
-      }
-      await send(targetPanel, { type: 'remoteState', ...remoteState, refresh: true });
+      // Reserve the queue for reading and publishing the snapshot too. Merely
+      // waiting for existing writes lets a later write overtake a slow read.
+      await queueConfigOperation(async () => {
+        if (!remoteDesktopRoot) remoteState = await inspectRemoteDesktop();
+        else {
+          const entries = await readRemoteDirectory(remoteDesktopRoot);
+          if (message.reloadConfig !== false) await loadDesktopConfig();
+          remoteState = { ...remoteState, status: 'ready', homePath: remoteHomeRoot.path, folder: remoteDesktopRoot.path, rootPath: remoteDesktopRoot.path, entries, config: desktopConfig, configError, message: undefined };
+        }
+        await send(targetPanel, { type: 'remoteState', ...remoteState, refresh: true });
+      });
     } catch (error) {
       refreshError = errorText(error);
       await send(targetPanel, { type: 'remoteState', status: 'error', refresh: true, message: `刷新远程桌面失败：${errorText(error)}` });
@@ -616,6 +626,8 @@ function activate(context) {
           const next = { ...current };
           if (patch.positions !== undefined) next.positions = patch.positions;
           if (patch.viewMode !== undefined) next.viewMode = patch.viewMode;
+          if (patch.wallpaper !== undefined) next.wallpaper = patch.wallpaper;
+          if (patch.showHiddenFiles !== undefined) next.showHiddenFiles = patch.showHiddenFiles;
           return next;
         });
         await send(targetPanel, { type: 'configSaved', ok: true, requestId: message.requestId, config });
@@ -642,8 +654,10 @@ function activate(context) {
         await send(targetPanel, { type: 'configUpdated', config });
         await sendOperationCommand(targetPanel, displayComment('取消任务栏固定'));
       } else if (message.type === 'toggleFullscreen') {
-        await vscode.commands.executeCommand('workbench.action.toggleZenMode');
-        const detail = '已请求 VS Code 切换禅模式；可再次选择“切换全屏视图”，或按两次 Escape 退出禅模式。';
+        const request = fullscreenQueue.catch(() => {}).then(toggleFullscreen);
+        fullscreenQueue = request;
+        await request;
+        const detail = '已切换全屏视图，禅模式使用不居中布局；再次点击全屏图标或按两次 Escape 退出。系统全屏遵循 zenMode.fullScreen 设置。';
         await send(targetPanel, { type: 'fullscreenResult', ok: true, message: detail });
         await sendOperationCommand(targetPanel, displayComment('VS Code：切换禅模式 / 全屏视图'), 'success', detail);
       } else if (message.type === 'showInfo' && typeof message.text === 'string') {
@@ -677,12 +691,37 @@ function activate(context) {
     }
   }
 
+  async function toggleFullscreen() {
+    const config = vscode.workspace.getConfiguration('zenMode');
+    const centered = config.get('centerLayout', true);
+    const target = vscode.workspace.workspaceFolders?.length
+      ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+    const inspected = config.inspect('centerLayout');
+    const original = target === vscode.ConfigurationTarget.Workspace ? inspected?.workspaceValue : inspected?.globalValue;
+    let changed = false;
+    try {
+      // A true -> false configuration event after toggling also clears a
+      // manually centered editor on entry. Keep false for future Zen sessions,
+      // as chosen by the user. Only toggle Zen once: exit + enter races the
+      // asynchronous native fullscreen transition.
+      if (!centered) { await config.update('centerLayout', true, target); changed = true; }
+      await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+      await config.update('centerLayout', false, target);
+    } catch (error) {
+      if (changed) {
+        try { await config.update('centerLayout', original, target); }
+        catch (restoreError) { output.appendLine(`Could not restore zenMode.centerLayout: ${errorText(restoreError)}`); }
+      }
+      throw error;
+    }
+  }
+
   function closeDemo() { panel?.dispose(); }
 
   function openDemo() {
     if (panel) { panel.reveal(vscode.ViewColumn.One); return; }
     const mediaRoot = vscode.Uri.joinPath(context.extensionUri, 'media');
-    panel = vscode.window.createWebviewPanel('remoteDesktop', 'Remote Desktop Demo', vscode.ViewColumn.One, {
+    panel = vscode.window.createWebviewPanel('remoteDesktop', 'Remote Desktop', vscode.ViewColumn.One, {
       enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [mediaRoot]
     });
     const currentPanel = panel;
@@ -709,7 +748,7 @@ function activate(context) {
     } catch (error) { closeDemo(); output.appendLine(errorText(error)); throw error; }
   }
 
-  context.subscriptions.push(output, vscode.commands.registerCommand('remoteDesktop.openDemo', openDemo), { dispose: () => { closeDemo(); terminalManager?.dispose(); } });
+  context.subscriptions.push(output, vscode.commands.registerCommand('remoteDesktop.open', openDemo), vscode.commands.registerCommand('remoteDesktop.openDemo', openDemo), { dispose: () => { closeDemo(); terminalManager?.dispose(); } });
   if (vscode.workspace.getConfiguration('remoteDesktopDemo').get('openOnStartup', false)) openDemo();
   return {
     getDiagnostics: () => ({ openPanels: panel ? 1 : 0, ready, readyCount, openRequests: [...openRequests], remoteState: { ...remoteState }, nativeRemoteHost: nativeRemoteHost(), configPath: configUri?.path, configError }),

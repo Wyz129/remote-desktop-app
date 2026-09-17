@@ -36,6 +36,7 @@ function fixture(options = {}) {
   const infoChoices = [];
   const deleteChoices = [];
   let failRead;
+  let delayedRead;
   const key = uri => typeof uri === 'string' ? uri : uri.path;
   const notFound = value => Object.assign(new Error(`Missing: ${key(value)}`), { code: 'FileNotFound' });
   function directory(value) { nodes.set(value, { type: 2 }); }
@@ -57,7 +58,15 @@ function fixture(options = {}) {
       get(uri);
       return [...nodes].filter(([value]) => path.posix.dirname(value) === key(uri)).map(([value, item]) => [path.posix.basename(value), item.type]);
     },
-    async readFile(uri) { calls.push(['readFile', key(uri)]); return get(uri).bytes; },
+    async readFile(uri) {
+      calls.push(['readFile', key(uri)]);
+      const bytes = get(uri).bytes;
+      if (delayedRead) {
+        const delay = delayedRead; delayedRead = undefined;
+        delay.started(); await delay.gate;
+      }
+      return bytes;
+    },
     async writeFile(uri, bytes) { calls.push(['writeFile', key(uri)]); file(key(uri), bytes); },
     async createDirectory(uri) { calls.push(['mkdir', key(uri)]); directory(key(uri)); },
     async copy(source, destination, config) {
@@ -114,11 +123,16 @@ function fixture(options = {}) {
     Uri: TestUri,
     FileSystemError: { FileNotFound: notFound, FileExists: () => new Error('File exists') },
     ViewColumn: { One: 1 },
+    ConfigurationTarget: { Global: 1, Workspace: 2 },
     workspace: {
       isTrusted: true,
       workspaceFolders: options.noFolders ? [] : [{ uri: TestUri.parse(`${options.native || options.local ? 'file://' : 'vscode-remote://ssh-remote+test'}${home}${options.local ? '' : '/project'}`) }],
       fs: provider,
-      getConfiguration: () => ({ get: (name, fallback) => name === 'remoteHome' && !options.autoHome ? home : name === 'remoteRoot' && options.local ? home : fallback }),
+      getConfiguration: section => ({
+        get: (name, fallback) => section === 'zenMode' && name === 'centerLayout' ? options.centerLayout ?? true : name === 'remoteHome' && !options.autoHome ? home : name === 'remoteRoot' && options.local ? home : fallback,
+        inspect: () => ({ workspaceValue: options.workspaceCenter, globalValue: options.globalCenter }),
+        update: async (key, value, target) => { calls.push(['config', key, value, target]); }
+      }),
       onDidChangeConfiguration: disposable,
       onDidChangeWorkspaceFolders: disposable,
       createFileSystemWatcher: () => ({ onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable, dispose() {} })
@@ -165,7 +179,13 @@ function fixture(options = {}) {
   const api = module.exports.activate(context);
   const panel = { webview: { postMessage: async message => { messages.push(JSON.parse(JSON.stringify(message))); return true; } } };
   const send = message => api.handleMessage(message, panel);
-  return { api, home, desktop, nodes, calls, messages, warnings, inputs, infoChoices, deleteChoices, file, directory, send, panel, context, setFailRead: value => { failRead = value; } };
+  function delayNextReadFile() {
+    let resume;
+    const gate = new Promise(resolve => { resume = resolve; });
+    const started = new Promise(resolve => { delayedRead = { gate, started: resolve }; });
+    return { started, resume };
+  }
+  return { api, home, desktop, nodes, calls, messages, warnings, inputs, infoChoices, deleteChoices, file, directory, send, panel, context, delayNextReadFile, setFailRead: value => { failRead = value; } };
 }
 
 test('remote refresh rereads directory and edited config, without native Explorer refresh command', async () => {
@@ -179,6 +199,35 @@ test('remote refresh rereads directory and edited config, without native Explore
   assert.ok(refreshed.entries.some(item => item.name === 'external.txt'));
   assert.equal(refreshed.config.viewMode, 'details');
   assert.equal(f.calls.some(call => call[0] === 'command' && call[1].includes('refreshFilesExplorer')), false);
+});
+
+test('a delayed refresh cannot publish stale settings after a successful concurrent save', async () => {
+  const f = fixture({ native: true });
+  await f.send({ type: 'ready' });
+  f.file(`${f.desktop}/.remote-desktop.json`, JSON.stringify({ wallpaper: 'slate', showHiddenFiles: true, custom: 'preserved' }));
+  const delay = f.delayNextReadFile();
+  const refresh = f.send({ type: 'refreshRemote' });
+  await delay.started;
+  const save = f.send({ type: 'saveDesktopConfig', requestId: 'settings-race', config: { wallpaper: 'purple', showHiddenFiles: false } });
+  const nextRefresh = f.send({ type: 'refreshRemote' });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.messages.some(message => message.type === 'configSaved' && message.requestId === 'settings-race'), false, 'the save must wait for the earlier config snapshot to be published');
+  } finally {
+    delay.resume();
+    await Promise.all([refresh, save, nextRefresh]);
+  }
+  const savedIndex = f.messages.findIndex(message => message.type === 'configSaved' && message.requestId === 'settings-race');
+  assert.ok(savedIndex >= 0);
+  assert.equal(f.messages[savedIndex].ok, true);
+  const followingSnapshots = f.messages.slice(savedIndex + 1).filter(message => message.type === 'remoteState');
+  assert.ok(followingSnapshots.length > 0);
+  for (const message of followingSnapshots) {
+    assert.equal(message.config.wallpaper, 'purple');
+    assert.equal(message.config.showHiddenFiles, false);
+    assert.equal(message.config.custom, 'preserved');
+  }
+  assert.deepEqual(followingSnapshots.at(-1).config, JSON.parse(f.nodes.get(`${f.desktop}/.remote-desktop.json`).bytes.toString()));
 });
 
 test('create uses supplied name, rejects overwrite, and copy/move preserve correct source state', async () => {
@@ -550,13 +599,17 @@ test('rename and move display their actual paths while non-Linux and VS Code act
   assert.ok(windows.messages.findLast(item => item.type === 'operationCommand').command.startsWith('# VS Code 文件系统：'));
 });
 
-test('fullscreen delegates to VS Code Zen mode without assuming its resulting state or changing configuration', async () => {
+test('fullscreen toggles Zen once per click and persists the chosen noncentered workspace layout', async () => {
   const f = fixture({ native: true });
   await f.send({ type: 'ready' });
   const originalConfig = f.nodes.get(`${f.desktop}/.remote-desktop.json`).bytes.toString();
   await f.send({ type: 'toggleFullscreen' });
   await f.send({ type: 'toggleFullscreen' });
   assert.equal(f.calls.filter(call => call[0] === 'command' && call[1] === 'workbench.action.toggleZenMode').length, 2);
+  assert.deepEqual(f.calls.filter(call => call[0] === 'command').map(call => call[1]), [
+    'workbench.action.toggleZenMode', 'workbench.action.toggleZenMode'
+  ]);
+  assert.deepEqual(f.calls.filter(call => call[0] === 'config'), [['config', 'centerLayout', false, 2], ['config', 'centerLayout', false, 2]]);
   const reply = f.messages.findLast(item => item.type === 'fullscreenResult');
   assert.equal(reply.ok, true);
   assert.equal(reply.fullscreen, undefined);
@@ -566,6 +619,44 @@ test('fullscreen delegates to VS Code Zen mode without assuming its resulting st
   await failed.send({ type: 'toggleFullscreen' });
   assert.equal(failed.messages.findLast(item => item.type === 'fullscreenResult').ok, false);
   assert.equal(failed.messages.findLast(item => item.type === 'operationCommand').status, 'error');
+});
+
+test('fullscreen clears manual centering on entry and restores temporary changes if the command fails', async () => {
+  for (const options of [
+    { centerLayout: false, workspaceCenter: false },
+    { centerLayout: false },
+    { centerLayout: false, failCommand: 'workbench.action.toggleZenMode' },
+    { centerLayout: false, noFolders: true, globalCenter: false }
+  ]) {
+    const f = fixture(options);
+    await f.send({ type: 'toggleFullscreen' });
+    const target = options.noFolders ? 1 : 2;
+    const original = options.noFolders ? options.globalCenter : options.workspaceCenter;
+    assert.deepEqual(f.calls.filter(call => call[0] === 'config'), [['config', 'centerLayout', true, target], ['config', 'centerLayout', options.failCommand ? original : false, target]]);
+    assert.equal(f.messages.findLast(item => item.type === 'fullscreenResult').ok, !options.failCommand);
+    assert.ok(!f.calls.some(call => call[1] === 'workbench.action.toggleCenteredLayout'));
+  }
+});
+
+test('desktop preferences persist and retain unknown config fields', async () => {
+  const f = fixture({ native: true }); await f.send({ type: 'ready' });
+  await f.send({ type: 'saveDesktopConfig', requestId: 'preferences', config: { wallpaper: 'purple', showHiddenFiles: false, viewMode: 'icons' } });
+  const response = f.messages.findLast(item => item.type === 'configSaved');
+  assert.equal(response.ok, true); assert.equal(response.requestId, 'preferences');
+  const saved = JSON.parse(f.nodes.get(`${f.desktop}/.remote-desktop.json`).bytes.toString());
+  assert.equal(saved.wallpaper, 'purple'); assert.equal(saved.showHiddenFiles, false); assert.equal(saved.custom, 'preserved');
+  await f.send({ type: 'refreshRemote' });
+  assert.equal(f.messages.findLast(item => item.type === 'remoteState').config.wallpaper, 'purple');
+});
+
+test('invalid desktop preferences fail without rewriting the saved configuration', async () => {
+  const f = fixture({ native: true }); await f.send({ type: 'ready' });
+  const before = f.nodes.get(`${f.desktop}/.remote-desktop.json`).bytes.toString();
+  for (const patch of [{ wallpaper: 'url(https://example.com)' }, { wallpaper: null }, { showHiddenFiles: 'false' }, { showHiddenFiles: 0 }]) {
+    await f.send({ type: 'saveDesktopConfig', requestId: 'bad-settings', config: patch });
+    assert.equal(f.messages.findLast(item => item.type === 'configSaved').ok, false);
+    assert.equal(f.nodes.get(`${f.desktop}/.remote-desktop.json`).bytes.toString(), before);
+  }
 });
 
 test('terminal command display waits for successful PTY startup and does not record terminal input', async () => {

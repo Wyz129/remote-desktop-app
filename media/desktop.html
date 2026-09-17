@@ -12,7 +12,7 @@
   <header class="toolbar">
     <div class="brand"><strong id="accountName">正在读取账号…</strong></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
-    <span class="connection" id="connection">正在连接…</span>
+    <div class="toolbar-actions"><span class="connection" id="connection">正在连接…</span><button id="desktopSettings" class="toolbar-icon" aria-label="桌面设置" title="桌面设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · 按两次 Esc 退出"></button></div>
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
@@ -24,6 +24,18 @@
       <div class="desktop-caption"><span class="caption-icon" aria-hidden="true">▦</span><span id="desktopPath">桌面</span></div>
       <div id="icons" class="icons" aria-label="桌面文件"></div>
       <div id="windows"></div>
+      <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+        <form id="settingsForm">
+          <header class="settings-heading"><h2 id="settingsTitle">桌面设置</h2><button type="button" id="closeSettings" aria-label="关闭桌面设置" title="关闭">×</button></header>
+          <div class="settings-fields">
+            <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
+            <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">青绿</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
+            <label class="settings-check"><input type="checkbox" id="settingsHidden">显示隐藏文件和文件夹</label>
+            <p class="settings-description" id="settingsLocation"></p><p id="settingsError" role="alert"></p>
+          </div>
+          <footer class="settings-footer"><button type="button" id="cancelSettings">取消</button><button type="submit" id="applySettings" class="primary">应用</button></footer>
+        </form>
+      </dialog>
       <footer class="statusbar"><span class="operation-display" title="文件操作通过 VS Code 文件系统完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
     </main>
   </div>
@@ -77,7 +89,6 @@
     <button data-action="terminal" role="menuitem">在此处打开终端</button>
     <button data-action="refresh" role="menuitem">刷新</button>
     <button data-action="arrange" role="menuitem">整理桌面</button>
-    <button data-action="fullscreen" role="menuitem" title="由 VS Code 切换全屏禅模式；再次选择或按两次 Esc 退出">切换全屏视图</button>
   </div>
   <div id="appContext" class="context" role="menu" aria-label="任务栏操作" hidden><button id="togglePinApp" role="menuitem">固定到任务栏</button><button id="unpinApp" role="menuitem">从任务栏取消固定</button></div>
   <script nonce="{{nonce}}" src="{{iconsUri}}"></script>

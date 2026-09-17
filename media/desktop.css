@@ -12,6 +12,7 @@
   font-size: 13px;
 }
 * { box-sizing: border-box; letter-spacing: 0; }
+html, body { width: 100%; height: 100%; }
 body { margin: 0; color: var(--text); background: var(--bg); overflow: hidden; }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; border: 1px solid transparent; border-radius: 5px; background: transparent; padding: 7px 10px; cursor: pointer; }
@@ -21,11 +22,13 @@ button:disabled { opacity: .4; cursor: default; }
 .tool-icon { flex: none; display: inline-block; vertical-align: middle; }
 .window-control, .tool-button, .pathbar > button, .dock-action { align-items: center; justify-content: center; }
 .toolbar { height: 32px; padding: 0 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; border-bottom: 1px solid #ffffff12; background: #202020; }
+.toolbar-actions { min-width: 0; display: flex; justify-content: flex-end; align-items: center; gap: 5px; }
+.toolbar-icon { width: 27px; height: 27px; padding: 0; display: inline-flex; justify-content: center; align-items: center; flex: none; }
 .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .brand strong { font-size: 12px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .connection { min-width: 0; justify-self: end; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #bedecb; }
 .server-clock { color: #eee; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.workspace { height: calc(100vh - 32px); display: flex; }
+.workspace { width: 100%; height: calc(100% - 32px); min-height: 0; display: flex; }
 .dock { width: 68px; flex: none; display: flex; flex-direction: column; gap: 10px; padding: 10px 6px; background: #242827; border-right: 1px solid #4b5650; }
 .dock-action { width: 44px; height: 40px; align-self: center; padding: 0; font-size: 23px; color: var(--accent); }
 .window-tabs { overflow: auto; display: flex; flex-direction: column; gap: 7px; }
@@ -43,6 +46,23 @@ button:disabled { opacity: .4; cursor: default; }
 .window-tab.active::after { background: var(--accent); height: 25px; top: 19px; }
 .window-tab.minimized { opacity: .65; }
 .desktop { position: relative; flex: 1; min-width: 0; overflow: hidden; background: linear-gradient(135deg, #294e45, #203f41 50%, #253b44); }
+.desktop[data-wallpaper="purple"] { background: linear-gradient(135deg, #4a294d, #38243e 50%, #252c45); }
+.desktop[data-wallpaper="slate"] { background: linear-gradient(135deg, #3c4652, #28323c 50%, #1c2633); }
+.settings-dialog { position: fixed; width: min(420px, calc(100vw - 24px)); max-height: calc(100vh - 56px); padding: 0; color: var(--text); background: var(--surface); border: 1px solid #72867b; border-radius: 9px; box-shadow: 0 18px 60px #0008; overflow: auto; }
+.settings-dialog::backdrop { background: #10171566; }
+.settings-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #353c38; }
+.settings-heading h2 { margin: 0; font-size: 14px; }
+.settings-heading button { font-size: 22px; padding: 0; width: 28px; height: 28px; }
+.settings-fields { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 1fr); gap: 18px 12px; align-items: center; }
+.settings-fields select { min-width: 0; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 4px; padding: 7px; font: inherit; }
+.settings-check { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+.settings-check input { accent-color: var(--accent); }
+.settings-description, #settingsError { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.6; }
+.settings-description { color: var(--muted); }
+#settingsError { color: #f6b4b4; }
+#settingsError:empty { display: none; }
+.settings-footer { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; justify-content: flex-end; gap: 8px; }
+.settings-footer .primary { background: #48735c; }
 .desktop-caption { position: absolute; inset: 0 16px auto; height: 40px; display: flex; align-items: center; gap: 8px; color: #c0d2ca; font-size: 11px; pointer-events: none; }
 #desktopPath { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .caption-icon { color: var(--accent); font-size: 15px; }

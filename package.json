@@ -1,8 +1,8 @@
 {
-  "name": "remote-desktop-demo",
-  "displayName": "Remote Desktop Demo",
+  "name": "remote-desktop",
+  "displayName": "Remote Desktop",
   "description": "Remote-SSH 桌面与多窗口资源管理器，支持远程文件操作和持久化快捷方式。",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "local-demo",
   "private": true,
   "license": "UNLICENSED",
@@ -33,10 +33,14 @@
     "test:terminal": "node --test test/terminal.test.cjs",
     "test:vscode": "node scripts/test-vscode.cjs",
     "test": "npm run vscode:prepublish && npm run check && npm run test:backend && npm run test:terminal && npm run test:ui && npm run test:vscode",
-    "package": "vsce package --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/remote-desktop-demo-0.0.5.vsix"
+    "package": "vsce package --no-rewrite-relative-links --skip-license --out artifacts/remote-desktop-0.0.6.vsix"
   },
   "contributes": {
     "commands": [
+      {
+        "command": "remoteDesktop.open",
+        "title": "Remote Desktop: Open"
+      },
       {
         "command": "remoteDesktop.openDemo",
         "title": "Remote Desktop: Open Demo"
@@ -45,13 +49,19 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "remoteDesktop.openDemo",
+          "command": "remoteDesktop.open",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "remoteDesktop.openDemo",
+          "when": "false"
         }
       ]
     },
     "configuration": {
-      "title": "Remote Desktop Demo",
+      "title": "Remote Desktop",
       "properties": {
         "remoteDesktopDemo.openOnStartup": {
           "type": "boolean",
@@ -78,5 +88,9 @@
     "@xterm/xterm": "^6.0.0",
     "lucide": "^1.44.0",
     "playwright": "^1.63.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Wyz129/remote-desktop.git"
   }
 }

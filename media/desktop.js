@@ -21,6 +21,8 @@ const state = {
   shortcuts: Array.isArray(previous.shortcuts) ? previous.shortcuts.filter(isCommandShortcut) : [],
   pinnedApps: [],
   viewMode: previous.viewMode === 'icons' ? 'icons' : 'details',
+  wallpaper: ['teal', 'purple', 'slate'].includes(previous.wallpaper) ? previous.wallpaper : 'teal',
+  showHiddenFiles: previous.showHiddenFiles !== false,
   windows: [],
   activeWindow: null,
   clipboard: null
@@ -51,6 +53,9 @@ let nextLayer = 1;
 let editor = null;
 let saveTimer;
 let pendingConfig = {};
+let settingsRequest = null;
+let settingsTimer;
+let fullscreenTimer;
 let dragPayload = null;
 
 function isCommandShortcut(value) { return value && typeof value.command === 'string' && value.command.trim(); }
@@ -145,7 +150,7 @@ function commandItem(shortcut, index) {
 }
 function selectedItems(scope = selection.scope) {
   if (scope !== selection.scope) return [];
-  return [...selection.keys].map(key => items.get(key)).filter(Boolean);
+  return [...selection.keys].map(key => items.get(key)).filter(item => item && visibleEntry(item));
 }
 function selectedFilePaths(scope = selection.scope) { return selectedItems(scope).filter(item => item.kind !== 'command').map(item => item.path); }
 function setDirectory(path, entries) {
@@ -171,6 +176,11 @@ function persistConfig(patch) {
 }
 function applyConfig(config, initial = false) {
   if (!config || typeof config !== 'object') config = {};
+  state.wallpaper = ['teal', 'purple', 'slate'].includes(config.wallpaper) ? config.wallpaper : 'teal';
+  const showHiddenFiles = typeof config.showHiddenFiles === 'boolean' ? config.showHiddenFiles : true;
+  if (state.showHiddenFiles !== showHiddenFiles) selection.keys.clear();
+  state.showHiddenFiles = showHiddenFiles;
+  $('desktop').dataset.wallpaper = state.wallpaper;
   if (!Object.hasOwn(pendingConfig, 'viewMode')) {
     if (config.viewMode === 'details' || config.viewMode === 'icons') state.viewMode = config.viewMode;
     else if (initial) state.viewMode = 'details';
@@ -189,6 +199,57 @@ function applyConfig(config, initial = false) {
   renderPinnedApps();
   rebuildItems();
   save();
+}
+function visibleEntry(item) { return state.showHiddenFiles || item.kind === 'command' || !item.name.startsWith('.'); }
+function settingsBusy(busy) {
+  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy;
+  $('applySettings').textContent = busy ? '正在保存…' : '应用';
+}
+function closeSettings() {
+  if (settingsRequest) return;
+  $('settingsDialog').close(); $('desktopSettings').focus();
+}
+function openSettings() {
+  if (!initialized) { notify('请等待桌面完成读取'); return; }
+  $('context').hidden = true; $('appContext').hidden = true;
+  $('settingsViewMode').value = state.viewMode;
+  $('settingsWallpaper').value = state.wallpaper;
+  $('settingsHidden').checked = state.showHiddenFiles;
+  $('settingsError').textContent = '';
+  $('settingsLocation').textContent = remoteMode ? '应用后保存到服务器桌面配置，并更新已打开的资源管理器。' : '应用后保存在当前 VS Code 桌面视图中。';
+  settingsBusy(false); $('settingsDialog').showModal();
+}
+function applyDesktopSettings(config) {
+  // Only this request's preference fields are applied. A config reply may also
+  // contain older positions or shortcuts changed while the write was pending.
+  state.viewMode = config.viewMode; state.wallpaper = config.wallpaper; state.showHiddenFiles = config.showHiddenFiles;
+  $('desktop').dataset.wallpaper = state.wallpaper;
+  for (const win of state.windows) if (win.kind !== 'terminal') win.viewMode = state.viewMode;
+  selection.keys.clear(); renderIcons(); state.windows.forEach(renderWindow); save();
+  showInterfaceAction('更新桌面设置'); notify(remoteMode ? '桌面设置已保存到服务器' : '桌面设置已保存');
+}
+function submitSettings(event) {
+  event.preventDefault(); if (settingsRequest) return;
+  const config = { viewMode: $('settingsViewMode').value, wallpaper: $('settingsWallpaper').value, showHiddenFiles: $('settingsHidden').checked };
+  if (!remoteMode) { applyDesktopSettings(config); closeSettings(); return; }
+  clearTimeout(saveTimer);
+  const requestId = `settings-${nextRequest++}`;
+  settingsRequest = { requestId, config, pendingPatch: pendingConfig };
+  settingsBusy(true); $('settingsError').textContent = '';
+  const patch = { ...pendingConfig, ...config }; pendingConfig = {};
+  vscode.postMessage({ type: 'saveDesktopConfig', config: patch, requestId });
+  settingsTimer = setTimeout(() => {
+    if (settingsRequest?.requestId !== requestId) return;
+    pendingConfig = { ...settingsRequest.pendingPatch, ...pendingConfig };
+    settingsRequest = null; settingsBusy(false);
+    $('settingsError').textContent = '未收到服务器确认，配置可能已保存。请刷新桌面后核对或重试。';
+  }, 15000);
+}
+function requestFullscreen() {
+  $('fullscreen').disabled = true;
+  vscode.postMessage({ type: 'toggleFullscreen' });
+  clearTimeout(fullscreenTimer);
+  fullscreenTimer = setTimeout(() => { $('fullscreen').disabled = false; notify('未收到全屏请求确认，请检查 VS Code 通知'); }, 15000);
 }
 function glyph(item) {
   const picture = document.createElement('span');
@@ -295,7 +356,7 @@ function renderIcons() {
   if (editor?.scope === 'desktop') { editor.needsRefresh = true; return; }
   const scroll = $('icons').scrollTop;
   $('icons').replaceChildren();
-  const entries = [...(directories[rootPath] || []), ...state.shortcuts.map(commandItem)];
+  const entries = [...(directories[rootPath] || []), ...state.shortcuts.map(commandItem)].filter(visibleEntry);
   const occupied = new Set();
   entries.forEach((item, index) => {
     const element = makeDesktopIcon(item);
@@ -703,7 +764,7 @@ function makeEntry(item, win, pending = false) {
 function updateWindowStatus(win) {
   if (win.kind === 'terminal') return;
   const element = windowElements.get(win.id); if (!element) return;
-  const count = directories[win.folder]?.length;
+  const count = directories[win.folder]?.filter(visibleEntry).length;
   const selected = selection.scope === win.id ? selection.keys.size : 0;
   element.querySelector('.window-footer').textContent = win.error || (win.pendingNavigation ? `正在读取 ${win.pendingNavigation.path}…` : count === undefined ? '正在读取…' : `${count} 项${selected ? ` · 已选择 ${selected} 项` : ''}`);
 }
@@ -731,7 +792,7 @@ function renderWindow(win) {
   if (editor?.scope === win.id) { editor.needsRefresh = true; return; }
   const listing = element.querySelector('.listing'), scroll = listing.scrollTop;
   listing.replaceChildren();
-  const entries = directories[win.folder];
+  const entries = directories[win.folder]?.filter(visibleEntry);
   if (entries?.length) entries.forEach(item => listing.append(makeEntry(item, win)));
   else {
     const empty = document.createElement('p'); empty.className = 'empty';
@@ -804,7 +865,6 @@ function showMenu(event, context) {
   buttons.querySelector('[data-action="cut"]').disabled = !files.length;
   buttons.querySelector('[data-action="paste"]').disabled = !state.clipboard?.paths?.length;
   buttons.querySelector('[data-action="arrange"]').hidden = context.scope !== 'desktop';
-  buttons.querySelector('[data-action="fullscreen"]').hidden = context.scope !== 'desktop';
   buttons.hidden = false;
   buttons.style.left = `${clamp(event.clientX, window.innerWidth - buttons.offsetWidth - 6)}px`;
   buttons.style.top = `${clamp(event.clientY, window.innerHeight - buttons.offsetHeight - 6)}px`;
@@ -895,7 +955,6 @@ function performAction(action, context) {
   else if (action === 'terminal') openTerminal(context.parent);
   else if (action === 'refresh') { if (context.scope === 'desktop') refreshAll(); else refreshDirectory(context.parent); }
   else if (action === 'arrange') arrange();
-  else if (action === 'fullscreen') { vscode.postMessage({ type: 'toggleFullscreen' }); notify('由 VS Code 切换全屏禅模式；再次选择此菜单或按两次 Esc 退出'); }
 }
 function sendOperation(operation) {
   if (!remoteMode) { applyDemoOperation(operation); return; }
@@ -965,6 +1024,7 @@ function initializeLocal() {
   if (previous.rootPath !== rootPath) { state.positions = {}; state.shortcuts = []; }
   rebuildItems(); connectionStatus = '本地示例 · 未连接 SSH'; renderServerInfo(); $('desktopPath').textContent = rootPath;
   restoreWindows(); renderIcons(); notify('本地示例');
+  $('desktop').dataset.wallpaper = state.wallpaper;
 }
 function restoreWindows() {
   if (previous.rootPath !== rootPath || !Array.isArray(previous.windows) || state.windows.length) return;
@@ -978,6 +1038,21 @@ function restoreWindows() {
 }
 window.addEventListener('message', event => {
   const message = event.data; if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'fullscreenResult') {
+    clearTimeout(fullscreenTimer); $('fullscreen').disabled = false;
+    notify(message.message || (message.ok ? '已切换全屏视图；再次点击图标或按两次 Esc 退出' : '全屏请求失败'));
+    scheduleLayout(); return;
+  }
+  if (message.type === 'configSaved' && settingsRequest && settingsRequest.requestId === message.requestId) {
+    clearTimeout(settingsTimer);
+    const request = settingsRequest; settingsRequest = null; settingsBusy(false);
+    if (message.ok) { applyDesktopSettings(request.config); closeSettings(); }
+    else {
+      pendingConfig = { ...request.pendingPatch, ...pendingConfig };
+      $('settingsError').textContent = message.error || '保存失败，请重试';
+    }
+    return;
+  }
   if (message.type === 'serverInfo') { receiveServerInfo(message); return; }
   if (message.type === 'operationCommand') {
     if (typeof message.command === 'string') showOperationCommand(message.command, message.status, typeof message.detail === 'string' ? message.detail : '');
@@ -991,6 +1066,7 @@ window.addEventListener('message', event => {
       if (typeof path !== 'string') return;
       const initial = !initialized || !remoteMode || path !== rootPath;
       if (initial) {
+        clearTimeout(settingsTimer); settingsRequest = null; settingsBusy(false); $('settingsDialog').close();
         if (editor) editor.cancel();
         for (const id of [...terminals.keys()]) disposeTerminal(id);
         directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear(); state.windows = []; windowElements.clear(); $('windows').replaceChildren();
@@ -1067,6 +1143,7 @@ document.addEventListener('pointerdown', event => {
   if (!event.target.closest('#appContext')) $('appContext').hidden = true;
 });
 document.addEventListener('keydown', event => {
+  if ($('settingsDialog').open) return;
   if (event.target.closest('input, textarea, .terminal-window, [contenteditable="true"]')) return;
   const context = contextFor(selection.scope), selected = selectedItems();
   let action;
@@ -1086,13 +1163,28 @@ document.addEventListener('keydown', event => {
   if (action) { event.preventDefault(); performAction(action, context); }
 });
 $('newWindow').addEventListener('click', () => openFolder(rootPath));
-for (const [id, name] of Object.entries({ newWindow: 'Plus' })) {
+$('desktopSettings').addEventListener('click', openSettings);
+$('settingsForm').addEventListener('submit', submitSettings);
+$('cancelSettings').addEventListener('click', closeSettings);
+$('closeSettings').addEventListener('click', closeSettings);
+$('settingsDialog').addEventListener('cancel', event => { if (settingsRequest) event.preventDefault(); });
+$('fullscreen').addEventListener('click', requestFullscreen);
+for (const [id, name] of Object.entries({ newWindow: 'Plus', desktopSettings: 'Settings', fullscreen: 'Maximize' })) {
   const button = $(id), label = button.querySelector('span:first-child');
   if (label) label.replaceChildren(toolIcon(name)); else button.replaceChildren(toolIcon(name));
 }
 bindMarquee($('icons'), 'desktop'); bindDropSurface($('icons')); bindDropSurface($('windowTabs'));
-window.addEventListener('resize', () => { renderIcons(); state.windows.forEach(positionWindow); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) state.windows.forEach(positionWindow); });
+let layoutFrame;
+function scheduleLayout() {
+  cancelAnimationFrame(layoutFrame);
+  layoutFrame = requestAnimationFrame(() => {
+    if (document.hidden || !$('desktop').clientWidth || !$('desktop').clientHeight) return;
+    renderIcons(); state.windows.forEach(positionWindow);
+  });
+}
+new ResizeObserver(scheduleLayout).observe($('desktop'));
+window.addEventListener('resize', scheduleLayout);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleLayout(); });
 setInterval(updateClock, 1000);
 setInterval(() => vscode.postMessage({ type: 'getServerInfo' }), 30000);
 vscode.postMessage({ type: 'ready' });

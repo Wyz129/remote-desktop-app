@@ -7,3 +7,11 @@ scripts/**
 artifacts/**
 node_modules/**
 HANDOFF.md
+docs/**
+projects/**
+.git/**
+.github/**
+.gitattributes
+.gitignore
+TESTING.md
+.vscode/**

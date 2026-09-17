@@ -3,8 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
 
-const EXTENSION_ID = 'local-demo.remote-desktop-demo';
-const COMMAND_ID = 'remoteDesktop.openDemo';
+const EXTENSION_ID = 'local-demo.remote-desktop';
+const COMMAND_ID = 'remoteDesktop.open';
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const REPORT_PATH = path.join(PROJECT_ROOT, 'artifacts', 'vscode-smoke.json');
 const READY_TIMEOUT_MS = 30_000;
@@ -77,8 +77,9 @@ async function run() {
 
     const commands = await vscode.commands.getCommands(true);
     check(commands.includes(COMMAND_ID), 'demo command is registered', `Command ${COMMAND_ID} is not registered`);
+    check(commands.includes('remoteDesktop.openDemo'), 'legacy command alias remains registered');
 
-    // The test launcher opens PROJECT_ROOT as the workspace, allowing the
+    // The test launcher opens an isolated fixture workspace, allowing the
     // simulated /home/demo root to map to real VS Code URIs.
     check(Boolean(vscode.workspace.workspaceFolders?.length), 'test workspace folder is available');
     await vscode.commands.executeCommand(COMMAND_ID);
@@ -97,7 +98,7 @@ async function run() {
     let delegated = diagnostics(api).openRequests.at(-1);
     check(delegated && delegated.delegated === true, 'file openResource maps to workspace URI');
     check(delegated.command === 'vscode.open', 'file openResource delegates to vscode.open');
-    await api.openResource({ type: 'openResource', path: '/home/demo/projects', kind: 'folder' });
+    await api.openResource({ type: 'openResource', path: '/home/demo/media', kind: 'folder' });
     delegated = diagnostics(api).openRequests.at(-1);
     check(delegated && delegated.delegated === true, 'folder openResource maps to workspace URI');
     check(delegated.command === 'revealInExplorer', 'folder openResource delegates to revealInExplorer');
@@ -115,13 +116,29 @@ async function run() {
     check(commands.includes('workbench.action.toggleZenMode'), 'VS Code exposes the fullscreen view command');
     const fullscreenMessages = [];
     const fullscreenPanel = { webview: { postMessage: async message => { fullscreenMessages.push(message); return true; } } };
-    await api.handleMessage({ type: 'toggleFullscreen' }, fullscreenPanel);
+    const zenConfig = vscode.workspace.getConfiguration('zenMode');
+    const originalCenter = zenConfig.inspect('centerLayout').workspaceValue;
+    const originalFullScreen = zenConfig.inspect('fullScreen').workspaceValue;
     try {
-      check(fullscreenMessages.some(message => message.type === 'fullscreenResult' && message.ok), 'fullscreen request completes through VS Code');
-    } finally {
+      // Exercise real workbench commands without OS fullscreen transitions
+      // racing rapid test calls. Production honors the user's fullScreen value.
+      await zenConfig.update('fullScreen', false, vscode.ConfigurationTarget.Workspace);
+      await zenConfig.update('centerLayout', true, vscode.ConfigurationTarget.Workspace);
       await api.handleMessage({ type: 'toggleFullscreen' }, fullscreenPanel);
+      check(fullscreenMessages.some(message => message.type === 'fullscreenResult' && message.ok), 'fullscreen request completes through VS Code');
+      check(zenConfig.inspect('centerLayout').workspaceValue === false, 'fullscreen sets workspace Zen layout to noncentered');
+      await api.handleMessage({ type: 'toggleFullscreen' }, fullscreenPanel);
+      check(fullscreenMessages.filter(message => message.type === 'fullscreenResult' && message.ok).length === 2, 'fullscreen button can toggle Zen back');
+      await vscode.commands.executeCommand('workbench.action.exitZenMode');
+      await zenConfig.update('centerLayout', false, vscode.ConfigurationTarget.Workspace);
+      await api.handleMessage({ type: 'toggleFullscreen' }, fullscreenPanel);
+      check(fullscreenMessages.filter(message => message.type === 'fullscreenResult' && message.ok).length === 3, 'fullscreen accepts a preexisting noncentered Zen preference');
+      check(zenConfig.inspect('centerLayout').workspaceValue === false, 'fullscreen retains the chosen noncentered preference');
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.exitZenMode');
+      await zenConfig.update('centerLayout', originalCenter, vscode.ConfigurationTarget.Workspace);
+      await zenConfig.update('fullScreen', originalFullScreen, vscode.ConfigurationTarget.Workspace);
     }
-    check(fullscreenMessages.filter(message => message.type === 'fullscreenResult' && message.ok).length === 2, 'fullscreen view can be toggled back');
 
     // Exercise the bundled runtime PTY through the same messages as the webview.
     const terminalMessages = [];
