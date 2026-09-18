@@ -12,7 +12,7 @@
 | `npm run test:vim` | 7/7 通过 | 本机 Git 自带真实 Vim 9.1，独立临时文件；实际保存、丢弃、交换文件清理、只读和未命名失败，非远程 SSH Vim |
 | `npm run test:electron` | 1/1 集成场景通过 | 真实 Electron 44.4.2 主进程/preload/渲染器 + 本机 TCP 回环 SSH 服务端 |
 | `npm run test:workspace` | 1/1 通过 | 真实 Electron + Monaco、快捷方式真实目标、CLI exec/upload、冲突、HTML 资源和 Notebook |
-| `npm run test:browser` | 1/1 通过 | 真实 Electron 隔离网页、SSH DNS、Cookie/POST/Blob 下载、取消和上传服务器 |
+| `npm run test:browser` | 1/1 通过 | 源码和打包 EXE 的真实 Electron 隔离网页、SSH DNS、Cookie/POST/Blob 下载、取消和上传服务器 |
 | `npm run test:cli` | 1/1 通过（Windows） | 打包/源码 CLI 默认数据目录、无 Node 启动器和实例发现 |
 | `npm audit` | 0 vulnerabilities | 全部已安装生产/开发依赖，执行日期 2026-09-18 |
 | 用户真实远程服务器 | 未执行 | 本轮未提供实机凭据，未操作现有 VS Code/SSH 窗口 |
@@ -119,3 +119,4 @@ UI 替身测试只证明渲染器行为与协议输出，不证明 SSH 后端或
 - 设置选择目录、只读确认、迟到请求与断连；新 UI 共 22 个场景。
 - 时钟 9 项含 POSIX TZ、IANA、缩写、半小时/45 分钟偏移、日期越界、错误格式、大小限制和超时；固定查询还在真实 Git Bash 中执行，非用户服务器。
 - Electron 完整 IPC 测试增加私有存储保存、断开重连、应用重启恢复桌面及失效位置恢复。位置偏好纯测试验证不同账号、端口、主机和指纹隔离。
+
