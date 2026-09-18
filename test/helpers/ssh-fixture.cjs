@@ -29,7 +29,8 @@ async function createSshFixture(options = {}) {
   const serverRoot = path.join(root, 'server');
   const downloads = path.join(root, 'downloads');
   const outsideRoot = path.join(root, 'outside');
-  await fsp.mkdir(serverRoot); await fsp.mkdir(downloads); await fsp.mkdir(outsideRoot);
+  const fileSystemRoot = path.join(root, 'filesystem');
+  await fsp.mkdir(serverRoot); await fsp.mkdir(downloads); await fsp.mkdir(outsideRoot); await fsp.mkdir(path.join(fileSystemRoot, 'srv'), { recursive: true });
   const calls = { exec: [], auth: [], sftp: [], shell: [], pty: [], resize: [], errors: [] };
   const connections = new Set();
   const username = 'fixture-user';
@@ -37,6 +38,9 @@ async function createSshFixture(options = {}) {
   const failReads = new Set();
   const slowReads = new Set();
   const failRenames = new Set();
+  const deniedDirectories = new Set();
+  const unreadableFiles = new Set();
+  const readOnlyPaths = new Set();
   // POSIX symlinks are modeled by the endpoint rather than requiring Windows
   // SeCreateSymbolicLinkPrivilege. All data still stays in the isolated tree.
   const links = new Map();
@@ -57,10 +61,14 @@ async function createSshFixture(options = {}) {
   };
   const mapPath = (remote, followFinal = true) => {
     const normal = canonical(remote, followFinal);
-    const base = normal === HOME || normal.startsWith(`${HOME}/`) ? HOME : normal === '/outside' || normal.startsWith('/outside/') ? '/outside' : null;
-    if (!base) throw Object.assign(new Error('Outside fixture root'), { code: 'EACCES' });
-    return path.join(base === HOME ? serverRoot : outsideRoot, ...normal.slice(base.length).split('/').filter(Boolean));
+    if (!normal.startsWith('/')) throw Object.assign(new Error('Fixture path must be absolute'), { code: 'EACCES' });
+    const base = normal === HOME || normal.startsWith(`${HOME}/`) ? HOME : normal === '/outside' || normal.startsWith('/outside/') ? '/outside' : '/';
+    return path.join(base === HOME ? serverRoot : base === '/outside' ? outsideRoot : fileSystemRoot, ...normal.slice(base.length).split('/').filter(Boolean));
   };
+  const hasPath = (set, remote) => [...set].some(value => canonical(remote) === canonical(value) || canonical(remote).startsWith(`${canonical(value)}/`));
+  const accessError = remote => Object.assign(new Error(`Permission denied: ${remote}`), { code: 'EACCES' });
+  const checkReadable = remote => { if (hasPath(deniedDirectories, remote) || unreadableFiles.has(canonical(remote))) throw accessError(remote); };
+  const checkWritable = remote => { if (hasPath(deniedDirectories, remote) || hasPath(readOnlyPaths, remote)) throw accessError(remote); };
   const remoteStat = async (remote, follow = true) => {
     const resolved = canonical(remote, follow);
     if (!follow && links.has(resolved)) return { mode: 0o120777, uid: 0, gid: 0, size: Buffer.byteLength(links.get(resolved)), atimeMs: Date.now(), mtimeMs: Date.now() };
@@ -105,7 +113,9 @@ async function createSshFixture(options = {}) {
       sftp.name(id, [{ filename: resolved, longname: resolved, attrs: attrs(stat) }]);
     }));
     sftp.on('OPENDIR', (id, remote) => run(id, async () => {
-      calls.sftp.push(['OPENDIR', remote]); const entries = await fsp.readdir(mapPath(remote));
+      calls.sftp.push(['OPENDIR', remote]); checkReadable(remote); const entries = await fsp.readdir(mapPath(remote));
+      if (canonical(remote) === '/') entries.push('outside');
+      if (canonical(remote) === '/srv') entries.push('fixture-user');
       for (const linkPath of links.keys()) if (path.posix.dirname(linkPath) === canonical(remote) && !entries.includes(path.posix.basename(linkPath))) entries.push(path.posix.basename(linkPath));
       sftp.handle(id, allocate({ remote, entries, position: 0 }));
     }));
@@ -118,6 +128,8 @@ async function createSshFixture(options = {}) {
     }));
     sftp.on('OPEN', (id, remote, flags) => run(id, async () => {
       calls.sftp.push(['OPEN', remote, flags]);
+      if (flags & 1) checkReadable(remote);
+      if (flags & 2) checkWritable(remote);
       if (flags & 32 && links.has(canonical(remote, false))) throw Object.assign(new Error('File exists'), { code: 'EEXIST' });
       const writable = Boolean(flags & 2); const mode = writable ? (flags & 32 ? 'wx+' : flags & 16 ? 'w+' : 'r+') : 'r';
       const file = await fsp.open(mapPath(remote), mode);
@@ -137,10 +149,11 @@ async function createSshFixture(options = {}) {
     sftp.on('CLOSE', (id, handle) => run(id, async () => {
       const record = get(handle); handles.delete(handle.toString('hex')); await record.file?.close(); sftp.status(id, STATUS.OK);
     }));
-    sftp.on('MKDIR', (id, remote) => run(id, async () => { calls.sftp.push(['MKDIR', remote]); await fsp.mkdir(mapPath(remote)); sftp.status(id, STATUS.OK); }));
-    sftp.on('REMOVE', (id, remote) => run(id, async () => { calls.sftp.push(['REMOVE', remote]); if (!links.delete(canonical(remote, false))) await fsp.unlink(mapPath(remote)); sftp.status(id, STATUS.OK); }));
-    sftp.on('RMDIR', (id, remote) => run(id, async () => { await fsp.rmdir(mapPath(remote)); sftp.status(id, STATUS.OK); }));
+    sftp.on('MKDIR', (id, remote) => run(id, async () => { calls.sftp.push(['MKDIR', remote]); checkWritable(remote); await fsp.mkdir(mapPath(remote)); sftp.status(id, STATUS.OK); }));
+    sftp.on('REMOVE', (id, remote) => run(id, async () => { calls.sftp.push(['REMOVE', remote]); checkWritable(remote); if (!links.delete(canonical(remote, false))) await fsp.unlink(mapPath(remote)); sftp.status(id, STATUS.OK); }));
+    sftp.on('RMDIR', (id, remote) => run(id, async () => { checkWritable(remote); await fsp.rmdir(mapPath(remote)); sftp.status(id, STATUS.OK); }));
     const rename = async (source, target, overwrite) => {
+      checkWritable(source); checkWritable(target);
       if (failRenames.has(target)) throw new Error('Injected rename failure');
       if (!overwrite) { try { await remoteStat(target, false); throw Object.assign(new Error('File exists'), { code: 'EEXIST' }); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
       const from = canonical(source, false), to = canonical(target, false);
@@ -200,13 +213,29 @@ async function createSshFixture(options = {}) {
         void (async () => {
           if (info.command.startsWith('cd -- ') && / && exec (?:"\$\{SHELL:-\/bin\/sh\}" -l|vim(?: -.*)?|htop)$/.test(info.command)) { serveShell(stream, info.command); return; }
           if (info.command.includes('$HOME') && info.command.startsWith('printf')) { stream.write(options.homeOutput === undefined ? HOME : options.homeOutput); stream.exit(0); stream.end(); return; }
-          if (info.command === 'id -un; hostname; date -u +%s') { stream.write(`${username}\nfixture-host\n${Math.floor(Date.now() / 1000)}\n`); stream.exit(0); stream.end(); return; }
+          if (info.command.startsWith('# remote-desktop-server-clock-v1\n')) {
+            const epoch = Math.floor(Date.now() / 1000);
+            const offsetMinutes = options.utcOffsetMinutes ?? 0;
+            const offset = `${offsetMinutes < 0 ? '-' : '+'}${String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0')}${String(Math.abs(offsetMinutes) % 60).padStart(2, '0')}`;
+            const localTime = new Date(epoch * 1000 + offsetMinutes * 60_000).toISOString().slice(0, 19);
+            stream.write(`${username}\0fixture-host\0${epoch}|${localTime}|${offset}|${options.timeZoneAbbreviation || 'UTC'}\0${options.timeZone || 'Etc/UTC'}\0`); stream.exit(0); stream.end(); return;
+          }
+          if (info.command.startsWith('# remote-desktop-file-access-v1\n')) {
+            const match = info.command.match(/^# remote-desktop-file-access-v1\nif test -r (.+); then printf '1'; else printf '0'; fi; if test -w (.+); then printf '1'; else printf '0'; fi$/s);
+            if (!match || match[1] !== match[2]) throw new Error('Invalid file access query');
+            const remote = unquote(match[1]); await remoteStat(remote);
+            let readable = true, writable = true;
+            try { checkReadable(remote); } catch { readable = false; }
+            try { checkWritable(remote); } catch { writable = false; }
+            stream.write(`${readable ? '1' : '0'}${writable ? '1' : '0'}`); stream.exit(0); stream.end(); return;
+          }
           if (info.command.startsWith('# remote-desktop-system-info-v1\n')) {
             const values = { os: 'Ubuntu 24.04 LTS (fixture)', kernel: '6.8.0-fixture', architecture: 'x86_64', cpu: 'Fixture CPU', hostname: 'fixture-host', username, disk: 'Filesystem Size Used Avail Use% Mounted on\nfixture 100G 25G 75G 25% /', memory: 'Mem: 16Gi 4Gi 12Gi', dateTime: '2026-09-18 12:00:00 UTC', timeZone: 'Etc/UTC', locale: 'LANG=C.UTF-8', shell: '/bin/bash', network: '192.0.2.10' };
             stream.write(Object.entries(values).map(([key, value]) => `${key}\0${value}\0`).join('')); stream.exit(0); stream.end(); return;
           }
           if (info.command.startsWith('cat -- ')) {
             const remote = unquote(info.command.slice(7));
+            checkReadable(remote);
             if (failReads.has(remote)) throw new Error('Injected fixture read failure');
             const input = fs.createReadStream(mapPath(remote), { highWaterMark: 8192 });
             stream.on('close', () => input.destroy());
@@ -226,7 +255,7 @@ async function createSshFixture(options = {}) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
 
   return {
-    root, serverRoot, outsideRoot, downloads, home: HOME, username, password, fingerprint, calls, failReads, slowReads, failRenames, mapPath, put, link, links,
+    root, serverRoot, outsideRoot, fileSystemRoot, downloads, home: HOME, username, password, fingerprint, calls, failReads, slowReads, failRenames, deniedDirectories, unreadableFiles, readOnlyPaths, mapPath, put, link, links,
     config: { host: '127.0.0.1', port: server.address().port, username, password, hostKeyFingerprint: fingerprint },
     async close() {
       for (const client of connections) client.end();

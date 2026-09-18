@@ -21,6 +21,7 @@ let rootPath = EMPTY_ROOT;
 let homePath = EMPTY_ROOT;
 let remoteMode = false;
 let desktopAvailable = false;
+let desktopAccessError = '';
 let initialized = false;
 let directories = Object.create(null);
 const items = new Map();
@@ -58,6 +59,11 @@ let fullscreenTimer;
 let dragPayload = null;
 let systemInfoRequest = 0;
 let systemInfoLoading = false;
+let connectionGeneration = 0;
+let settingsBaseline = null;
+let directoryPicker = null;
+let fileAccessChoice = null;
+const fileAccessRequests = new Set();
 
 function isCommandShortcut(value) { return value && typeof value.command === 'string' && value.command.trim(); }
 function toolIcon(name) {
@@ -106,19 +112,27 @@ function updateClock() {
     return;
   }
   const current = new Date(serverClockAnchor.epochMs + performance.now() - serverClockAnchor.receivedAt);
-  clock.textContent = `${remote ? '' : '本地 '}${serverClockAnchor.formatter.format(current)}`;
+  const display = new Date(current.getTime() + serverClockAnchor.offsetMs);
+  clock.textContent = `${serverClockAnchor.formatter.format(display)} · ${serverClockAnchor.label}`;
   clock.dateTime = current.toISOString();
-  clock.title = `${remote ? '服务器' : '本地'}时间 · ${serverInfo.timeZone}`;
+  clock.title = `服务器本地时间 · ${serverClockAnchor.label}`;
   clock.setAttribute('aria-label', `${remote ? '服务器' : '本地'}时间 ${clock.textContent}`);
 }
 function receiveServerInfo(message) {
   serverInfo = message;
   lastServerResponseAt = performance.now();
   serverClockAnchor = null;
-  if (message.available !== false && Number.isFinite(message.epochMs) && typeof message.timeZone === 'string') {
+  if (message.available !== false && Number.isFinite(message.epochMs)) {
+    const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
+    const offset = Number.isFinite(message.utcOffsetMinutes) && Math.abs(message.utcOffsetMinutes) <= 1440 ? message.utcOffsetMinutes : null;
+    const offsetLabel = offset === null ? '' : `UTC${offset < 0 ? '-' : '+'}${String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0')}:${String(Math.abs(offset) % 60).padStart(2, '0')}`;
+    const label = message.timeZoneLabel || [message.timeZone, offsetLabel].filter(Boolean).join(' · ');
     try {
-      serverClockAnchor = { epochMs: message.epochMs, receivedAt: performance.now(), formatter: new Intl.DateTimeFormat('zh-CN', { timeZone: message.timeZone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }) };
-    } catch { /* An invalid server timezone must not fall back to the local timezone. */ }
+      if (typeof message.timeZone !== 'string' || !message.timeZone) throw new Error('No IANA zone');
+      serverClockAnchor = { epochMs: message.epochMs, receivedAt: performance.now(), offsetMs: 0, label, formatter: new Intl.DateTimeFormat('zh-CN', { ...options, timeZone: message.timeZone }) };
+    } catch {
+      if (offset !== null) serverClockAnchor = { epochMs: message.epochMs, receivedAt: performance.now(), offsetMs: offset * 60000, label: label || offsetLabel, formatter: new Intl.DateTimeFormat('zh-CN', { ...options, timeZone: 'UTC' }) };
+    }
   }
   renderServerInfo();
 }
@@ -203,7 +217,8 @@ function applyConfig(config, initial = false) {
 }
 function visibleEntry(item) { return state.showHiddenFiles || item.kind === 'command' || !item.name.startsWith('.'); }
 function settingsBusy(busy) {
-  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy || Boolean(extensionSettingsRequest) || (control.id !== 'cancelSettings' && !desktopAvailable);
+  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy || Boolean(extensionSettingsRequest) || (control.id !== 'cancelSettings' && !remoteMode);
+  $('closeSettings').disabled = busy || Boolean(extensionSettingsRequest);
   $('applySettings').textContent = busy ? '正在保存…' : '应用';
   extensionSettingsBusy();
 }
@@ -218,8 +233,10 @@ function openSettings() {
   $('settingsViewMode').value = state.viewMode;
   $('settingsWallpaper').value = state.wallpaper;
   $('settingsHidden').checked = state.showHiddenFiles;
-  $('settingsError').textContent = '';
-  $('settingsLocation').textContent = desktopAvailable ? '应用后保存到服务器桌面配置，并更新已打开的资源管理器。' : '连接 SSH 并打开远程桌面后可保存桌面外观；应用设置始终可用。';
+  settingsBaseline = { viewMode: state.viewMode, wallpaper: state.wallpaper, showHiddenFiles: state.showHiddenFiles };
+  $('settingsDesktopPath').value = desktopAvailable ? rootPath : (homePath ? joinPath(homePath, 'rdesktop') : '');
+  $('settingsError').textContent = desktopAccessError;
+  $('settingsLocation').textContent = remoteMode ? '桌面位置保存到本机。更改外观时才写入远程桌面配置，需要配置文件的写入权限。' : '连接 SSH 后可选择桌面目录；应用设置始终可用。';
   settingsBusy(false); setSettingsTab('desktop'); $('settingsDialog').showModal();
   loadExtensionSettings();
 }
@@ -309,28 +326,116 @@ function applyDesktopSettings(config) {
   selection.keys.clear(); renderIcons(); state.windows.forEach(renderWindow); save();
   showInterfaceAction('更新桌面设置'); notify(remoteMode ? '桌面设置已保存到服务器' : '桌面设置已保存');
 }
-function submitSettings(event) {
+async function submitSettings(event) {
   event.preventDefault(); if (settingsRequest || extensionSettingsRequest) return;
+  if (!remoteMode) { $('settingsError').textContent = '请先连接 SSH。'; return; }
   const config = { viewMode: $('settingsViewMode').value, wallpaper: $('settingsWallpaper').value, showHiddenFiles: $('settingsHidden').checked };
-  if (!desktopAvailable) { $('settingsError').textContent = '请先连接 SSH 并打开远程桌面。'; return; }
-  clearTimeout(saveTimer);
+  const requestedPath = $('settingsDesktopPath').value.trim();
+  let desktopPath;
+  try { desktopPath = resolveDirectoryAddress(requestedPath, rootPath); } catch (error) { $('settingsError').textContent = error.message; return; }
+  clearTimeout(saveTimer); clearTimeout(settingsTimer);
   const requestId = `settings-${nextRequest++}`;
-  settingsRequest = { requestId, config, pendingPatch: pendingConfig };
+  const request = { requestId, config, pendingPatch: pendingConfig, generation: connectionGeneration, switched: false };
+  settingsRequest = request;
   settingsBusy(true); $('settingsError').textContent = '';
-  const patch = { ...pendingConfig, ...config }; pendingConfig = {};
-  host.postMessage({ type: 'saveDesktopConfig', config: patch, requestId });
-  settingsTimer = setTimeout(() => {
-    if (settingsRequest?.requestId !== requestId) return;
-    pendingConfig = { ...settingsRequest.pendingPatch, ...pendingConfig };
-    settingsRequest = null; settingsBusy(false);
-    $('settingsError').textContent = '未收到服务器确认，配置可能已保存。请刷新桌面后核对或重试。';
-  }, 15000);
+  const changedConfig = Object.fromEntries(Object.entries(config).filter(([key, value]) => settingsBaseline?.[key] !== value));
+  try {
+    if (!desktopAvailable || desktopPath !== rootPath) {
+      // The backend owns the deadline through validation and commits the path
+      // together with its persisted preference. Await that definitive outcome.
+      const result = await api.setDesktop(desktopPath);
+      if (settingsRequest !== request || request.generation !== connectionGeneration || !remoteMode) return;
+      if (!result || !Array.isArray(result.entries) || typeof result.rootPath !== 'string') throw new Error('服务器未返回有效桌面内容');
+      request.switched = true; request.pendingPatch = {}; pendingConfig = {};
+      rootPath = result.rootPath; homePath = result.homePath || homePath; desktopAvailable = true; desktopAccessError = ''; initialized = true;
+      selection = { scope: 'desktop', keys: new Set() };
+      setDirectory(rootPath, result.entries); applyConfig(result.config || {}, true);
+      $('desktopPath').textContent = rootPath; $('settingsDesktopPath').value = rootPath;
+      connectionStatus = 'SSH · 已连接'; renderServerInfo();
+      renderIcons(); state.windows.forEach(renderWindow); renderDock(); updateBuiltinShortcuts(); save();
+      notify(`已将 ${rootPath} 设置为桌面`);
+    }
+    if (Object.keys(changedConfig).length || (!request.switched && Object.keys(pendingConfig).length)) {
+      const patch = { ...pendingConfig, ...changedConfig }; pendingConfig = {};
+      request.config = { viewMode: state.viewMode, wallpaper: state.wallpaper, showHiddenFiles: state.showHiddenFiles, ...changedConfig };
+      settingsTimer = setTimeout(() => {
+        if (settingsRequest !== request) return;
+        if (!request.switched) pendingConfig = { ...request.pendingPatch, ...pendingConfig };
+        settingsRequest = null; settingsBusy(false);
+        $('settingsError').textContent = `${request.switched ? '桌面位置已更新；' : ''}外观保存未收到确认，请刷新桌面核对后重试。`;
+      }, 15000);
+      host.postMessage({ type: 'saveDesktopConfig', config: patch, requestId });
+    } else {
+      clearTimeout(settingsTimer); settingsRequest = null; settingsBusy(false); closeSettings();
+    }
+  } catch (error) {
+    if (settingsRequest !== request || request.generation !== connectionGeneration) return;
+    clearTimeout(settingsTimer); settingsRequest = null; settingsBusy(false);
+    $('settingsError').textContent = error.message || String(error);
+  }
 }
 function requestFullscreen() {
   $('fullscreen').disabled = true;
   host.postMessage({ type: 'toggleFullscreen' });
   clearTimeout(fullscreenTimer);
   fullscreenTimer = setTimeout(() => { $('fullscreen').disabled = false; notify('未收到全屏请求确认，请重试'); }, 15000);
+}
+function accessError(error, fallback = '无访问权限') {
+  const detail = error?.message || String(error || '服务器拒绝访问');
+  return /无访问权限|无编辑权限/.test(detail) ? detail : `${fallback}：${detail}`;
+}
+function withTimeout(promise, message, milliseconds = 15000) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); })]).finally(() => clearTimeout(timer));
+}
+function closeDirectoryPicker() {
+  directoryPicker = null; $('desktopPickerDialog').close();
+}
+async function loadPickerDirectory(path) {
+  const picker = directoryPicker;
+  if (!picker || !remoteMode) return;
+  const request = ++picker.request;
+  $('desktopPickerError').textContent = ''; $('desktopPickerEntries').setAttribute('aria-busy', 'true');
+  $('desktopPickerSelect').disabled = true;
+  try {
+    const entries = await withTimeout(api.list(path), '目录读取超时，请重试。');
+    if (directoryPicker !== picker || picker.request !== request || picker.generation !== connectionGeneration) return;
+    if (!Array.isArray(entries)) throw new Error('服务器未返回目录列表');
+    picker.path = path; $('desktopPickerPath').value = path;
+    $('desktopPickerUp').disabled = path === '/';
+    $('desktopPickerEntries').replaceChildren();
+    for (const entry of entries.filter(item => item.type === 'directory' || item.type === 'folder')) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'directory-picker-entry';
+      button.textContent = `📁 ${entry.name}`; button.dataset.path = entry.path || joinPath(path, entry.name);
+      button.addEventListener('dblclick', () => loadPickerDirectory(button.dataset.path));
+      button.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); loadPickerDirectory(button.dataset.path); } });
+      $('desktopPickerEntries').append(button);
+    }
+    if (!$('desktopPickerEntries').children.length) $('desktopPickerEntries').textContent = '此目录没有子文件夹，可直接使用此目录。';
+  } catch (error) {
+    if (directoryPicker !== picker || picker.request !== request || picker.generation !== connectionGeneration) return;
+    $('desktopPickerPath').value = picker.path || path;
+    $('desktopPickerError').textContent = `${accessError(error)}\n请求目录：${path}`;
+  } finally {
+    if (directoryPicker === picker && picker.request === request) {
+      $('desktopPickerEntries').removeAttribute('aria-busy'); $('desktopPickerSelect').disabled = !picker.path;
+    }
+  }
+}
+function openDirectoryPicker() {
+  if (!remoteMode || settingsRequest) return;
+  directoryPicker = { path: null, request: 0, generation: connectionGeneration };
+  $('desktopPickerEntries').replaceChildren(); $('desktopPickerError').textContent = '';
+  $('desktopPickerDialog').showModal();
+  loadPickerDirectory(desktopAvailable ? rootPath : homePath || '/');
+}
+function showFileAccessDialog(item, readOnly, detail) {
+  fileAccessChoice = readOnly ? { item, generation: connectionGeneration } : null;
+  $('fileAccessTitle').textContent = readOnly ? '无编辑权限' : '无访问权限';
+  $('fileAccessDetail').textContent = `${item.path}\n${detail || (readOnly ? '当前账号不能写入此文件。可使用 Vim 只读打开。' : '当前账号无法读取此文件。')}`;
+  $('fileAccessReadOnly').hidden = !readOnly;
+  $('fileAccessCancel').textContent = readOnly ? '取消' : '关闭';
+  if (!$('fileAccessDialog').open) $('fileAccessDialog').showModal();
 }
 function glyph(item) {
   const picture = document.createElement('span');
@@ -349,13 +454,26 @@ function itemType(item) {
   if (item.isSymbolicLink) return item.type === 'folder' ? '文件夹快捷方式' : '文件快捷方式';
   return item.type === 'folder' ? '文件夹' : item.type === 'large' ? '大型文件' : '文件';
 }
-function openItem(item, scope = 'desktop') {
+async function openItem(item, scope = 'desktop') {
   if (!item || !remoteMode) return;
   if (item.broken) { notify('快捷方式目标不存在：' + item.path); return; }
   if (item.kind === 'command') { notify('原 VS Code 命令快捷方式不适用于独立应用。'); return; }
   if (item.type === 'folder') { openFolder(item.path, scope === 'desktop' ? undefined : scope); return; }
+  if (fileAccessRequests.has(item.path)) return;
+  const generation = connectionGeneration;
+  fileAccessRequests.add(item.path);
+  let access;
+  try {
+    access = await withTimeout(api.checkFileAccess(item.path), '文件权限检查超时，请重试。');
+    if (!remoteMode || generation !== connectionGeneration) return;
+    if (!access?.readable) { showFileAccessDialog(item, false, access?.error); return; }
+  } catch (error) {
+    if (remoteMode && generation === connectionGeneration) showFileAccessDialog(item, false, accessError(error));
+    return;
+  } finally { if (generation === connectionGeneration) fileAccessRequests.delete(item.path); }
   if (/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(item.name)) { openImage(item); return; }
   if (/\.(zip|gz|bz2|xz|7z|rar|tar|exe|dll|so|bin|odb|pdf|docx?|xlsx?|pptx?|mp4|mp3|wav|sqlite|db)$/i.test(item.name)) { notify('此文件适合下载后在本地打开，请右键选择“下载到本地”。'); return; }
+  if (!access.writable) { showFileAccessDialog(item, true, access.error); return; }
   openTerminal(parentOf(item.path), 'vim', item.path);
 }
 
@@ -624,7 +742,7 @@ function fitTerminal(win) {
     host.postMessage({ type: 'terminalResize', id: win.id, cols: record.cols, rows: record.rows });
   }
 }
-function openTerminal(path, program = 'shell', filePath) {
+function openTerminal(path, program = 'shell', filePath, readOnly = false) {
   if (!remoteMode) { notify('请先连接 SSH'); return; }
   if (!Object.hasOwn(PROGRAM_LABELS, program)) return;
   const offset = state.windows.length * 34;
@@ -633,7 +751,7 @@ function openTerminal(path, program = 'shell', filePath) {
   const element = $('terminalTemplate').content.firstElementChild.cloneNode(true);
   element.dataset.windowId = win.id; element.dataset.program = program;
   element.setAttribute('aria-label', `${PROGRAM_LABELS[program]} 终端 ${filePath || path}`);
-  element.querySelector('.window-title').textContent = `${PROGRAM_LABELS[program]} — ${basename(filePath || path)}`;
+  element.querySelector('.window-title').textContent = `${PROGRAM_LABELS[program]}${readOnly ? '（只读）' : ''} — ${basename(filePath || path)}`;
   element.querySelector('.terminal-location').textContent = filePath || path;
   element.querySelector('.terminal-location').title = filePath || path;
   renderToolIcons(element); windowElements.set(win.id, element); $('windows').append(element);
@@ -658,7 +776,7 @@ function openTerminal(path, program = 'shell', filePath) {
   terminal.onData(data => { if (record.active && record.opened) host.postMessage({ type: 'terminalInput', id: win.id, data }); });
   record.observer = new ResizeObserver(() => fitTerminal(win)); record.observer.observe(element.querySelector('.terminal-surface'));
   fitTerminal(win);
-  host.postMessage({ type: 'openTerminal', id: win.id, path, program, ...(filePath ? { filePath } : {}), cols: terminal.cols, rows: terminal.rows });
+  host.postMessage({ type: 'openTerminal', id: win.id, path, program, ...(filePath ? { filePath } : {}), ...(readOnly ? { readOnly: true } : {}), cols: terminal.cols, rows: terminal.rows });
   terminal.focus(); save();
 }
 function disposeTerminal(id) {
@@ -849,6 +967,7 @@ function updateWindowStatus(win) {
   const element = windowElements.get(win.id); if (!element) return;
   const count = directories[win.folder]?.filter(visibleEntry).length;
   const selected = selection.scope === win.id ? selection.keys.size : 0;
+  const error = element.querySelector('.window-error'); error.hidden = !win.error; error.textContent = win.error || '';
   element.querySelector('.window-footer').textContent = win.error || (win.pendingNavigation ? `正在读取 ${win.pendingNavigation.path}…` : count === undefined ? '正在读取…' : `${count} 项${selected ? ` · 已选择 ${selected} 项` : ''}`);
 }
 function updateView(win) {
@@ -1100,7 +1219,7 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
     if (message.ok) { applyDesktopSettings(request.config); closeSettings(); }
     else {
       pendingConfig = { ...request.pendingPatch, ...pendingConfig };
-      $('settingsError').textContent = message.error || '保存失败，请重试';
+      $('settingsError').textContent = `${request.switched ? '桌面位置已更新；外观保存失败：' : ''}${message.error || '保存失败，请重试'}`;
     }
     return;
   }
@@ -1110,6 +1229,12 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
     return;
   }
   if (['terminalOpened', 'terminalData', 'terminalExit', 'terminalError', 'terminalClosed'].includes(message.type)) { handleTerminalMessage(message); return; }
+  if (message.type === 'fileAccessError') {
+    const win = getWindow(message.id);
+    if (!remoteMode || !win) return;
+    windowAction('close-confirmed', win);
+    showFileAccessDialog({ path: message.path || win.folder }, false, accessError(message.error)); return;
+  }
   if (message.type === 'remoteState') {
     if (message.status === 'local') return;
     if (message.status === 'ready' && Array.isArray(message.entries)) {
@@ -1123,7 +1248,7 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
         directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear();
         state.activeWindow = null; selection = { scope: 'desktop', keys: new Set() }; state.clipboard = null;
       }
-      remoteMode = true; desktopAvailable = true; initialized = true; rootPath = path;
+      remoteMode = true; desktopAvailable = true; desktopAccessError = ''; initialized = true; rootPath = path;
       homePath = typeof message.homePath === 'string' && message.homePath.startsWith('/') ? message.homePath : null;
       updateBuiltinShortcuts();
       setDirectory(rootPath, message.entries); applyConfig(message.config, initial);
@@ -1132,15 +1257,21 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
       renderIcons(); state.windows.forEach(renderWindow); renderDock(); save(); notify(`已刷新 ${rootPath}`);
     } else if (['missing', 'error', 'disconnected'].includes(message.status)) {
       clearRemoteDesktop(message.status !== 'disconnected');
-      if (message.status === 'missing') {
+      if (message.status !== 'disconnected') {
         const remoteHome = message.homePath || message.home;
         homePath = typeof remoteHome === 'string' && remoteHome.startsWith('/') ? remoteHome : null;
         if (homePath) { remoteMode = true; initialized = true; rootPath = homePath; rebuildItems(); }
-        updateBuiltinShortcuts();
+        updateBuiltinShortcuts(); settingsBusy(false);
+      }
+      if (message.status === 'missing') {
         $('missingDesktopText').textContent = '主目录：' + (homePath || '未知') + '。暂不创建时仍可通过任务栏 Home 浏览主目录。';
         if (!$('missingDesktopDialog').open) $('missingDesktopDialog').showModal();
+      } else if (message.status === 'error' && remoteMode) {
+        desktopAccessError = message.message || '远程桌面不可用，请选择其他有访问权限的目录。';
+        $('desktopPath').textContent = '桌面不可用，请在设置中选择其他位置';
+        if ($('settingsDialog').open) $('settingsError').textContent = desktopAccessError;
       }
-      connectionStatus = message.status === 'missing' ? 'SSH · 尚未创建桌面' : message.status === 'disconnected' ? 'SSH · 已断开' : 'SSH · 读取失败'; renderServerInfo();
+      connectionStatus = message.status === 'missing' ? 'SSH · 尚未创建桌面' : message.status === 'disconnected' ? 'SSH · 已断开' : remoteMode ? 'SSH · 已连接，桌面不可用' : 'SSH · 读取失败'; renderServerInfo();
       notify(message.message || (message.status === 'missing' ? '远程桌面尚未创建' : 'SSH 连接不可用，请重新连接。'));
     }
   } else if (message.type === 'remoteDirectory' || message.type === 'remoteFolder') {
@@ -1166,12 +1297,12 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
       if (latest || navigatingWindow) notify(`已${navigatingWindow ? '打开' : '刷新'} ${message.path}`);
     } else if (message.error) {
       if (navigatingWindow) {
-        navigatingWindow.pendingNavigation = null; navigatingWindow.error = message.error;
+        navigatingWindow.pendingNavigation = null; navigatingWindow.error = `${message.accessDenied ? accessError(message.error) : message.error}\n请求目录：${message.path}`;
         const address = windowElements.get(navigatingWindow.id)?.querySelector('.window-path');
-        address?.setAttribute('aria-invalid', 'true'); if (address) address.title = message.error;
+        address?.setAttribute('aria-invalid', 'true'); if (address) { address.value = navigatingWindow.folder; address.removeAttribute('data-dirty'); address.title = message.error; }
         updateWindowStatus(navigatingWindow);
       } else if (latest) for (const win of state.windows) if (!win.kind && win.folder === message.path && !win.pendingNavigation) { win.error = message.error; renderWindow(win); }
-      if (latest || navigatingWindow) notify(message.error);
+      if (latest || navigatingWindow) notify(message.accessDenied ? `无访问权限：${message.error}` : message.error);
     }
   } else if (message.type === 'operationResult') {
     const operation = pendingOperations.get(message.requestId); pendingOperations.delete(message.requestId);
@@ -1207,13 +1338,13 @@ document.addEventListener('pointerdown', event => {
 document.addEventListener('keydown', event => {
   if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.getModifierState('AltGraph') || (event.code !== 'KeyT' && event.key.toLowerCase() !== 't')) return;
   event.preventDefault(); event.stopImmediatePropagation();
-  if (event.repeat || event.isComposing || !initialized || $('settingsDialog').open || $('connectionDialog').open || $('missingDesktopDialog').open) return;
+  if (event.repeat || event.isComposing || !initialized || document.querySelector('dialog[open]')) return;
   const focusedWindow = getWindow(event.target.closest('.window[data-window-id]')?.dataset.windowId);
   const selectedWindow = getWindow(selection.scope);
   openTerminal(focusedWindow?.folder || selectedWindow?.folder || rootPath);
 }, true);
 document.addEventListener('keydown', event => {
-  if ($('settingsDialog').open || $('connectionDialog').open || $('missingDesktopDialog').open) return;
+  if (document.querySelector('dialog[open]')) return;
   if (event.target.closest('input, textarea, .terminal-window, [contenteditable="true"]')) return;
   const context = contextFor(selection.scope), selected = selectedItems();
   let action;
@@ -1232,7 +1363,6 @@ document.addEventListener('keydown', event => {
   }
   if (action) { event.preventDefault(); performAction(action, context); }
 });
-$('newWindow').addEventListener('click', () => openFolder(rootPath));
 $('desktopSettings').addEventListener('click', openSettings);
 $('homeShortcut').querySelector('.builtin-icon').append(toolIcon('House'));
 $('settingsShortcut').querySelector('.builtin-icon').append(toolIcon('Settings'));
@@ -1251,13 +1381,32 @@ for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')
 $('refreshSystemInfo').addEventListener('click', loadSystemInfo);
 $('settingsConnection').addEventListener('click', () => { closeSettings(); if (!$('settingsDialog').open && !$('connectionDialog').open) $('connectionDialog').showModal(); });
 $('settingsForm').addEventListener('submit', submitSettings);
+$('browseDesktopPath').addEventListener('click', openDirectoryPicker);
+$('desktopPickerForm').addEventListener('submit', event => {
+  event.preventDefault(); if (!directoryPicker) return;
+  try { loadPickerDirectory(resolveDirectoryAddress($('desktopPickerPath').value, directoryPicker.path || '/')); }
+  catch (error) { $('desktopPickerError').textContent = error.message; }
+});
+$('desktopPickerUp').addEventListener('click', () => { if (directoryPicker?.path) loadPickerDirectory(parentOf(directoryPicker.path)); });
+$('desktopPickerCancel').addEventListener('click', closeDirectoryPicker);
+$('desktopPickerDialog').addEventListener('cancel', event => { event.preventDefault(); closeDirectoryPicker(); });
+$('desktopPickerSelect').addEventListener('click', () => {
+  if (!directoryPicker?.path) return;
+  $('settingsDesktopPath').value = directoryPicker.path; closeDirectoryPicker();
+});
+$('fileAccessCancel').addEventListener('click', () => { fileAccessChoice = null; $('fileAccessDialog').close(); });
+$('fileAccessDialog').addEventListener('cancel', () => { fileAccessChoice = null; });
+$('fileAccessReadOnly').addEventListener('click', () => {
+  const choice = fileAccessChoice; fileAccessChoice = null; $('fileAccessDialog').close();
+  if (choice && remoteMode && choice.generation === connectionGeneration) openTerminal(parentOf(choice.item.path), 'vim', choice.item.path, true);
+});
 $('extensionSettingsForm').addEventListener('submit', submitExtensionSettings);
 $('reloadExtensionSettings').addEventListener('click', loadExtensionSettings);
 $('cancelSettings').addEventListener('click', closeSettings);
 $('closeSettings').addEventListener('click', closeSettings);
 $('settingsDialog').addEventListener('cancel', event => { event.preventDefault(); closeSettings(); });
 $('fullscreen').addEventListener('click', requestFullscreen);
-for (const [id, name] of Object.entries({ newWindow: 'Plus', desktopSettings: 'Settings', fullscreen: 'Maximize' })) {
+for (const [id, name] of Object.entries({ desktopSettings: 'Settings', fullscreen: 'Maximize' })) {
   const button = $(id), label = button.querySelector('span:first-child');
   if (label) label.replaceChildren(toolIcon(name)); else button.replaceChildren(toolIcon(name));
 }
@@ -1289,13 +1438,15 @@ function clearWindowViews(preserveTerminals = false) {
   state.windows = preserveTerminals ? state.windows.filter(win => win.kind === 'terminal') : [];
 }
 function clearRemoteDesktop(preserveTerminals = false) {
+  connectionGeneration++; fileAccessRequests.clear(); fileAccessChoice = null;
+  closeDirectoryPicker(); $('fileAccessDialog').close();
   clearTimeout(saveTimer); clearTimeout(settingsTimer); pendingConfig = {}; settingsRequest = null;
   if (editor) editor.cancel();
   clearWindowViews(preserveTerminals);
   directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear(); pendingOperations.clear();
   state.shortcuts = []; state.pinnedApps = []; state.positions = {}; state.activeWindow = null; state.clipboard = null;
   selection = { scope: 'desktop', keys: new Set() };
-  remoteMode = false; desktopAvailable = false; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null;
+  remoteMode = false; desktopAvailable = false; desktopAccessError = ''; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null;
   resetSystemInfo(); updateBuiltinShortcuts(); settingsBusy(false);
   connectionStatus = 'SSH · 未连接'; $('desktopPath').textContent = '连接 SSH 后打开远程桌面';
   rebuildItems(); renderIcons(); renderDock(); renderPinnedApps(); renderServerInfo();

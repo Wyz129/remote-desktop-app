@@ -49,9 +49,9 @@ async function scenario(name, fn) {
       send(message) {
         window.messages.push(message);
         queueMicrotask(() => {
-          if (message.type === 'readDirectory') window.receive({type:'remoteDirectory',path:message.path,requestId:message.requestId,...(window.directories[message.path] ? {entries:window.directories[message.path]} : {error:'目录不存在'})});
+          if (message.type === 'readDirectory') window.receive({type:'remoteDirectory',path:message.path,requestId:message.requestId,...(window.deniedDirectory === message.path ? {error:'Permission denied (EACCES)',accessDenied:true} : window.directories[message.path] ? {entries:window.directories[message.path]} : {error:'目录不存在'})});
           if (message.type === 'openTerminal') window.receive({type:'terminalOpened',id:message.id});
-          if (message.type === 'saveDesktopConfig') window.receive({type:'configSaved',requestId:message.requestId,ok:true,config:message.config});
+          if (message.type === 'saveDesktopConfig') window.receive({type:'configSaved',requestId:message.requestId,ok:!window.failConfigSave,config:message.config,error:window.failConfigSave ? 'Permission denied' : undefined});
           if (message.type === 'toggleFullscreen') window.receive({type:'fullscreenResult',ok:true});
         });
       },
@@ -59,10 +59,14 @@ async function scenario(name, fn) {
         window.calls.push({type:'connect',input});
         if (window.failConnection) throw new Error('Authentication failed');
         window.receive({type:'serverInfo',username:input.username,hostname:input.host,epochMs:Date.now(),timeZone:'UTC',remote:true});
-        if (window.missingDesktop) window.receive({type:'remoteState',status:'missing',homePath:'/home/tester'}); else window.connectedState();
+        if (window.unavailableDesktop) window.receive({type:'remoteState',status:'error',homePath:'/home/tester',message:'无访问权限：/shared/previous — Permission denied (EACCES)'});
+        else if (window.missingDesktop) window.receive({type:'remoteState',status:'missing',homePath:'/home/tester'}); else window.connectedState();
         return {username:input.username,host:input.host,home:'/home/tester',verified:true,hostFingerprint:'SHA256:test'};
       },
       async disconnect() { window.receive({type:'remoteState',status:'disconnected'}); },
+      async list(path) { window.calls.push({type:'list',path}); if(window.deniedDirectory === path) throw new Error('Permission denied (EACCES)'); if(!window.directories[path]) throw new Error('目录不存在'); return window.directories[path]; },
+      async setDesktop(path) { window.calls.push({type:'setDesktop',path}); if(window.deferDesktop) return new Promise((resolve,reject)=>{window.resolveDesktop=resolve;window.rejectDesktop=reject;}); if(window.deniedDirectory === path) throw new Error('无访问权限：Permission denied (EACCES)'); if(!window.directories[path]) throw new Error('目录不存在'); return {status:'ready',rootPath:path,homePath:'/home/tester',entries:window.directories[path],config:{wallpaper:'slate',viewMode:'details',showHiddenFiles:true}}; },
+      async checkFileAccess(path) { window.calls.push({type:'checkFileAccess',path}); if(window.deferFileAccess) return new Promise(resolve=>{window.resolveFileAccess=resolve;}); return {path,readable:window.deniedFile !== path,writable:window.readOnlyFile !== path,error:window.deniedFile === path ? 'Permission denied (EACCES)' : undefined}; },
       async getSettings() { return window.settings; },
       async getSystemInfo() { window.calls.push({type:'getSystemInfo'}); if (window.failSystemInfo) throw new Error('SSH connection closed'); if (window.deferSystemInfo) return new Promise(resolve=>{window.resolveSystemInfo=resolve;}); return {...window.systemInfo}; },
       async saveSettings(patch) { Object.assign(window.settings,patch); return window.settings; },
@@ -134,7 +138,8 @@ test('windows_navigation_resize_drag_minimize_maximize', () => scenario('windows
   await win.locator('[data-window-action="maximize"]').click();
   await win.locator('[data-window-action="minimize"]').click();assert.equal(await win.isVisible(),false);
   await page.locator('#windowTabs .window-tab').click();assert.equal(await win.isVisible(),true);
-  await page.locator('#newWindow').click();assert.equal(await page.locator('.window').count(),2);
+  assert.equal(await page.locator('#newWindow').count(),0);
+  await page.locator('#homeShortcut').click();assert.equal(await page.locator('.window').count(),2);
   await page.locator('.window').last().locator('[data-window-action="close"]').click();assert.equal(await page.locator('#windowTabs .window-tab').count(),1);
 }));
 
@@ -287,7 +292,7 @@ test('home_without_desktop_browses_real_home_without_creating_or_faking_desktop'
   await win.getByText('profile.txt',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop'||m.type==='saveDesktopConfig'||m.type==='refreshRemote')),false);
   await page.locator('#settingsShortcut').click();
-  assert.equal(await page.locator('#applySettings').isDisabled(),true);
+  assert.equal(await page.locator('#applySettings').isEnabled(),true);
   await page.locator('#systemSettingsTab').click();
   await page.locator('[data-system-info="os"]').getByText('Ubuntu 24.04 LTS',{exact:true}).waitFor();
 }));
@@ -313,4 +318,159 @@ test('control_panel_system_info_refresh_failure_and_disconnect_rejects_stale_dat
   assert.equal(await page.locator('#systemInfoFields').isVisible(),false);
   assert.equal(await page.locator('[data-system-info="hostname"]').textContent(),'');
   await page.locator('#settingsConnection').click(); await page.locator('#connectionDialog[open]').waitFor();
+}));
+
+test('public_filesystem_navigation_and_denied_directory_restore_previous_location', () => scenario('public-resources', async page => {
+  await connect(page);
+  await page.evaluate(()=>{window.directories['/']=[{name:'shared',path:'/shared',type:'folder'}];window.directories['/shared']=[{name:'locked',path:'/shared/locked',type:'folder'}];window.deniedDirectory='/shared/locked';});
+  await page.locator('#homeShortcut').click();const win=page.locator('.window');
+  await win.getByText('profile.txt',{exact:true}).waitFor();
+  await win.locator('.window-path').fill('/');await win.locator('.window-path').press('Enter');
+  await win.getByText('shared',{exact:true}).dblclick();await win.getByText('locked',{exact:true}).waitFor();
+  await win.getByText('locked',{exact:true}).dblclick();
+  await win.locator('.window-error').waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(),'/shared');
+  assert.match(await win.locator('.window-error').textContent(),/无访问权限.*Permission denied[\s\S]*\/shared\/locked/);
+  assert.equal(await win.getByText('locked',{exact:true}).count(),1);
+  await win.locator('[data-window-action="back"]').click();await win.getByText('shared',{exact:true}).waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(),'/');
+}));
+
+test('desktop_picker_accepts_arbitrary_public_path_and_preserves_running_editor', () => scenario('desktop-location', async page => {
+  await connect(page);await icon(page,'notes.txt').dblclick();
+  const terminal=await page.locator('.terminal-window').getAttribute('data-window-id');
+  await page.evaluate(()=>{window.directories['/']=[{name:'shared',path:'/shared',type:'folder'}];window.directories['/shared']=[{name:'anything',path:'/shared/anything',type:'folder'}];window.directories['/shared/anything']=[{name:'public.txt',path:'/shared/anything/public.txt',type:'file'}];window.deniedDirectory='/locked';});
+  await page.locator('#settingsShortcut').click();await page.locator('#browseDesktopPath').click();
+  await page.locator('#desktopPickerPath').fill('/');await page.locator('#desktopPickerGo').click();
+  await page.locator('#desktopPickerEntries [data-path="/shared"]').dblclick();
+  await page.locator('#desktopPickerEntries [data-path="/shared/anything"]').waitFor();
+  await page.locator('#desktopPickerPath').fill('/locked');await page.locator('#desktopPickerGo').click();
+  await page.waitForFunction(()=>document.getElementById('desktopPickerError').textContent.includes('无访问权限'));
+  assert.equal(await page.locator('#desktopPickerPath').inputValue(),'/shared');
+  await page.locator('#desktopPickerEntries [data-path="/shared/anything"]').dblclick();
+  await page.waitForFunction(()=>document.getElementById('desktopPickerPath').value==='/shared/anything');
+  await page.locator('#desktopPickerSelect').click();await page.locator('#applySettings').click();
+  await page.locator('#settingsDialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#desktopPath').textContent(),'/shared/anything');
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'),'slate');
+  assert.equal(await page.locator('#icons [data-path="/shared/anything/public.txt"]').count(),1);
+  assert.equal(await page.locator('.terminal-window').getAttribute('data-window-id'),terminal);
+  assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='saveDesktopConfig')),false,'location only does not require remote configuration writes');
+}));
+
+test('desktop_switch_failure_preserves_desktop_and_form_then_handles_appearance_write_failure', () => scenario('desktop-location-errors', async page => {
+  await connect(page);await page.locator('#settingsShortcut').click();
+  await page.evaluate(()=>{window.deniedDirectory='/locked';window.directories['/public']=[];});
+  await page.locator('#settingsDesktopPath').fill('/locked');await page.locator('#settingsWallpaper').selectOption('purple');await page.locator('#applySettings').click();
+  await page.waitForFunction(()=>document.getElementById('settingsError').textContent.includes('无访问权限'));
+  assert.equal(await page.locator('#desktopPath').textContent(),desktop);
+  assert.equal(await page.locator('#settingsWallpaper').inputValue(),'purple');
+  assert.equal(await page.locator('#settingsDesktopPath').inputValue(),'/locked');
+  await page.evaluate(()=>{window.failConfigSave=true;});
+  await page.locator('#settingsDesktopPath').fill('/public');await page.locator('#applySettings').click();
+  await page.waitForFunction(()=>document.getElementById('settingsError').textContent.includes('外观保存失败'));
+  assert.equal(await page.locator('#desktopPath').textContent(),'/public');
+  assert.equal(await page.locator('#settingsDialog').isVisible(),true);
+  await page.evaluate(()=>{window.failConfigSave=false;});await page.locator('#applySettings').click();
+  await page.locator('#settingsDialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#desktop').getAttribute('data-wallpaper'),'purple');
+}));
+
+test('missing_desktop_can_choose_existing_location_and_late_switch_cannot_restore_disconnected_session', () => scenario('missing-desktop-location', async page => {
+  await page.evaluate(()=>{window.missingDesktop=true;window.directories['/public']=[];});await connect(page);
+  await page.locator('#skipDesktop').click();await page.locator('#settingsShortcut').click();
+  assert.equal(await page.locator('#settingsDesktopPath').inputValue(),'/home/tester/rdesktop');
+  assert.equal(await page.locator('#applySettings').isEnabled(),true);
+  await page.locator('#settingsDesktopPath').fill('/public');await page.locator('#applySettings').click();
+  await page.locator('#settingsDialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#desktopPath').textContent(),'/public');
+  await page.locator('#settingsShortcut').click();await page.locator('#settingsDesktopPath').fill('/delayed');
+  await page.evaluate(()=>{window.deferDesktop=true;});await page.locator('#applySettings').click();
+  await page.waitForFunction(()=>typeof window.resolveDesktop==='function');
+  await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveDesktop({rootPath:'/delayed',homePath:'/home/tester',entries:[{name:'stale.txt',path:'/delayed/stale.txt',type:'file'}],config:{}});});
+  assert.equal(await page.locator('#icons .icon').count(),0);
+  assert.match(await page.locator('#desktopPath').textContent(),/连接 SSH/);
+  assert.equal(await page.locator('#applySettings').isDisabled(),true);
+}));
+
+test('file_permission_denied_and_read_only_confirmation_are_explicit_and_failed_terminal_is_removed', () => scenario('file-permissions', async page => {
+  await connect(page);await page.evaluate(()=>{window.deniedFile='/home/tester/Desktop/notes.txt';});
+  await icon(page,'notes.txt').dblclick();await page.locator('#fileAccessDialog[open]').waitFor();
+  assert.equal(await page.locator('#fileAccessTitle').textContent(),'无访问权限');
+  assert.match(await page.locator('#fileAccessDetail').textContent(),/Permission denied/);
+  assert.equal(await page.locator('.terminal-window').count(),0);await page.locator('#fileAccessCancel').click();
+  await page.evaluate(()=>{window.deniedFile=null;window.readOnlyFile='/home/tester/Desktop/notes.txt';});
+  await icon(page,'notes.txt').dblclick();await page.locator('#fileAccessReadOnly').waitFor();
+  assert.equal(await page.locator('#fileAccessTitle').textContent(),'无编辑权限');
+  await page.locator('#fileAccessCancel').click();assert.equal(await page.locator('.terminal-window').count(),0);
+  await icon(page,'notes.txt').dblclick();await page.locator('#fileAccessReadOnly').click();
+  await page.locator('.terminal-window').waitFor();
+  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='openTerminal'&&m.readOnly===true)));
+  const id=await page.locator('.terminal-window').getAttribute('data-window-id');
+  await page.evaluate(id=>window.receive({type:'fileAccessError',id,path:'/home/tester/Desktop/notes.txt',error:'Permission denied after permissions changed'}),id);
+  assert.equal(await page.locator('.terminal-window').count(),0);await page.locator('#fileAccessDialog[open]').waitFor();
+}));
+
+test('desktop_switch_waits_for_backend_commit_without_abandoning_slow_persistence', () => scenario('desktop-location-delayed-commit', async page => {
+  await connect(page);await page.locator('#settingsShortcut').click();
+  await page.clock.install();await page.evaluate(()=>{window.deferDesktop=true;});
+  await page.locator('#settingsDesktopPath').fill('/delayed');await page.locator('#applySettings').click();
+  await page.waitForFunction(()=>typeof window.resolveDesktop==='function');
+  assert.equal(await page.locator('#applySettings').isDisabled(),true);
+  await page.clock.fastForward(60000);
+  assert.equal(await page.locator('#settingsError').textContent(),'');
+  assert.equal(await page.locator('#applySettings').isDisabled(),true);
+  await page.evaluate(()=>window.resolveDesktop({rootPath:'/delayed',homePath:'/home/tester',entries:[],config:{}}));
+  await page.locator('#settingsDialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#desktopPath').textContent(),'/delayed');
+}));
+
+test('desktop_switch_backend_timeout_keeps_previous_location_and_releases_controls', () => scenario('desktop-location-backend-timeout', async page => {
+  await connect(page);await page.locator('#settingsShortcut').click();
+  await page.evaluate(()=>{window.deferDesktop=true;});
+  await page.locator('#settingsDesktopPath').fill('/delayed');await page.locator('#applySettings').click();
+  await page.waitForFunction(()=>typeof window.rejectDesktop==='function');
+  await page.evaluate(()=>window.rejectDesktop(new Error('切换桌面超时，请重试')));
+  await page.waitForFunction(()=>document.getElementById('settingsError').textContent.includes('超时'));
+  assert.equal(await page.locator('#applySettings').isEnabled(),true);
+  assert.equal(await page.locator('#settingsDialog').isVisible(),true);
+  assert.equal(await page.locator('#desktopPath').textContent(),desktop);
+}));
+
+test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery', () => scenario('saved-desktop-recovery', async page => {
+  await page.evaluate(()=>{window.unavailableDesktop=true;window.directories['/shared/recovered']=[{name:'restored.txt',path:'/shared/recovered/restored.txt',type:'file'}];});
+  await connect(page);
+  assert.match(await page.locator('#connection').textContent(),/已连接，桌面不可用/);
+  assert.match(await page.locator('#notice').textContent(),/无访问权限.*Permission denied/);
+  await page.locator('#homeShortcut').click();
+  await page.locator('.window').getByText('profile.txt',{exact:true}).waitFor();
+  assert.equal(await page.locator('#connectionDialog').isVisible(),false);
+  await page.locator('#settingsShortcut').click();
+  assert.equal(await page.locator('#applySettings').isEnabled(),true);
+  assert.equal(await page.locator('#browseDesktopPath').isEnabled(),true);
+  assert.match(await page.locator('#settingsError').textContent(),/\/shared\/previous.*Permission denied/);
+  await page.locator('#settingsDesktopPath').fill('/shared/recovered');await page.locator('#applySettings').click();
+  await page.locator('#settingsDialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#desktopPath').textContent(),'/shared/recovered');
+  assert.equal(await page.locator('#connection').textContent(),'SSH · 已连接');
+  assert.equal(await page.locator('#icons [data-path="/shared/recovered/restored.txt"]').count(),1);
+  await page.locator('#settingsShortcut').click();assert.equal(await page.locator('#settingsError').textContent(),'');
+}));
+
+test('late_file_permission_result_after_disconnect_does_not_open_editor', () => scenario('late-file-permissions', async page => {
+  await connect(page);await page.evaluate(()=>{window.deferFileAccess=true;});await icon(page,'notes.txt').dblclick();
+  await page.waitForFunction(()=>typeof window.resolveFileAccess==='function');
+  await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveFileAccess({readable:true,writable:true});});
+  assert.equal(await page.locator('.terminal-window').count(),0);
+  assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='openTerminal')),false);
+}));
+
+test('clock_uses_server_zone_or_explicit_offset_without_client_timezone_fallback', () => scenario('server-local-clock', async page => {
+  await connect(page);
+  await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'Asia/Shanghai',utcOffsetMinutes:480,timeZoneLabel:'Asia/Shanghai · UTC+08:00',remote:true}));
+  assert.match(await page.locator('#serverClock').textContent(),/11:04:05.*Asia\/Shanghai.*UTC\+08:00/);
+  await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'SERVER-CUSTOM',utcOffsetMinutes:345,timeZoneLabel:'NPT · UTC+05:45',remote:true}));
+  assert.match(await page.locator('#serverClock').textContent(),/08:49:05.*NPT.*UTC\+05:45/);
+  await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'SERVER-CUSTOM',remote:true}));
+  assert.equal(await page.locator('#serverClock').textContent(),'服务器时间 —');
 }));

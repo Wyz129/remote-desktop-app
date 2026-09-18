@@ -1,8 +1,8 @@
 # Remote Desktop App
 
-通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.0.1。应用使用 Electron 44.4.2，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有虚拟桌面、资源管理器、文件操作和 xterm 终端继续保留。
+通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.0.2。应用使用 Electron 44.4.2，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有虚拟桌面、资源管理器、文件操作和 xterm 终端继续保留。
 
-本项目位于 `C:\0_myfiles\new_projects\remote-desktop-app`，由原扩展 0.0.7 的提交 `8c2e415f41759dca41d632c855347d539180e6ca` 克隆开发。原项目 `C:\0_myfiles\new_projects\remote-desktop` 和 GitHub `main` 保留；本副本分支为 `standalone-app`，上游远程名为 `upstream`，其推送地址已禁用。本阶段没有新建或发布 GitHub 仓库。
+独立应用仓库为私有的 [Wyz129/remote-desktop-app](https://github.com/Wyz129/remote-desktop-app)。它由原扩展 0.0.7 的提交 `8c2e415f41759dca41d632c855347d539180e6ca` 克隆开发，保留迁移历史；插件仓库 `Wyz129/remote-desktop` 独立维护。本地工作目录为 `C:\0_myfiles\new_projects\remote-desktop-app`；旧 `upstream` 推送地址保持禁用，新仓库使用 `origin`。
 
 ## 启动
 
@@ -16,7 +16,7 @@ npm.cmd start
 
 开发环境使用 Node.js 24 和 npm；首次安装/启动需要下载 Electron。启动脚本自动从子进程环境移除 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。`npm.cmd run dev` 启用 Electron 日志，不应将密码或私钥加入日志。
 
-本机已生成可运行程序：`artifacts/electron-1.0.1/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。此版本为本地未签名的 Windows x64 原型，尚未创建安装器或发布。
+本机可运行程序：`artifacts/electron-1.0.2/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。
 
 启动后应用立即全屏，并显示 SSH 连接窗口。填写主机、端口（默认 22）、用户名和密码；也可使用“选择”按钮选取本地私钥，并按需要填写私钥口令。私钥由主进程读取，页面只提交所选路径。密码和私钥口令不写入应用设置。
 
@@ -26,18 +26,18 @@ npm.cmd start
 
 ## 远程桌面与文件
 
-认证后在真实 SSH 登录环境读取 `$HOME`，再按优先顺序查找 `Desktop`、`desktop`、`桌面`（另接受大小写变体）。不写死账号，不使用本机主目录推断远程主目录，也不在失败时显示 Demo 文件。没有桌面目录会显示明确提示，只有点击“创建 Desktop”才新建目录。断连后清空当前远程内容和窗口。
+认证后在真实 SSH 登录环境读取 `$HOME`，优先恢复为当前服务器账号保存的桌面位置；首次使用则查找 `rdesktop`、`Desktop`、`desktop`、`桌面`（另接受大小写变体）。没有桌面目录时，只有点击“创建 rdesktop”才在主目录新建目录。在设置中可输入任意可访问路径，或浏览目录后选择“使用此目录”，目录不必叫 Desktop，也可位于公共资源区。位置按主机、端口、账号和已验证主机密钥保存在本地，刷新、重连和重启后恢复。已保存位置失效时明确报错，可通过 Home 或设置选择其他位置。
 
 - 双击文件夹打开资源管理器；窗口内双击子目录在该窗口导航。地址栏支持绝对路径、`~`、`~/目录` 和相对路径。
 - 窗口可拖动、八方向缩放、最大化、还原、最小化；左侧任务栏恢复最小化窗口。可同时打开多个目录、终端和图片窗口。
 - 右键菜单包含新建文件/目录、重命名、复制、剪切、粘贴、删除、创建桌面符号链接、下载、终端和刷新。保留 Ctrl 多选、框选和跨窗口文件移动。
 - 新建默认名为 `New File.txt`、`New Folder`，Enter 提交、Esc 取消；冲突生成编号名称。移动或重命名不会静默覆盖已有项目。永久删除必须在原生确认窗口中确认；删除符号链接只删除链接本身。
-- 文件浏览及修改限定在真实登录用户的主目录中，检查远程路径与符号链接目标。主目录、桌面根目录和 `/` 不能作为移动、重命名或删除目标。
+- 资源管理器可浏览 `/` 起的整个文件系统及外部符号链接，由服务器授予当前账号的权限决定访问与修改能力。目录访问失败保留上一个成功位置、内容和历史，同时显示“无访问权限”、请求路径及具体错误。登录主目录、当前桌面根目录、`/` 及其上级目录不能整体移动、重命名或删除。隐藏文件仍可通过设置显示。
 - F5 刷新，F2 重命名，Delete 请求删除，Ctrl+C/X/V 复制、剪切和粘贴。快捷键作用于应用内当前区域。
 
-普通文本或脚本文件在远程 Vim 窗口打开，只编辑，不自动执行脚本。压缩包、ODB、办公文档等常见二进制文件提示下载后处理；应用不解析这些格式。Vim、htop 必须已安装在服务器 PATH 中，缺失时终端明确报错。
+普通文本或脚本文件在远程 Vim 窗口打开，只编辑，不自动执行脚本。打开前通过当前 SSH 账号检查实际读写权限；无法读取时显示“无访问权限”，可读但不可写时显示“无编辑权限”，可选择 Vim 只读打开。该检查使用服务器权限判断，包含组权限和 ACL，不仅看文件 mode 位；实际操作仍受服务器约束。压缩包、ODB、办公文档等常见二进制文件提示下载后处理。Vim、htop 必须已安装在服务器 PATH 中，缺失时终端明确报错。
 
-左侧任务栏默认保留 **Home** 和 **设置**。Home 打开当前登录用户的真实主目录，已有窗口会恢复并聚焦；即使没有 Desktop 目录，也能浏览 Home，无需先创建桌面。
+左侧任务栏默认保留 **Home** 和 **设置**，已移除重复的“+”按钮。Home 打开当前登录用户的真实主目录，已有窗口会恢复并聚焦；即使没有桌面目录，也能浏览 Home，并通过地址栏或上一级按钮进入公共资源。
 
 ## 图片查看器
 
@@ -69,9 +69,9 @@ SVG 不在图片查看器支持范围内；可下载原文件后使用适当应�
 
 已有的 E325 交换文件可能含未保存内容，本版不会自动删除；应先在 Vim 中完成恢复或确认，再正常退出。
 
-顶栏账号、主机与时钟从服务器命令取得，时间以 UTC 显示；每 30 秒刷新，超过 90 秒未响应时提示等待服务器。它是 SSH 命令/心跳状态，不是完整远程桌面协议。
+顶栏显示服务器本地时间及 timezone，例如 `Asia/Shanghai (UTC+08:00)`。查询同时读取服务器 epoch、本地时间和实际偏移，优先识别 SSH 会话的 TZ，再查询系统时区；无法识别 IANA 时区名时使用服务器测得的偏移，不使用客户端时区。每 30 秒刷新，超过 90 秒未响应时提示等待服务器。
 
-桌面设置含视图、背景、隐藏文件和应用下载阈值。桌面外观写入远程配置；应用设置和已知主机记录写入 Electron 当前用户的 `userData/settings.json`，不写入仓库。原 `remoteDesktopDemo.*` VS Code 设置不再作为独立应用的配置来源。
+桌面设置含桌面位置、视图、背景、隐藏文件和应用下载阈值。仅选择路径不要求该目录可写；外观修改才写入远程配置，失败时明确保留已选路径并报告错误。桌面位置、应用设置和已知主机记录写入 Electron 当前用户的 `userData/settings.json`，不写入仓库。原 `remoteDesktopDemo.*` VS Code 设置不再作为独立应用的配置来源。
 
 任务栏“设置”打开控制面板，整合虚拟桌面、应用设置、SSH 连接管理，以及 Ubuntu/Linux 的系统版本、CPU、内存、主目录磁盘、网络地址、时间、时区和语言信息。系统页是可刷新的只读快照；系统级变更仍在有相应权限的远程终端完成，不会自动执行 sudo。显示和声音等 Ubuntu 图形会话设置不属于 SSH 虚拟桌面。
 
@@ -91,6 +91,6 @@ npm.cmd test
 npm.cmd run package
 ```
 
-`npm test` 依次执行语法、后端、无头 UI 和隔离 Electron 进程测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.0.1/win-unpacked/Remote Desktop.exe` 及其依赖目录；这是本地展开目录，不是安装器或已发布产品，运行时应保留完整目录。
+`npm test` 依次执行语法、后端、无头 UI 和隔离 Electron 进程测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.0.2/win-unpacked/Remote Desktop.exe` 及其依赖目录；这是本地展开目录，不是安装器或已发布产品，运行时应保留完整目录。
 
-最终源码测试通过：后端 62/62、真实本机 Vim 7/7、无头 UI 12/12、真实 Electron 集成 1/1；打包 EXE 重跑集成 1/1。报告及产物哈希见 [交付报告](artifacts/standalone-101-20260918.md)。验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 测试不能代表已验收用户服务器；本轮未获得用户服务器凭据，也未操作现有 VS Code/SSH 窗口。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。
+最终源码测试通过：后端 82/82、真实本机 Vim 7/7、无头 UI 22/22、真实 Electron 集成 1/1；打包 EXE 重跑集成 1/1。报告及产物哈希见 [交付报告](artifacts/standalone-102-20260918.md)。验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 测试不能代表已验收用户服务器；本轮未获得用户服务器凭据，也未操作现有 VS Code/SSH 窗口。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。

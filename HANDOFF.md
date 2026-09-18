@@ -1,13 +1,13 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-18。独立应用版本：1.0.1。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-18。独立应用版本：1.0.2。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
 
 ## 1. 仓库与工作边界
 
 - 独立项目：`C:\0_myfiles\new_projects\remote-desktop-app`。
 - 原扩展项目：`C:\0_myfiles\new_projects\remote-desktop`，保留不动。
 - 克隆基线：原扩展 0.0.7，提交 `8c2e415f41759dca41d632c855347d539180e6ca`。
-- 开发分支：`standalone-app`。`upstream` fetch 指向 `https://github.com/Wyz129/remote-desktop.git`；push 地址为 `DISABLED-UPSTREAM-PUSH`，不要恢复推送或把独立应用改动推到原 `main`。没有新建或发布 GitHub 仓库。
+- 开发分支：`standalone-app`。`upstream` fetch 指向 `https://github.com/Wyz129/remote-desktop.git`；push 地址为 `DISABLED-UPSTREAM-PUSH`，不要恢复推送或把独立应用改动推到原 `main`。新私有仓库为 https://github.com/Wyz129/remote-desktop-app，origin 指向它；本地 standalone-app 推送到新仓库 main。
 - 全局规则索引来自用户 AGENTS 指引；编程前读取 `C:\Users\KunYu\.codex\编程守则.md`。默认简体中文、英文标识符、UTF-8。
 - 用户已明确本阶段不使用“电脑操作”技能、不操作现有 VS Code/SSH 窗口。可使用隔离进程、回环 SSH 和无头浏览器验证。
 - 历史地址 `10.2.11.236` 与用户名 `yizhao.wang` 仅为旧项目交接线索；本轮没有当前凭据，不能假定当前仍连接或复用历史成功记录。
@@ -24,7 +24,7 @@
 | `preload.cjs` | `contextBridge` 暴露固定的 `window.remoteDesktop` API；不暴露 Node、任意文件读取或任意 IPC |
 | `lib/ssh-backend.cjs` | ssh2 连接、主机密钥验证、真实 `$HOME`、SFTP、图片字节、下载计划与流、取消/清理、SSH PTY |
 | `lib/terminal-guard.cjs` | Vim 保存/丢弃/取消确认、重复关闭去重，以及所有主动断开和应用退出的统一保护 |
-| `lib/desktop-service.cjs` | 登录主目录边界、目录项适配、统一远程配置与串行保存、文件 CRUD/复制/符号链接、固定程序、服务器信息 |
+| `lib/desktop-service.cjs` | 服务器完整文件系统访问、目录项适配、统一远程配置与串行保存、文件 CRUD/复制/符号链接、固定程序、服务器信息 |
 | `lib/sftp-stream.cjs` | 等待 ssh2 的远程 CLOSE 确认，保证 EOF/finish 后立即断连不会遗留读写流错误 |
 | `scripts/start-app.cjs` | 源码启动器；仅清除子进程的 ELECTRON_RUN_AS_NODE |
 | `app/index.html` | 独立桌面 DOM、连接/设置/缺桌面对话框、资源管理器/终端/图片模板、下载面板 |
@@ -48,7 +48,7 @@ BrowserWindow 启动全屏；`contextIsolation: true`、`nodeIntegration: false`
 
 未知主机通过原生对话框显式确认 SHA-256 指纹；拒绝时不得认证。已知主机按 host:port 严格匹配保存指纹；变化时失败，不自动重新信任。单次连接状态受到保护；失败、断开或重连都不能回退到 Demo。
 
-SSH 登录成功后执行 `printf '%s' "$HOME"` 获取主目录；无效、相对或多行返回应失败。连接不要求 Node.js、VS Code Server 或桌面软件安装在远程。桌面发现优先 Desktop、desktop、桌面；创建必须由用户点击确认，不能在初始化时自动写远程数据。
+SSH 登录成功后执行 `printf '%s' "$HOME"` 获取主目录；无效、相对或多行返回应失败。连接不要求 Node.js、VS Code Server 或桌面软件安装在远程。桌面发现优先 rdesktop、Desktop、desktop、桌面，先恢复按主机/端口/账号/指纹保存的任意路径；创建必须由用户点击确认，不能在初始化时自动写远程数据。
 
 ## 4. 前后端协议
 
@@ -60,7 +60,7 @@ SSH 登录成功后执行 `printf '%s' "$HOME"` 获取主目录；无效、相�
 | `disconnect()` | 清理当前连接；推 `remoteState: disconnected` |
 | `send({type:'ready'})` / `getServerInfo` | 当前远程桌面/服务器状态；未连接时不制造 ready 内容 |
 | `readDirectory {path,requestId,windowId?,intent?}` | `remoteDirectory {path,requestId,entries|error}` |
-| `refreshRemote {paths}` / `createDesktop` | 重新发现、载入配置、更新 `remoteState`；`createDesktop` 是显式创建动作 |
+| `refreshRemote {paths}` / `createDesktop` | 刷新当前桌面、载入配置、更新 `remoteState`；尚未选择时发现目录，`createDesktop` 是显式创建动作 |
 | `fileOperation {operation,requestId,...}` | `operationResult {requestId,success,cancelled?,paths,affectedPaths,error?}` |
 | `saveDesktopConfig {requestId?,config}` | `configSaved {requestId,ok,config|error}` |
 | `pinApp {app:{label,program}}` / `unpinApp {id}` | 服务端生成稳定 ID，串行更新配置，推 `configUpdated` |
@@ -78,7 +78,7 @@ SSH 登录成功后执行 `printf '%s' "$HOME"` 获取主目录；无效、相�
 
 ## 5. 文件、配置、终端与图片
 
-DesktopService 将操作限制在登录主目录内，并对读取目标或写入父目录执行 SFTP realpath 检查。主目录、桌面根和 `/` 为受保护根。它是应用操作边界，不能宣称对远程并发改链等所有 TOCTOU 情况具有独立文件系统沙箱保证。
+DesktopService 允许浏览和操作所有绝对路径，包含公共资源与外部符号链接，实际读写权限由服务器决定。对读取目标或写入父目录执行 SFTP realpath 检查，登录主目录、桌面根、`/` 及其上级目录不能整体修改。文件打开前以当前账号执行固定 test -r/-w 检查，不能用 mode 位推断权限；这些检查不保证远程并发权限修改期间没有 TOCTOU。
 
 文件操作使用 SFTP 接口，创建独占、移动/重命名禁止覆盖；复制和快捷方式生成可用编号名称。永久删除先原生确认，递归删除不跟随符号链接。多项目操作不是完整事务：失败前已经完成的项目可能保留，不能提示用户“全部回滚”。桌面符号链接是真实远程链接，不是本地伪文件。
 
@@ -88,7 +88,7 @@ DesktopService 将操作限制在登录主目录内，并对读取目标或写�
 
 xterm 连接 SSH PTY，白名单仅 shell/vim/htop；普通文件通过 Vim 编辑，不自动运行脚本。路径使用 POSIX 引用，最大 8 个会话、单次输入 64 KiB。关闭窗口要取消 pending 启动并结束会话；最小化不结束；重连/重开不自动启动。服务器未装 Vim/htop 时不自动安装。
 
-1.0.1 的 Vim 关闭先由 TerminalGuard 询问保存/丢弃/取消，再使用 Ctrl-\\ Ctrl-N 与 `:wqa` / `:qa!`，等待真实退出码 0，超时不销毁会话。启动通过 `-c` 在用户 vimrc 后注册 VimEnter 的 `/dev/tty` 标记（Vim BEL 转义必须为 `\\x07`，不可用 `\\a`）；未收到标记时不向 E325 提示发送退出按键。旧 swap 不自动删除。Shell 中手动启动的 Vim 仅提供保守提示，用户在终端正常退出。此保护覆盖虚拟红叉、断开/重连、原生窗口红叉和 app.quit；断网与系统强杀无法保存。
+1.0.2 的 Vim 关闭先由 TerminalGuard 询问保存/丢弃/取消，再使用 Ctrl-\\ Ctrl-N 与 `:wqa` / `:qa!`，等待真实退出码 0，超时不销毁会话。启动通过 `-c` 在用户 vimrc 后注册 VimEnter 的 `/dev/tty` 标记（Vim BEL 转义必须为 `\\x07`，不可用 `\\a`）；未收到标记时不向 E325 提示发送退出按键。旧 swap 不自动删除。Shell 中手动启动的 Vim 仅提供保守提示，用户在终端正常退出。此保护覆盖虚拟红叉、断开/重连、原生窗口红叉和 app.quit；断网与系统强杀无法保存。
 
 任务栏 Home/设置为常驻内建入口，与 pinnedApps 无关。Home 使用 homePath，缺 Desktop 时仍可浏览；desktopAvailable 控制远程桌面配置保存。系统页仅展示可刷新的只读信息，SSH 连接管理与桌面/下载设置可操作。桌面刷新错误或路径变化不再销毁活跃编辑器。
 
@@ -106,10 +106,20 @@ xterm 连接 SSH PTY，白名单仅 shell/vim/htop；普通文件通过 Vim 编�
 
 ## 7. 验证状态与后续实机边界
 
-最终 `npm test` 通过：后端 62/62（SSH 29、文件/配置服务 25、关闭保护 8）、真实本机 Vim 7/7、无头 UI 12/12、真实 Electron 进程集成 1/1。`npm run package` 生成 Windows x64 展开目录，直接启动打包 EXE 的同一集成场景也 1/1 通过。包内 13 个核心文件与源码一致，`npm audit` 无已知漏洞。准确边界见 [TESTING.md](TESTING.md)，产物路径与 SHA-256 见 [交付报告](artifacts/standalone-101-20260918.md)。
+最终 `npm test` 通过：后端 82/82（SSH 31、文件/配置服务 32、关闭保护 8、时钟 9、位置偏好 2）、真实本机 Vim 7/7、无头 UI 22/22、真实 Electron 进程集成 1/1。`npm run package` 生成 Windows x64 展开目录，直接启动打包 EXE 的同一集成场景也 1/1 通过。包内 15 个核心文件及 3 个许可证与源码一致，`npm audit` 无已知漏洞。准确边界见 [TESTING.md](TESTING.md)，产物路径与 SHA-256 见 [交付报告](artifacts/standalone-102-20260918.md)。
 
 本轮没有用户服务器凭据，没有外部 SSH 实机验收。回环夹具确实交换 SSH/SFTP 协议包并读写隔离的本地临时数据，但服务端仍是 ssh2.Server 受控夹具；它不等同 OpenSSH/PAM/MFA、真实服务器 TUI 或长期网络环境。
 
-后续修改运行 npm test、npm run package，并通过 `REMOTE_DESKTOP_TEST_EXE` 指向展开目录中的 EXE 重跑隔离 Electron 测试。当前 Electron 为 44.4.2，应用入口 `artifacts/electron-1.0.1/win-unpacked/Remote Desktop.exe`；保留完整目录。产物未签名、未发布；历史交接中的中间测试数字不作为最终验收。
+后续修改运行 npm test、npm run package，并通过 `REMOTE_DESKTOP_TEST_EXE` 指向展开目录中的 EXE 重跑隔离 Electron 测试。当前 Electron 为 44.4.2，应用入口 `artifacts/electron-1.0.2/win-unpacked/Remote Desktop.exe`；保留完整目录。产物未签名、未发布；历史交接中的中间测试数字不作为最终验收。
 
 外部 SSH 后续复测使用用户授权的独立测试目录：首次指纹/私钥/口令认证，真实 `$HOME` 与桌面配置、Vim/htop 交互、大小文件/递归目录下载、取消/断网清理及系统 Downloads 重定向。不得为了测试清理或覆盖用户已有远程桌面、已知主机或下载文件。
+
+## 1.0.2 补充交接
+
+- `lib/desktop-preferences.cjs` 规范化桌面路径，以主机、端口、账号和已验证主机指纹隔离位置偏好；主进程保存在 userData/settings.json，不含凭据。
+- `api.setDesktop(path)` 返回完整 ready state，由渲染器应用，不额外广播重复状态。切换与配置写入串行；15 秒截止覆盖排队和远程验证，进入本地保存阶段后等待实际提交结果。验证失败不改变原桌面。断连中断提交时主进程尝试恢复原本地偏好。
+- 已保存桌面不可访问时保持 SSH 浏览状态，Home 和设置可用于恢复。路径切换不要求目标目录可写；同时修改外观时单独报告配置保存失败。
+- `api.list(path)` 用于远程目录选择器；`api.checkFileAccess(path)` 提供实际读写结果，只读用应用内对话框确认；终端启动时再次检查。
+- `lib/server-clock.cjs` 单次 date 快照校验 epoch/localTime/offset，标识优先 TZ、系统 zoneinfo、timezone，再按实际偏移回退。前端显示服务器 localtime 和时区标签，每 30 秒更新。
+- 移除任务栏 +；默认显式新建 rdesktop，兼容已有 Desktop/desktop/桌面。
+- Electron 回归包含公共根、权限拒绝恢复、只读文件、任意名称桌面、只读位置、刷新/重连/应用重启及已保存位置失效后的恢复。

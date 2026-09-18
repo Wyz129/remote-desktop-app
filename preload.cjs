@@ -4,6 +4,8 @@ const subscribe = (channel, callback) => { const listener = (_, value) => callba
 contextBridge.exposeInMainWorld('remoteDesktop', {
   getSettings: () => ipcRenderer.invoke('app:get-settings'),
   getSystemInfo: () => ipcRenderer.invoke('ssh:system-info'),
+  setDesktop: remotePath => ipcRenderer.invoke('ssh:set-desktop', remotePath),
+  checkFileAccess: remotePath => ipcRenderer.invoke('ssh:file-access', remotePath),
   saveSettings: patch => ipcRenderer.invoke('app:save-settings', patch),
   choosePrivateKey: () => ipcRenderer.invoke('app:choose-private-key'),
   quitFullscreen: () => ipcRenderer.invoke('app:quit-fullscreen'),

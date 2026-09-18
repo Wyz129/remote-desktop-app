@@ -16,7 +16,6 @@
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
-      <button id="newWindow" class="dock-action" title="新建资源管理器窗口" aria-label="新建资源管理器窗口">＋</button>
       <div id="builtinApps" class="builtin-apps" aria-label="系统快捷方式">
         <button id="homeShortcut" class="pinned-app" title="Home · 远程主目录" aria-label="Home · 远程主目录"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">Home</span></button>
         <button id="settingsShortcut" class="pinned-app" title="设置 · 控制面板" aria-label="设置 · 控制面板"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">设置</span></button>
@@ -38,6 +37,8 @@
         <form id="settingsForm">
           <div class="settings-fields">
             <h3 class="settings-section-title">桌面外观</h3>
+            <label for="settingsDesktopPath">桌面位置</label><div class="desktop-path-picker"><input type="text" id="settingsDesktopPath" spellcheck="false" autocomplete="off" placeholder="例如 /home/用户名/rdesktop"><button type="button" id="browseDesktopPath">浏览…</button></div>
+            <p class="settings-description">可选择服务器上任意有访问权限的目录作为桌面，名称不限；位置会为当前服务器账号保存。</p>
             <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
             <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">青绿</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
             <label class="settings-check"><input type="checkbox" id="settingsHidden">显示隐藏文件和文件夹</label>
@@ -90,6 +91,7 @@
         <button class="view-button" data-window-action="details" aria-label="详情视图" title="详情视图" aria-pressed="true">☷</button>
         <button class="view-button" data-window-action="icons" aria-label="图标视图" title="图标视图" aria-pressed="false">▦</button>
       </div>
+      <p class="window-error" role="alert" hidden></p>
       <div class="column-headings" aria-hidden="true"><span>名称</span><span>类型</span><span>大小</span></div>
       <div class="listing" aria-label="目录内容"></div>
       <footer class="window-footer"></footer>
@@ -111,7 +113,7 @@
   </template>
 <dialog id="connectionDialog" class="connection-dialog" aria-labelledby="connectionTitle">
 <form id="connectionForm"><header class="settings-heading"><h2 id="connectionTitle">连接 SSH 服务器</h2><button type="button" id="closeConnection" aria-label="关闭连接窗口">×</button></header>
-<p>登录后自动打开真实主目录中的 Desktop、desktop 或 桌面。</p>
+<p>登录后打开为此服务器账号保存的桌面位置，或自动查找主目录中的 rdesktop、Desktop、desktop、桌面。</p>
 <div class="connection-fields"><label for="sshHost">主机</label><input id="sshHost" autocomplete="off" required placeholder="服务器地址">
 <label for="sshPort">端口</label><input id="sshPort" type="number" min="1" max="65535" value="22" required>
 <label for="sshUsername">用户名</label><input id="sshUsername" autocomplete="username" required>
@@ -121,7 +123,9 @@
 <p class="settings-description">密码与私钥口令仅用于当前连接，不保存。首次连接会显示主机指纹供确认。</p>
 <p id="connectionError" role="alert"></p><p id="connectionHint" role="status">全屏可按 F11 或点击顶栏全屏图标退出。</p>
 <footer class="settings-footer"><button type="button" id="disconnectButton">断开</button><button type="submit" id="connectSubmit" class="primary">连接</button></footer></form></dialog>
-<dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>确认后将在真实主目录中创建 Desktop 文件夹。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">创建 Desktop</button></footer></dialog>
+<dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>确认后将在真实主目录中创建 rdesktop 文件夹。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">创建 rdesktop</button></footer></dialog>
+<dialog id="desktopPickerDialog" class="connection-dialog directory-picker" aria-labelledby="desktopPickerTitle"><h2 id="desktopPickerTitle">选择桌面目录</h2><form id="desktopPickerForm" class="directory-picker-address"><button type="button" id="desktopPickerUp" aria-label="上一级目录">↑</button><input id="desktopPickerPath" aria-label="选择目录地址" spellcheck="false" autocomplete="off"><button type="submit" id="desktopPickerGo">打开</button></form><p id="desktopPickerError" role="alert"></p><div id="desktopPickerEntries" class="directory-picker-entries" aria-label="可选目录"></div><footer class="settings-footer"><button type="button" id="desktopPickerCancel">取消</button><button type="button" id="desktopPickerSelect" class="primary">使用此目录</button></footer></dialog>
+<dialog id="fileAccessDialog" class="connection-dialog" aria-labelledby="fileAccessTitle"><h2 id="fileAccessTitle">无访问权限</h2><p id="fileAccessDetail" role="alert"></p><footer class="settings-footer"><button type="button" id="fileAccessCancel">关闭</button><button type="button" id="fileAccessReadOnly" class="primary" hidden>只读打开</button></footer></dialog>
 <aside id="downloadsPanel" class="downloads-panel" aria-label="下载任务" hidden><header><h2>下载任务</h2><button id="closeDownloads" aria-label="关闭下载任务">×</button></header><p id="downloadsEmpty">尚无下载任务</p><div id="downloadItems"></div></aside>
 <template id="imageTemplate"><section class="window image-window" aria-label="图片查看器" tabindex="-1"><header class="titlebar"><span aria-hidden="true">▧</span><strong class="window-title"></strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button class="window-control close" data-window-action="close" aria-label="关闭图片">×</button></div></header><div class="image-controls"><button data-image-action="out" aria-label="缩小图片">−</button><button data-image-action="in" aria-label="放大图片">＋</button><button data-image-action="actual">100%</button><button data-image-action="fit">适应窗口</button><span class="image-scale">加载中…</span><span class="image-help">滚轮局部缩放 · 拖动平移</span></div><div class="image-viewport"><img draggable="false" alt=""></div><footer class="window-footer image-status" role="status">正在载入…</footer></section></template>
   <div id="selectionBox" class="selection-box" hidden></div>

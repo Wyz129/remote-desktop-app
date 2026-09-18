@@ -71,6 +71,17 @@ button:disabled { opacity: .4; cursor: default; }
 .settings-fields { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 1fr); gap: 18px 12px; align-items: center; }
 .settings-fields select { min-width: 0; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 4px; padding: 7px; font: inherit; }
 .settings-fields input[type="text"] { min-width: 0; width: 100%; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 4px; padding: 7px; font: inherit; }
+.desktop-path-picker { display: flex; min-width: 0; gap: 6px; }
+.desktop-path-picker button { flex: none; padding: 5px 9px; background: #364b40; }
+.window-error { flex: none; margin: 0; padding: 9px 12px; color: #ffd6d3; background: #642d2c; border-bottom: 1px solid #b76861; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; user-select: text; }
+.directory-picker-address { display: flex; gap: 8px; margin-top: 18px; }
+.directory-picker-address input { min-width: 0; flex: 1; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 4px; padding: 8px; }
+.directory-picker-entries { height: min(320px, 45vh); overflow: auto; padding: 10px 0; color: var(--muted); font-size: 13px; }
+.directory-picker-entry { display: block; width: 100%; text-align: left; padding: 10px; overflow-wrap: anywhere; }
+.directory-picker-entry:hover, .directory-picker-entry:focus { background: #466050; }
+#desktopPickerError, #fileAccessDetail { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+#desktopPickerError { color: #ffb1ad; }
+#desktopPickerError:empty { display: none; }
 .settings-section-title { grid-column: 1 / -1; margin: 0; font-size: 13px; color: #d1e6da; }
 #extensionSettingsForm { border-top: 1px solid var(--line); }
 #extensionSettingsStatus, #extensionSettingsError { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

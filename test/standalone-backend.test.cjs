@@ -54,11 +54,26 @@ test('incorrect pinned host key is rejected before authentication', options, asy
   assert.equal(fixture.calls.auth.length, 0);
 });
 
-for (const desktopName of ['desktop', '桌面']) test(`discovers ${desktopName} from the actual remote home`, options, async t => {
+for (const desktopName of ['rdesktop', 'desktop', '桌面']) test(`discovers ${desktopName} from the actual remote home`, options, async t => {
   const { backend, fixture } = await connected(t, { desktop: desktopName });
   const result = await backend.discoverDesktop();
   assert.equal(result.path, `${fixture.home}/${desktopName}`);
   assert.equal(result.found, true);
+});
+
+test('file access checks reflect server permissions including read-only and quoted public paths', options, async t => {
+  const { backend, fixture } = await connected(t);
+  const source = "/outside/中文 'quoted' ; $name.txt";
+  await fsp.writeFile(fixture.mapPath(source), 'public file');
+  assert.deepEqual(await backend.checkFileAccess(source), { path: source, readable: true, writable: true });
+  fixture.readOnlyPaths.add(source);
+  assert.deepEqual(await backend.checkFileAccess(source), { path: source, readable: true, writable: false });
+  fixture.unreadableFiles.add(source);
+  assert.deepEqual(await backend.checkFileAccess(source), { path: source, readable: false, writable: false });
+  assert.equal((await backend.list('/outside'))[0].writable, undefined, 'directory mode bits are not an authorization decision');
+  await assert.rejects(backend.checkFileAccess('/outside'), /普通文件/);
+  await assert.rejects(backend.checkFileAccess('/outside/missing.txt'), error => error.code === 2);
+  assert.equal(fixture.calls.exec.filter(command => command.startsWith('# remote-desktop-file-access-v1\n')).length, 3);
 });
 
 test('missing desktop is explicit and creation occurs only on the create request', options, async t => {
@@ -69,7 +84,7 @@ test('missing desktop is explicit and creation occurs only on the create request
   assert.deepEqual(await fsp.readdir(fixture.serverRoot), []);
   const created = await backend.discoverDesktop(true);
   assert.equal(created.created, true);
-  assert.equal(created.path, `${fixture.home}/Desktop`);
+  assert.equal(created.path, `${fixture.home}/rdesktop`);
   assert.equal((await fsp.stat(fixture.mapPath(created.path))).isDirectory(), true);
 });
 

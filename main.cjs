@@ -4,17 +4,19 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
 const { StringDecoder } = require('node:string_decoder');
-const { SshBackend, DEFAULT_THRESHOLD } = require('./lib/ssh-backend.cjs');
+const { SshBackend, DEFAULT_THRESHOLD, normalizeRemote } = require('./lib/ssh-backend.cjs');
 const { TerminalGuard } = require('./lib/terminal-guard.cjs');
+const { desktopIdentity, desktopLocations } = require('./lib/desktop-preferences.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
 let windowRef, backend, desktopService, connecting = false;
-let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'vim', knownHosts: {} };
+let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'vim', knownHosts: {}, desktopLocations: {} };
 let settingsQueue = Promise.resolve();
 const selectedKeys = new Set();
 const completedDownloads = new Set();
 const terminalStarts = new Map();
+const desktopPreferenceWrites = new Map();
 let sessionTransition = false, allowWindowClose = false, closingApplication = false;
 const terminalGuard = new TerminalGuard({ getBackend: () => backend,
   ask: options => dialog.showMessageBox(windowRef, options), report: options => dialog.showMessageBox(windowRef, options),
@@ -25,16 +27,20 @@ function requireSender(event) {
   if (!windowRef || event.sender !== windowRef.webContents || event.senderFrame?.url !== entryUrl) throw new Error('拒绝非应用窗口的请求。');
 }
 function requireBackend() { if (!backend?.connected || !desktopService) throw new Error('尚未连接 SSH。'); return backend; }
-function publicSettings() { const { knownHosts, ...visible } = settings; return { ...visible, downloadsPath: app.getPath('downloads') }; }
+function publicSettings() { const { knownHosts, desktopLocations, ...visible } = settings; return { ...visible, downloadsPath: app.getPath('downloads') }; }
+function currentSession(source) { return Boolean(source && source === backend && source.connected); }
+function accessDenied(error) { return [3, 'EACCES', 'EPERM'].includes(error?.code); }
+function accessMessage(error, remotePath) { return `${accessDenied(error) ? '无访问权限：' : ''}${remotePath ? `${remotePath} — ` : ''}${error.message}${error.code !== undefined ? ` (${error.code})` : ''}`; }
 async function loadSettings() {
-  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold'].includes(key))) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
+  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'desktopLocations'].includes(key))) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
   settings.scriptEditor = 'vim';
+  settings.desktopLocations = desktopLocations(settings.desktopLocations);
 }
 function saveSettings(patch) {
   const task = settingsQueue.then(async () => {
-    const next = { ...settings, ...patch };
+    const next = { ...settings, ...(typeof patch === 'function' ? patch(settings) : patch) };
     const target = path.join(app.getPath('userData'), 'settings.json'), temp = `${target}.tmp`;
     await fsp.mkdir(path.dirname(target), { recursive: true });
     await fsp.writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
@@ -69,11 +75,53 @@ async function quitSafely() {
   } finally { closingApplication = false; sessionTransition = false; }
 }
 async function inspect(create = false) {
-  requireBackend(); const remote = await desktopService.inspect(create); post(remote);
+  const source = requireBackend();
+  const remote = await desktopService.inspect(create, create ? null : settings.desktopLocations[source.desktopIdentity]);
+  if (!currentSession(source)) return { cancelled: true };
+  post(remote);
   if (remote.configError) post({ type: 'desktopError', error: remote.configError });
   return { ...remote, found: remote.status === 'ready', path: remote.rootPath, home: remote.homePath };
 }
-async function serverInfo() { try { if (backend?.connected) post(await desktopService.serverInfo()); } catch (error) { post({ type: 'serverInfo', remote: true, available: false, error: error.message }); } }
+async function serverInfo() {
+  const source = backend, service = desktopService;
+  try { if (source?.connected && service) { const result = await service.serverInfo(); if (currentSession(source)) post(result); } }
+  catch (error) { if (currentSession(source)) post({ type: 'serverInfo', remote: true, available: false, error: error.message }); }
+}
+async function setDesktop(remotePath) {
+  const source = requireBackend();
+  if (sessionTransition) throw new Error('正在切换连接，请稍后选择桌面。');
+  const target = normalizeRemote(remotePath);
+  const identity = source.desktopIdentity, token = {};
+  let previousPath, persisted = false;
+  try {
+    return await source.setDesktop(target, { beforeCommit: async () => {
+      if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，请重新选择桌面。');
+      await saveSettings(current => {
+        if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，请重新选择桌面。');
+        previousPath = current.desktopLocations[identity];
+        desktopPreferenceWrites.set(identity, token);
+        return { desktopLocations: { ...current.desktopLocations, [identity]: target } };
+      });
+      persisted = true;
+      if (!currentSession(source)) throw new Error('SSH 连接已断开。');
+    } });
+  } catch (error) {
+    // A disconnect while local storage is being written must not leave a
+    // preference that was never committed by the active desktop transaction.
+    if (persisted) {
+      try {
+        await saveSettings(current => {
+          if (desktopPreferenceWrites.get(identity) !== token) return {};
+          const locations = { ...current.desktopLocations };
+          if (previousPath === undefined) delete locations[identity]; else locations[identity] = previousPath;
+          desktopPreferenceWrites.delete(identity);
+          return { desktopLocations: locations };
+        });
+      } catch (restoreError) { throw new Error(`${accessMessage(error, remotePath)}；恢复本地桌面位置失败：${restoreError.message}`); }
+    }
+    throw new Error(accessMessage(error, remotePath));
+  }
+}
 function compatibilitySettings(requestId) { return { type: 'extensionSettings', requestId, hasWorkspace: false, target: 'user', settings: { openOnStartup: true, remoteRoot: '/', remoteHome: backend?.home || '', scriptEditor: 'vim' } }; }
 async function handleDesktopMessage(message) {
   if (!message || typeof message.type !== 'string') throw new Error('无效的桌面请求。');
@@ -84,8 +132,9 @@ async function handleDesktopMessage(message) {
   requireBackend();
   if (type === 'createDesktop') { await inspect(true); return; }
   if (type === 'readDirectory') {
-    try { const entries = await desktopService.entries(message.path); post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, entries }); }
-    catch (error) { post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, error: error.message }); }
+    const source = backend, service = desktopService;
+    try { const entries = await service.entries(message.path); if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, entries }); }
+    catch (error) { if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, error: accessMessage(error, message.path), accessDenied: accessDenied(error) }); }
   } else if (type === 'refreshRemote') {
     await inspect(); for (const remotePath of [...new Set(message.paths || [])]) await handleDesktopMessage({ type: 'readDirectory', path: remotePath });
   } else if (type === 'saveDesktopConfig') {
@@ -112,11 +161,26 @@ async function handleDesktopMessage(message) {
       const cwd = await service.checked(message.path), program = message.program || 'shell';
       if (!['shell', 'vim', 'htop'].includes(program)) throw new Error('不支持的终端程序。');
       const filePath = message.filePath ? await service.checked(message.filePath) : undefined;
-      if (filePath && !(await terminalBackend.stat(filePath)).isFile()) throw new Error('Vim 只能打开普通文件。');
+      let readOnly = Boolean(message.readOnly);
+      if (filePath) {
+        const access = await terminalBackend.checkFileAccess(filePath);
+        if (!access.readable) { const error = new Error('无访问权限：当前 SSH 账号无法读取文件。'); error.code = 'EACCES'; throw error; }
+        if (!access.writable && !readOnly) {
+          const answer = await dialog.showMessageBox(windowRef, { type: 'warning', title: '无编辑权限', message: '该文件无编辑权限，是否只读打开？', detail: filePath, buttons: ['取消', '只读打开'], defaultId: 1, cancelId: 0, noLink: true });
+          if (answer.response !== 1) { terminalStarts.delete(message.id); post({ type: 'terminalClosed', id: message.id }); return; }
+        }
+        readOnly ||= !access.writable;
+      }
       if (sessionTransition || terminalStarts.get(message.id) !== token || backend !== terminalBackend || !terminalBackend.connected) return;
       const decoder = new StringDecoder('utf8');
-      backend.openShell(message.id, cwd, data => post({ type: 'terminalData', id: message.id, data: decoder.write(data) }), error => { terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: 0 }); }, { program, filePath, cols: message.cols, rows: message.rows, onReady: () => post({ type: 'terminalOpened', id: message.id }) });
-    } catch (error) { if (terminalStarts.get(message.id) === token) { terminalStarts.delete(message.id); post({ type: 'terminalError', id: message.id, error: error.message }); } }
+      backend.openShell(message.id, cwd, data => post({ type: 'terminalData', id: message.id, data: decoder.write(data) }), error => { terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: 0 }); }, { program, filePath, readOnly, cols: message.cols, rows: message.rows, onReady: () => post({ type: 'terminalOpened', id: message.id }) });
+    } catch (error) {
+      if (terminalStarts.get(message.id) === token) {
+        terminalStarts.delete(message.id);
+        if (message.filePath && accessDenied(error)) post({ type: 'fileAccessError', id: message.id, path: message.filePath, error: accessMessage(error, message.filePath), accessDenied: true });
+        else post({ type: 'terminalError', id: message.id, error: error.message });
+      }
+    }
   } else if (type === 'terminalInput') backend.writeShell(message.id, message.data);
   else if (type === 'terminalResize') backend.resizeShell(message.id, message.cols, message.rows);
   else if (type === 'terminalClose') { await terminalGuard.request(message.id); }
@@ -162,8 +226,9 @@ function registerIpc() {
       try { result = await backend.connect({ host, port, username, password: input.password, privateKey, passphrase: input.passphrase, hostKeyFingerprint: known || input.hostKeyFingerprint }); }
       finally { privateKey?.fill(0); }
       desktopService = backend.desktopService();
+      backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
       await saveSettings({ host, port, username, hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...settings.knownHosts, [hostKey]: result.hostFingerprint } });
-      try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', message: error.message }); }
+      try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
       await serverInfo(); return result;
     } finally { connecting = false; sessionTransition = false; }
   });
@@ -176,9 +241,25 @@ function registerIpc() {
     } finally { sessionTransition = false; }
   });
   handle('ssh:discover-desktop', create => inspect(Boolean(create)));
-  handle('ssh:list', remotePath => { requireBackend(); return desktopService.entries(remotePath); });
+  handle('ssh:list', async remotePath => {
+    const source = requireBackend();
+    try { const entries = await desktopService.entries(remotePath); if (!currentSession(source)) throw new Error('SSH 连接已改变。'); return entries; }
+    catch (error) { throw new Error(accessMessage(error, remotePath)); }
+  });
   handle('ssh:system-info', () => { requireBackend(); return desktopService.systemInfo(); });
-  handle('ssh:image', remotePath => requireBackend().readImage(remotePath));
+  handle('ssh:set-desktop', setDesktop);
+  handle('ssh:file-access', async remotePath => {
+    const source = requireBackend();
+    try {
+      const result = await source.checkFileAccess(remotePath);
+      if (!currentSession(source)) throw new Error('SSH 连接已改变。');
+      return { ...result, ...(!result.readable ? { error: `无访问权限：${remotePath} — 当前 SSH 账号无法读取文件 (EACCES)` } : {}) };
+    } catch (error) { throw new Error(accessMessage(error, remotePath)); }
+  });
+  handle('ssh:image', async remotePath => {
+    try { return await requireBackend().readImage(remotePath); }
+    catch (error) { throw new Error(accessMessage(error, remotePath)); }
+  });
   handle('ssh:download', async (remotePath, id) => {
     const sourceBackend = requireBackend();
     const result = await sourceBackend.download(remotePath, { id, onProgress: value => send('download:progress', value) });

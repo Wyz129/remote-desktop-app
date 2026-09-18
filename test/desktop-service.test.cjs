@@ -191,36 +191,130 @@ test('oversized and non-object configuration files are rejected before save', op
   }
 });
 
-test('paths outside the login home and protected roots cannot be mutated', options, async t => {
+test('public directories can be browsed and edited while protected roots cannot be mutated', options, async t => {
   const { fixture, service, desktop } = await setup(t);
-  for (const parent of ['/outside', `${fixture.home}/../../outside`, '/srv/fixture-user-sibling']) {
-    await assert.rejects(service.operate({ operation: 'new-file', parent, name: 'must-not-exist' }, noConfirmation), /主目录/);
-  }
-  for (const root of [fixture.home, desktop, '/']) {
+  assert.ok((await service.entries('/')).some(entry => entry.path === '/outside'));
+  await service.operate({ operation: 'new-file', parent: '/outside', name: 'shared.txt' }, noConfirmation);
+  assert.equal(await fsp.readFile(path.join(fixture.outsideRoot, 'shared.txt'), 'utf8'), '');
+  assert.equal((await service.entries(`${fixture.home}/../../outside`))[0].name, 'shared.txt');
+  for (const root of [fixture.home, desktop, '/srv', '/']) {
     await assert.rejects(service.operate({ operation: 'delete', paths: [root] }, noConfirmation), /主目录|根目录/);
     await assert.rejects(service.operate({ operation: 'rename', paths: [root], name: 'renamed-root' }, noConfirmation), /主目录|根目录/);
   }
   await assert.rejects(service.operate({ operation: 'new-file', parent: desktop, name: '../escape' }, noConfirmation), /名称/);
-  assert.deepEqual(await fsp.readdir(fixture.outsideRoot), []);
+  assert.deepEqual(await fsp.readdir(fixture.outsideRoot), ['shared.txt']);
 });
 
-test('resolved directory links and configuration links cannot escape the home boundary', options, async t => {
+test('public directory and configuration symlinks are accessible outside the home', options, async t => {
   const { fixture, service, desktop } = await setup(t);
   await fsp.writeFile(path.join(fixture.outsideRoot, 'settings.json'), '{"custom":"outside"}');
   fixture.link(`${desktop}/escape`, '/outside');
-  await assert.rejects(service.entries(`${desktop}/escape`), /主目录之外/);
-  await assert.rejects(service.operate({ operation: 'new-file', parent: `${desktop}/escape`, name: 'blocked.txt' }, noConfirmation), /主目录之外/);
+  assert.equal((await service.entries(`${desktop}/escape`))[0].name, 'settings.json');
+  await service.operate({ operation: 'new-file', parent: `${desktop}/escape`, name: 'shared.txt' }, noConfirmation);
   fixture.link(`${desktop}/.remote-desktop.json`, '/outside/settings.json');
-  assert.deepEqual(await service.loadConfig(), {}); assert.match(service.configError, /主目录之外/);
-  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), /主目录之外/);
+  assert.deepEqual(await service.loadConfig(), { custom: 'outside' }); assert.equal(service.configError, null);
   assert.equal(await fsp.readFile(path.join(fixture.outsideRoot, 'settings.json'), 'utf8'), '{"custom":"outside"}');
-  assert.deepEqual(await fsp.readdir(fixture.outsideRoot), ['settings.json']);
+  assert.deepEqual(await fsp.readdir(fixture.outsideRoot), ['settings.json', 'shared.txt']);
+});
+
+test('arbitrary desktop selection outside home survives refresh and selected paths restore after reconnect', options, async t => {
+  const { fixture, backend, service } = await setup(t);
+  await fsp.mkdir(fixture.mapPath('/outside/Team Space'));
+  await fsp.writeFile(fixture.mapPath('/outside/Team Space/readme.txt'), 'shared workspace');
+  const state = await backend.setDesktop('/outside/Team Space');
+  assert.equal(state.status, 'ready'); assert.equal(state.rootPath, '/outside/Team Space');
+  assert.equal(state.entries[0].name, 'readme.txt'); assert.equal(state.entries[0].type, 'file');
+  assert.equal((await service.inspect()).rootPath, '/outside/Team Space');
+  assert.equal((await backend.discoverDesktop()).path, '/outside/Team Space');
+  await backend.disconnect(); await backend.connect(fixture.config);
+  assert.equal((await backend.desktopService().inspect(false, '/outside/Team Space')).rootPath, '/outside/Team Space');
+});
+
+test('unreadable desktop selection preserves previous path and configuration without persisting', options, async t => {
+  const { fixture, backend, service, desktop } = await setup(t);
+  await service.saveConfig({ wallpaper: 'purple' });
+  fixture.deniedDirectories.add('/outside');
+  let persisted = false;
+  await assert.rejects(backend.setDesktop('/outside', { beforeCommit: async () => { persisted = true; } }), error => error.code === 3 && /Permission denied/.test(error.message));
+  assert.equal(persisted, false); assert.equal(backend.desktop, desktop);
+  assert.equal(service.configPath, `${desktop}/.remote-desktop.json`); assert.equal(service.config.wallpaper, 'purple');
+  await assert.rejects(service.entries('/outside'), error => error.code === 3);
+  assert.equal((await service.inspect()).rootPath, desktop);
+});
+
+test('desktop persistence failure rolls back and read-only desktop remains usable', options, async t => {
+  const { fixture, backend, service, desktop } = await setup(t);
+  await assert.rejects(backend.setDesktop('/outside', { beforeCommit: async () => { throw new Error('Local preference write failed'); } }), /preference write failed/);
+  assert.equal(backend.desktop, desktop);
+  fixture.readOnlyPaths.add('/outside');
+  assert.equal((await backend.setDesktop('/outside')).rootPath, '/outside');
+  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), error => error.code === 3 && /Permission denied/.test(error.message));
+  assert.equal((await service.inspect()).rootPath, '/outside');
+  assert.deepEqual(await fsp.readdir(fixture.outsideRoot), []);
+});
+
+test('desktop switches serialize with configuration saves to keep each location consistent', options, async t => {
+  const { fixture, backend, service, desktop } = await setup(t);
+  const oldSave = service.saveConfig({ wallpaper: 'purple' });
+  const switchDesktop = backend.setDesktop('/outside');
+  const newSave = service.saveConfig({ wallpaper: 'slate' });
+  await Promise.all([oldSave, switchDesktop, newSave]);
+  assert.equal((await readJson(fixture, `${desktop}/.remote-desktop.json`)).wallpaper, 'purple');
+  assert.equal((await readJson(fixture, '/outside/.remote-desktop.json')).wallpaper, 'slate');
+  assert.equal(backend.desktop, '/outside');
+});
+
+test('desktop switch rejects late timeout completion before persistence or state changes', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finish; let persisted = false;
+  const backend = new SshBackend();
+  backend.client = {}; backend.home = '/home/test'; backend.desktop = '/home/test/rdesktop'; backend.sftp = {};
+  backend.stat = async () => ({ isDirectory: () => true });
+  backend.list = () => new Promise(resolve => { finish = resolve; });
+  const service = backend.desktopService();
+  service.readConfig = async () => ({ config: {}, configPath: '/outside/.remote-desktop.json', configError: null });
+  const rejection = assert.rejects(backend.setDesktop('/outside', { beforeCommit: () => { persisted = true; } }), /超时/);
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  t.mock.timers.tick(15000); await rejection;
+  finish([]); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  assert.equal(persisted, false); assert.equal(backend.desktop, '/home/test/rdesktop');
+});
+
+test('desktop switch deadline includes queue waiting and never starts expired validation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const backend = new SshBackend();
+  let unblock, activated = false;
+  backend._activateDesktop = async () => { activated = true; };
+  const service = backend.desktopService();
+  const blocking = service.serialize(() => new Promise(resolve => { unblock = resolve; }));
+  await Promise.resolve();
+  const rejection = assert.rejects(backend.setDesktop('/shared'), /超时/);
+  t.mock.timers.tick(15000); await rejection;
+  unblock(); await blocking; await service.queue;
+  assert.equal(activated, false);
+});
+
+test('desktop switch awaits persistence commit beyond validation deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const backend = new SshBackend();
+  backend.client = {}; backend.home = '/home/test'; backend.desktop = '/home/test/rdesktop'; backend.sftp = {};
+  backend.stat = async () => ({ isDirectory: () => true }); backend.list = async () => [];
+  const service = backend.desktopService();
+  service.readConfig = async () => ({ config: {}, configPath: '/outside/.remote-desktop.json', configError: null });
+  let finish, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const result = backend.setDesktop('/outside', { beforeCommit: () => { entered(); return new Promise(resolve => { finish = resolve; }); } });
+  await started; t.mock.timers.tick(20000);
+  assert.equal(backend.desktop, '/home/test/rdesktop');
+  finish(); assert.equal((await result).rootPath, '/outside');
+  assert.equal(backend.desktop, '/outside');
 });
 
 test('copy and move into their own descendant are rejected', options, async t => {
   const { fixture, service, desktop } = await setup(t);
   await fixture.put('Desktop/tree/child/keep.txt', 'keep');
-  for (const mode of ['copy', 'move']) await assert.rejects(service.operate({ operation: 'paste', parent: `${desktop}/tree/child`, clipboard: { mode, paths: [`${desktop}/tree`] } }, noConfirmation), /自身内部/);
+  fixture.link('/outside/alias-child', `${desktop}/tree/child`);
+  for (const mode of ['copy', 'move']) for (const parent of [`${desktop}/tree/child`, '/outside/alias-child']) await assert.rejects(service.operate({ operation: 'paste', parent, clipboard: { mode, paths: [`${desktop}/tree`] } }, noConfirmation), /自身内部/);
   assert.equal(await fsp.readFile(fixture.mapPath(`${desktop}/tree/child/keep.txt`), 'utf8'), 'keep');
 });
 
@@ -228,8 +322,8 @@ test('server information is returned by the authenticated SSH command channel', 
   const { fixture, service } = await setup(t);
   const info = await service.serverInfo();
   assert.equal(info.remote, true); assert.equal(info.username, fixture.username); assert.equal(info.hostname, 'fixture-host');
-  assert.equal(info.timeZone, 'UTC'); assert.ok(Math.abs(info.epochMs - Date.now()) < 5000);
-  assert.ok(fixture.calls.exec.includes('id -un; hostname; date -u +%s'));
+  assert.equal(info.utcOffsetMinutes, 0); assert.match(info.timeZoneLabel, /Etc\/UTC/); assert.ok(Math.abs(info.epochMs - Date.now()) < 5000);
+  assert.ok(fixture.calls.exec.some(command => command.startsWith('# remote-desktop-server-clock-v1\n')));
 });
 
 test('system settings information uses the authenticated SSH channel and real login home', options, async t => {
