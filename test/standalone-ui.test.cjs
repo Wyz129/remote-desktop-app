@@ -1,0 +1,200 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const { test, before, after } = require('node:test');
+const { chromium } = require('playwright');
+const root = path.resolve(__dirname, '..');
+const desktop = '/home/tester/Desktop';
+let browser, server, origin;
+const results = [];
+
+before(async () => {
+  server = http.createServer((req, res) => {
+    const file = req.url === '/' ? '/app/index.html' : req.url.split('?')[0];
+    if (!/^\/(app|media)\/[\w.-]+$/.test(file)) return res.writeHead(404).end();
+    const target = path.join(root, file);
+    if (!fs.existsSync(target)) return res.writeHead(404).end();
+    res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.css') ? 'text/css' : 'application/javascript');
+    res.end(fs.readFileSync(target));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  origin = `http://127.0.0.1:${server.address().port}`;
+  browser = await chromium.launch({ headless: true, channel: 'chrome' });
+});
+after(async () => {
+  await browser?.close();
+  await new Promise(resolve => server?.close(resolve));
+  fs.mkdirSync(path.join(root, 'artifacts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'artifacts', 'standalone-ui-results.json'), JSON.stringify({ boundary: '真实渲染器、无头 Chrome、替身 Electron/SSH API', results }, null, 2));
+});
+
+async function scenario(name, fn) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  page.setDefaultTimeout(6000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    const root = '/home/tester/Desktop';
+    const entry = (name, type = 'file', base = root) => ({ name, type, path: `${base}/${name}`, size: '12 B' });
+    window.messages = []; window.calls = []; window.downloadPending = new Map();
+    window.fetch = (...args) => { throw new Error('Renderer must not fetch local files: ' + String(args[0])); };
+    window.settings = { downloadThreshold: 50 * 1024 * 1024, scriptEditor: 'vim', downloadsPath: 'D:\\Downloads' };
+    window.directories = { [root]: [entry('projects', 'folder'), entry('results', 'folder'), entry('notes.txt'), entry('picture.png'), entry('archive.zip')], [`${root}/projects`]: [entry('nested','folder',`${root}/projects`), entry('source.txt','file',`${root}/projects`)], [`${root}/projects/nested`]: [], [`${root}/results`]: [] };
+    window.connectedState = () => window.receive({ type:'remoteState', status:'ready', rootPath:root, homePath:'/home/tester', entries:window.directories[root], config:{viewMode:'details', shortcuts:[{command:'workbench.action.showCommands',label:'Legacy'}]} });
+    window.remoteDesktop = {
+      onMessage(callback) { window.receive = callback; },
+      send(message) {
+        window.messages.push(message);
+        queueMicrotask(() => {
+          if (message.type === 'readDirectory') window.receive({type:'remoteDirectory',path:message.path,requestId:message.requestId,...(window.directories[message.path] ? {entries:window.directories[message.path]} : {error:'目录不存在'})});
+          if (message.type === 'openTerminal') window.receive({type:'terminalOpened',id:message.id});
+          if (message.type === 'saveDesktopConfig') window.receive({type:'configSaved',requestId:message.requestId,ok:true,config:message.config});
+          if (message.type === 'toggleFullscreen') window.receive({type:'fullscreenResult',ok:true});
+        });
+      },
+      async connect(input) {
+        window.calls.push({type:'connect',input});
+        if (window.failConnection) throw new Error('Authentication failed');
+        window.receive({type:'serverInfo',username:input.username,hostname:input.host,epochMs:Date.now(),timeZone:'UTC',remote:true});
+        if (window.missingDesktop) window.receive({type:'remoteState',status:'missing',homePath:'/home/tester'}); else window.connectedState();
+        return {username:input.username,host:input.host,home:'/home/tester',verified:true,hostFingerprint:'SHA256:test'};
+      },
+      async disconnect() { window.receive({type:'remoteState',status:'disconnected'}); },
+      async getSettings() { return window.settings; },
+      async saveSettings(patch) { Object.assign(window.settings,patch); return window.settings; },
+      async choosePrivateKey() { return 'D:\\keys\\id_ed25519'; },
+      async image(file) { window.calls.push({type:'image',path:file}); const canvas = document.createElement('canvas'); canvas.width = 1600; canvas.height = 1200; const context = canvas.getContext('2d'); context.fillStyle = '#70b294'; context.fillRect(0,0,1600,1200); context.fillStyle = '#fff'; context.beginPath(); context.arc(400,400,180,0,Math.PI*2); context.fill(); return {name:'picture.png',mime:'image/png',data:canvas.toDataURL('image/png').split(',')[1]}; },
+      download(file,id) { window.calls.push({type:'download',path:file,id}); return new Promise((resolve,reject) => window.downloadPending.set(id,{resolve,reject})); },
+      async cancelDownload(id) { window.calls.push({type:'cancelDownload',id}); const error=new Error('操作已取消');error.code='ABORT_ERR';window.downloadPending.get(id)?.reject(error); },
+      onDownloadProgress(callback) { window.progress = callback; },
+      async quitFullscreen() { window.calls.push({type:'quitFullscreen'}); }
+    };
+  });
+  try {
+    await page.goto(origin + '/app/index.html');
+    await page.locator('#connectionDialog[open]').waitFor();
+    await fn(page);
+    assert.deepEqual(errors, [], 'renderer has no uncaught errors');
+    results.push({name,passed:true});
+  } catch (error) {
+    results.push({name,passed:false,error:error.message});
+    await page.screenshot({path:path.join(root,'artifacts',`standalone-failed-${name}.png`)}).catch(()=>{});
+    throw error;
+  } finally { await page.close(); }
+}
+async function connect(page) {
+  await page.locator('#sshHost').fill('ssh.example.test');
+  await page.locator('#sshUsername').fill('tester');
+  await page.locator('#sshPassword').fill('memory-only');
+  await page.locator('#connectSubmit').click();
+  await page.locator('#connectionDialog').waitFor({state:'hidden'});
+}
+const icon = (page,name) => page.locator(`#icons [data-path="${desktop}/${name}"]`);
+
+test('connection_failure_and_disconnect_never_display_demo', () => scenario('connection', async page => {
+  assert.equal(await page.locator('#icons .icon').count(),0);
+  await page.screenshot({path:path.join(root,'artifacts','standalone-connect.png')});
+  await page.evaluate(()=>{window.failConnection=true;});
+  await page.locator('#sshHost').fill('host');await page.locator('#sshUsername').fill('tester');await page.locator('#sshPassword').fill('secret');await page.locator('#connectSubmit').click();
+  await page.waitForFunction(()=>document.getElementById('connectionError').textContent.includes('Authentication failed'));
+  assert.equal(await page.locator('#icons .icon').count(),0);assert.equal(await page.locator('#sshPassword').inputValue(),'');
+  await page.evaluate(()=>{window.failConnection=false;});await connect(page);
+  await icon(page,'projects').waitFor();assert.equal(await page.locator('#icons .icon').count(),5);
+  assert.equal(await page.locator('#icons').getByText('Legacy').count(),0);
+  await icon(page,'projects').dblclick();await page.locator('.window').waitFor();
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
+  assert.equal(await page.locator('.window').count(),0);assert.equal(await page.locator('#icons .icon').count(),0);
+  await page.evaluate(()=>window.receive({type:'remoteDirectory',path:'/home/tester/Desktop',entries:[{name:'stale',path:'/home/tester/Desktop/stale'}]}));
+  assert.equal(await page.locator('#icons .icon').count(),0);
+}));
+
+test('windows_navigation_resize_drag_minimize_maximize', () => scenario('windows', async page => {
+  await connect(page);await icon(page,'projects').dblclick();
+  const win=page.locator('.window').first();await win.locator('.entry').first().waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(),`${desktop}/projects`);
+  await win.locator('.window-path').fill('~/Desktop/results');await win.locator('.window-path').press('Enter');
+  await page.waitForFunction(()=>document.querySelector('.window-path').value==='/home/tester/Desktop/results');
+  await win.locator('[data-window-action="back"]').click();await win.getByText('source.txt',{exact:true}).waitFor();
+  const before=await win.boundingBox();const title=await win.locator('.window-title').boundingBox();
+  await page.mouse.move(title.x+10,title.y+8);await page.mouse.down();await page.mouse.move(title.x+140,title.y+70,{steps:8});await page.mouse.up();
+  const moved=await win.boundingBox();assert.ok(moved.x>before.x+80);
+  const resize=await win.locator('[data-resize="se"]').boundingBox();await page.mouse.move(resize.x+3,resize.y+3);await page.mouse.down();await page.mouse.move(resize.x+90,resize.y+70,{steps:8});await page.mouse.up();
+  assert.ok((await win.boundingBox()).width>moved.width+50);
+  await win.locator('[data-window-action="maximize"]').click();assert.ok((await win.getAttribute('class')).includes('maximized'));
+  await win.locator('[data-window-action="maximize"]').click();
+  await win.locator('[data-window-action="minimize"]').click();assert.equal(await win.isVisible(),false);
+  await page.locator('#windowTabs .window-tab').click();assert.equal(await win.isVisible(),true);
+  await page.locator('#newWindow').click();assert.equal(await page.locator('.window').count(),2);
+  await page.locator('.window').last().locator('[data-window-action="close"]').click();assert.equal(await page.locator('#windowTabs .window-tab').count(),1);
+}));
+
+test('crud_selection_and_terminal_shortcut_preserved', () => scenario('file-actions', async page => {
+  await connect(page);await icon(page,'notes.txt').click();await page.keyboard.press('F2');
+  await page.locator('.name-editor').fill('renamed.txt');await page.locator('.name-editor').press('Enter');
+  await page.waitForFunction(()=>window.messages.some(m=>m.operation==='rename'&&m.name==='renamed.txt'));
+  await icon(page,'projects').click();await page.keyboard.down('Control');await icon(page,'notes.txt').click();await page.keyboard.up('Control');
+  await page.keyboard.press('Control+c');await page.keyboard.press('Control+v');
+  assert.equal(await page.evaluate(()=>window.messages.find(m=>m.operation==='paste').clipboard.paths.length),2);
+  await page.keyboard.press('Control+Alt+t');await page.locator('.terminal-window .xterm').waitFor();
+  await page.waitForFunction(()=>window.messages.some(m=>m.type==='openTerminal'&&m.program==='shell'));
+  await page.locator('.terminal-window [data-window-action="close"]').click();
+  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='terminalClose')));
+  await icon(page,'notes.txt').dblclick();await page.locator('.terminal-window').waitFor();
+  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='openTerminal'&&m.program==='vim'&&m.filePath.endsWith('/notes.txt'))));
+}));
+
+test('image_fit_pointer_zoom_pan_and_window_lifecycle', () => scenario('image', async page => {
+  await connect(page);await icon(page,'picture.png').dblclick();const win=page.locator('.image-window');
+  await page.waitForFunction(()=>document.querySelector('.image-viewport img')?.naturalWidth===1600);
+  const fit=Number(await win.getAttribute('data-image-scale'));assert.ok(fit>0&&fit<1);
+  const viewport=await win.locator('.image-viewport').boundingBox();const x=viewport.x+viewport.width*0.3,y=viewport.y+viewport.height*0.35;
+  const first=await win.evaluate(el=>({s:Number(el.dataset.imageScale),x:Number(el.dataset.imageX),y:Number(el.dataset.imageY)}));
+  await page.mouse.move(x,y);await page.mouse.wheel(0,-200);
+  await page.waitForFunction(scale=>Number(document.querySelector('.image-window').dataset.imageScale)>scale,fit);
+  const next=await win.evaluate(el=>({s:Number(el.dataset.imageScale),x:Number(el.dataset.imageX),y:Number(el.dataset.imageY)}));
+  assert.ok(Math.abs((x-viewport.x-first.x)/first.s-(x-viewport.x-next.x)/next.s)<0.5,'zoom keeps pointer image coordinate fixed');
+  await page.mouse.down();await page.mouse.move(x+80,y+50,{steps:8});await page.mouse.up();
+  assert.ok(Number(await win.getAttribute('data-image-x'))>next.x+60);
+  await win.locator('[data-image-action="actual"]').click();assert.equal(Number(await win.getAttribute('data-image-scale')),1);
+  await win.locator('[data-image-action="fit"]').click();assert.ok(Number(await win.getAttribute('data-image-scale'))<1);
+  await win.locator('[data-window-action="maximize"]').click();await win.locator('[data-window-action="minimize"]').click();await page.locator('#windowTabs .window-tab').click();
+  await page.screenshot({path:path.join(root,'artifacts','standalone-image.png')});
+  await win.locator('[data-window-action="close"]').click();assert.equal(await page.locator('.image-window').count(),0);
+}));
+
+test('download_menu_directory_progress_cancel_and_completion', () => scenario('downloads', async page => {
+  await connect(page);await icon(page,'projects').click({button:'right'});await page.locator('[data-action="download"]').click();
+  await page.locator('.download-item').waitFor();const id=await page.evaluate(()=>window.calls.find(c=>c.type==='download').id);
+  await page.evaluate(id=>window.progress({id,done:25,total:100,method:'sftp',status:'running'}),id);
+  assert.match(await page.locator('.download-status').textContent(),/25%/);
+  await page.locator('.download-item button').click();await page.waitForFunction(()=>document.querySelector('.download-status').textContent.includes('已取消'));
+  assert.ok(await page.evaluate(id=>window.calls.some(c=>c.type==='cancelDownload'&&c.id===id),id));
+  await page.locator('#closeDownloads').click();await icon(page,'notes.txt').click({button:'right'});await page.locator('[data-action="download"]').click();
+  const second=await page.evaluate(()=>window.calls.filter(c=>c.type==='download').at(-1).id);
+  await page.evaluate(id=>window.downloadPending.get(id).resolve({id,path:'D:\\Downloads\\notes.txt',method:'ssh'}),second);
+  await page.waitForFunction(()=>[...document.querySelectorAll('.download-status')].some(el=>el.textContent.includes('已完成')));
+}));
+
+test('settings_threshold_key_picker_and_fullscreen_shortcut', () => scenario('settings', async page => {
+  await page.locator('#chooseKey').click();assert.match(await page.locator('#sshPrivateKey').inputValue(),/id_ed25519$/);
+  await connect(page);
+  const credentials = await page.evaluate(()=>window.calls.find(call=>call.type==='connect').input);
+  assert.match(credentials.privateKeyPath,/id_ed25519$/);assert.equal(Object.hasOwn(credentials,'privateKey'),false,'renderer forwards a local path, never key contents');
+  await page.locator('#desktopSettings').click();await page.locator('#settingsDownloadThreshold').waitFor();
+  await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
+  await page.locator('#settingsDownloadThreshold').fill('80');await page.locator('#saveExtensionSettings').click();
+  await page.waitForFunction(()=>window.settings.downloadThreshold===80*1024*1024);
+  assert.match(await page.locator('#downloadsLocation').textContent(),/D:\\Downloads/);
+  await page.locator('#closeSettings').click();await page.keyboard.press('F11');
+  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='toggleFullscreen')));
+  await page.screenshot({path:path.join(root,'artifacts','standalone-desktop.png')});
+}));
+
+test('missing_desktop_requires_explicit_creation', () => scenario('missing-desktop', async page => {
+  await page.evaluate(()=>{window.missingDesktop=true;});await connect(page);
+  await page.locator('#missingDesktopDialog[open]').waitFor();
+  assert.equal(await page.locator('#icons .icon').count(),0);assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop')),false);
+  await page.locator('#createDesktop').click();assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop')));
+}));

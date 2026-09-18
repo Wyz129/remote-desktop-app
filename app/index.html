@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none';">
+  <title>Remote Desktop</title>
+  <link rel="stylesheet" href="desktop.css">
+  <link rel="stylesheet" href="../media/xterm.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand"><strong id="accountName">未连接 SSH</strong></div>
+    <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
+    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="下载任务" title="下载任务"></button><button id="desktopSettings" class="toolbar-icon" aria-label="桌面设置" title="桌面设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
+  </header>
+  <div class="workspace">
+    <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
+      <button id="newWindow" class="dock-action" title="新建资源管理器窗口" aria-label="新建资源管理器窗口">＋</button>
+      <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
+      <div id="windowTabs" class="window-tabs"></div>
+    </aside>
+    <main class="desktop" id="desktop" aria-label="远程桌面">
+      <div class="desktop-caption"><span class="caption-icon" aria-hidden="true">▦</span><span id="desktopPath">桌面</span></div>
+      <div id="icons" class="icons" aria-label="桌面文件"></div>
+      <div id="windows"></div>
+      <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+        <form id="settingsForm">
+          <header class="settings-heading"><h2 id="settingsTitle">桌面设置</h2><button type="button" id="closeSettings" aria-label="关闭桌面设置" title="关闭">×</button></header>
+          <div class="settings-fields">
+            <h3 class="settings-section-title">桌面外观</h3>
+            <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
+            <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">青绿</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
+            <label class="settings-check"><input type="checkbox" id="settingsHidden">显示隐藏文件和文件夹</label>
+            <p class="settings-description" id="settingsLocation"></p><p id="settingsError" role="alert"></p>
+          </div>
+          <footer class="settings-footer"><button type="button" id="cancelSettings">取消</button><button type="submit" id="applySettings" class="primary">应用</button></footer>
+        </form>
+        <form id="extensionSettingsForm">
+<div class="settings-fields"><h3 class="settings-section-title">应用设置</h3>
+<label for="settingsDownloadThreshold">大文件 SFTP 阈值（MiB）</label><input type="number" id="settingsDownloadThreshold" min="1" max="1024" step="1" required>
+<label for="settingsScriptEditor">文件编辑器</label><select id="settingsScriptEditor"><option value="vim">Vim（远程终端）</option></select>
+<p class="settings-description" id="downloadsLocation"></p><p class="settings-description">小文件通过 SSH 命令流下载，达到阈值使用 SFTP；SFTP 同样基于 SSH。文件只在编辑器中打开，不会自动运行。</p>
+<p class="settings-description" id="migrationNotice">原 VS Code 命令快捷方式会被跳过；文件符号链接和固定终端继续可用。</p>
+<p id="extensionSettingsStatus" role="status" aria-live="polite"></p><p id="extensionSettingsError" role="alert"></p></div>
+<footer class="settings-footer"><button type="button" id="reloadExtensionSettings">重新读取</button><button type="submit" id="saveExtensionSettings" class="primary">保存应用设置</button></footer></form>
+      </dialog>
+      <footer class="statusbar"><span class="operation-display" title="文件操作通过 SSH 完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
+    </main>
+  </div>
+  <template id="windowTemplate">
+    <section class="window" aria-label="资源管理器窗口" tabindex="-1">
+      <header class="titlebar"><span class="window-app-icon glyph folder" aria-hidden="true"></span><strong class="window-title">文件夹</strong><div class="window-controls" aria-label="窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化" title="最大化">□</button><button type="button" class="window-control close" data-window-action="close" aria-label="关闭文件夹窗口" title="关闭">×</button></div></header>
+      <div class="pathbar">
+        <button data-window-action="back" aria-label="后退" title="后退">←</button>
+        <button data-window-action="forward" aria-label="前进" title="前进">→</button>
+        <button data-window-action="up" aria-label="上一级目录" title="上一级目录">↑</button>
+        <button data-window-action="refresh" aria-label="刷新窗口" title="刷新窗口">↻</button>
+        <div class="address-box"><input class="window-path" aria-label="目录地址" spellcheck="false" autocomplete="off" placeholder="输入目录地址，按 Enter 打开"></div>
+        <button class="view-button" data-window-action="details" aria-label="详情视图" title="详情视图" aria-pressed="true">☷</button>
+        <button class="view-button" data-window-action="icons" aria-label="图标视图" title="图标视图" aria-pressed="false">▦</button>
+      </div>
+      <div class="column-headings" aria-hidden="true"><span>名称</span><span>类型</span><span>大小</span></div>
+      <div class="listing" aria-label="目录内容"></div>
+      <footer class="window-footer"></footer>
+    </section>
+  </template>
+  <template id="terminalTemplate">
+    <section class="window terminal-window" aria-label="终端窗口" tabindex="-1">
+      <header class="titlebar"><span class="terminal-app-icon" aria-hidden="true">&gt;_</span><strong class="window-title">终端</strong><div class="window-controls" aria-label="窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化" title="最大化">□</button><button type="button" class="window-control close" data-window-action="close" aria-label="关闭终端窗口" title="关闭终端及其进程">×</button></div></header>
+      <div class="terminal-commandbar">
+        <span class="terminal-launch-label">新终端</span>
+        <button data-terminal-program="shell" title="在新窗口启动 Shell">Shell</button>
+        <button data-terminal-program="vim" title="在新窗口启动 Vim">Vim</button>
+        <button data-terminal-program="htop" title="在新窗口启动 htop">htop</button>
+      </div>
+      <div class="terminal-location"></div>
+      <div class="terminal-surface" aria-label="终端内容"></div>
+      <footer class="window-footer terminal-status" role="status">正在启动终端…</footer>
+    </section>
+  </template>
+<dialog id="connectionDialog" class="connection-dialog" aria-labelledby="connectionTitle">
+<form id="connectionForm"><header class="settings-heading"><h2 id="connectionTitle">连接 SSH 服务器</h2><button type="button" id="closeConnection" aria-label="关闭连接窗口">×</button></header>
+<p>登录后自动打开真实主目录中的 Desktop、desktop 或 桌面。</p>
+<div class="connection-fields"><label for="sshHost">主机</label><input id="sshHost" autocomplete="off" required placeholder="服务器地址">
+<label for="sshPort">端口</label><input id="sshPort" type="number" min="1" max="65535" value="22" required>
+<label for="sshUsername">用户名</label><input id="sshUsername" autocomplete="username" required>
+<label for="sshPassword">密码</label><input id="sshPassword" type="password" autocomplete="current-password">
+<label for="sshPrivateKey">私钥文件</label><div class="key-picker"><input id="sshPrivateKey" readonly placeholder="可选，使用本地文件选择器"><button type="button" id="chooseKey">选择</button><button type="button" id="clearKey">清除</button></div>
+<label for="sshPassphrase">私钥口令</label><input id="sshPassphrase" type="password" autocomplete="off"></div>
+<p class="settings-description">密码与私钥口令仅用于当前连接，不保存。首次连接会显示主机指纹供确认。</p>
+<p id="connectionError" role="alert"></p><p id="connectionHint" role="status">全屏可按 F11 或点击顶栏全屏图标退出。</p>
+<footer class="settings-footer"><button type="button" id="disconnectButton">断开</button><button type="submit" id="connectSubmit" class="primary">连接</button></footer></form></dialog>
+<dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>确认后将在真实主目录中创建 Desktop 文件夹。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">创建 Desktop</button></footer></dialog>
+<aside id="downloadsPanel" class="downloads-panel" aria-label="下载任务" hidden><header><h2>下载任务</h2><button id="closeDownloads" aria-label="关闭下载任务">×</button></header><p id="downloadsEmpty">尚无下载任务</p><div id="downloadItems"></div></aside>
+<template id="imageTemplate"><section class="window image-window" aria-label="图片查看器" tabindex="-1"><header class="titlebar"><span aria-hidden="true">▧</span><strong class="window-title"></strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button class="window-control close" data-window-action="close" aria-label="关闭图片">×</button></div></header><div class="image-controls"><button data-image-action="out" aria-label="缩小图片">−</button><button data-image-action="in" aria-label="放大图片">＋</button><button data-image-action="actual">100%</button><button data-image-action="fit">适应窗口</button><span class="image-scale">加载中…</span><span class="image-help">滚轮局部缩放 · 拖动平移</span></div><div class="image-viewport"><img draggable="false" alt=""></div><footer class="window-footer image-status" role="status">正在载入…</footer></section></template>
+  <div id="selectionBox" class="selection-box" hidden></div>
+  <div id="dragGhost" class="drag-ghost" hidden></div>
+  <div id="context" class="context" role="menu" aria-label="文件操作" hidden>
+    <button data-action="open" role="menuitem">打开</button>
+    <div class="menu-divider"></div>
+    <button data-action="new-file" role="menuitem">新建文件</button>
+    <button data-action="new-folder" role="menuitem">新建文件夹</button>
+    <button data-action="rename" role="menuitem">重命名</button>
+    <div class="menu-divider"></div>
+    <button data-action="cut" role="menuitem">剪切</button>
+    <button data-action="copy" role="menuitem">复制</button>
+    <button data-action="paste" role="menuitem">粘贴</button>
+    <button data-action="delete" role="menuitem">删除</button>
+    <div class="menu-divider"></div>
+    <button data-action="shortcut" role="menuitem">发送到桌面快捷方式</button>
+    <button data-action="download" role="menuitem">下载到本地</button>
+    <button data-action="terminal" role="menuitem" title="在当前目录打开终端（Ctrl+Alt+T）">在此处打开终端</button>
+    <button data-action="refresh" role="menuitem">刷新</button>
+    <button data-action="arrange" role="menuitem">整理桌面</button>
+  </div>
+  <div id="appContext" class="context" role="menu" aria-label="任务栏操作" hidden><button id="togglePinApp" role="menuitem">固定到任务栏</button><button id="unpinApp" role="menuitem">从任务栏取消固定</button></div>
+  <script src="../media/lucide.js"></script>
+  <script src="../media/xterm.js"></script>
+  <script src="../media/xterm-addon-fit.js"></script>
+  <script src="desktop.js"></script>
+</body>
+</html>

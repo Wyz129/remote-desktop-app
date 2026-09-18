@@ -1,109 +1,48 @@
 {
-  "name": "remote-desktop",
-  "displayName": "Remote Desktop",
-  "description": "Remote-SSH 桌面与多窗口资源管理器，支持远程文件操作和持久化快捷方式。",
-  "version": "0.0.7",
-  "publisher": "local-demo",
+  "name": "remote-desktop-app",
+  "displayName": "Remote Desktop App",
+  "description": "独立 Remote Desktop 应用：通过 SSH 浏览远程桌面并下载文件。",
+  "version": "1.0.0",
   "private": true,
+  "main": "./main.cjs",
   "license": "UNLICENSED",
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "categories": [
-    "Other"
-  ],
-  "main": "./extension.js",
-  "extensionKind": [
-    "workspace"
-  ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "capabilities": {
-    "untrustedWorkspaces": {
-      "supported": "limited",
-      "description": "桌面文件浏览可用；工作区终端和命令快捷方式需要信任工作区。"
-    }
-  },
+  "type": "commonjs",
   "scripts": {
-    "vscode:prepublish": "node scripts/build-assets.cjs",
-    "check": "node --check extension.js && node --check remote-terminal.js && node --check media/desktop.js",
-    "test:ui": "node --test test/ui.test.cjs",
-    "test:backend": "node --test test/backend.test.cjs",
-    "test:terminal": "node --test test/terminal.test.cjs",
-    "test:vscode": "node scripts/test-vscode.cjs",
-    "test": "npm run vscode:prepublish && npm run check && npm run test:backend && npm run test:terminal && npm run test:ui && npm run test:vscode",
-    "package": "vsce package --no-rewrite-relative-links --skip-license --out artifacts/remote-desktop-0.0.7.vsix"
-  },
-  "contributes": {
-    "commands": [
-      {
-        "command": "remoteDesktop.open",
-        "title": "Remote Desktop: Open"
-      },
-      {
-        "command": "remoteDesktop.openDemo",
-        "title": "Remote Desktop: Open Demo"
-      }
-    ],
-    "menus": {
-      "explorer/context": [
-        {
-          "command": "remoteDesktop.open",
-          "group": "navigation"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "remoteDesktop.openDemo",
-          "when": "false"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "Remote Desktop",
-      "properties": {
-        "remoteDesktopDemo.openOnStartup": {
-          "type": "boolean",
-          "default": false,
-          "description": "启动 VS Code 时自动打开桌面；Remote-SSH 窗口读取服务器文件，本地窗口使用 Demo 数据。"
-        },
-        "remoteDesktopDemo.remoteRoot": {
-          "type": "string",
-          "default": "/home/demo",
-          "description": "模拟远程根路径；双击资源时映射到当前 VS Code 工作区并交给 VS Code 打开。"
-        },
-        "remoteDesktopDemo.remoteHome": {
-          "type": "string",
-          "default": "",
-          "description": "Remote-SSH 主目录的绝对路径；留空时在远程扩展主机读取登录用户主目录。"
-        },
-        "remoteDesktopDemo.scriptEditor": {
-          "type": "string",
-          "enum": [
-            "vscode",
-            "vim"
-          ],
-          "enumDescriptions": [
-            "在 VS Code 编辑器中打开脚本文件。",
-            "在虚拟桌面的 Vim 终端窗口中编辑脚本文件（需要服务器安装 Vim）。"
-          ],
-          "default": "vscode",
-          "description": "脚本文件默认开启软件。适用于常见脚本扩展名；Vim 仅编辑文件，不执行脚本。"
-        }
-      }
-    }
+    "start": "node scripts/start-app.cjs",
+    "dev": "node scripts/start-app.cjs --enable-logging",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check lib/ssh-backend.cjs && node --check lib/desktop-service.cjs && node --check app/desktop.js",
+    "test:backend": "node --test test/standalone-backend.test.cjs test/desktop-service.test.cjs",
+    "test:ui": "node --test test/standalone-ui.test.cjs",
+    "test:electron": "node --test test/electron.test.cjs",
+    "test": "npm run check && npm run test:backend && npm run test:ui && npm run test:electron",
+    "package": "electron-builder --dir"
   },
   "devDependencies": {
-    "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.9.2",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "lucide": "^1.44.0",
+    "electron": "^44.4.2",
+    "electron-builder": "^26.0.12",
     "playwright": "^1.63.0"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Wyz129/remote-desktop.git"
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  },
+  "build": {
+    "appId": "com.wyz.remote-desktop",
+    "productName": "Remote Desktop",
+    "directories": {
+      "output": "artifacts/electron"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "lib/**/*",
+      "app/**/*",
+      "media/lucide*",
+      "media/xterm*",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": "dir"
+    }
   }
 }
