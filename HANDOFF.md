@@ -1,16 +1,16 @@
 # Remote Desktop 项目交接
 
-更新日期：2026-09-18。交接基线：0.0.6。本文供接手本项目的智能体和开发者使用，记录实际实现、已验证结果、环境限制和下一步定位入口；后续以当前源码、用户的新指令和重新观察到的环境状态为准。
+更新日期：2026-09-18。交接基线：0.0.7。本文供接手本项目的智能体和开发者使用，记录实际实现、已验证结果、环境限制和下一步定位入口；后续以当前源码、用户的新指令和重新观察到的环境状态为准。
 
 ## 1. 接手先读
 
-1. 阅读本文，再读 [README.md](README.md)、[TESTING.md](TESTING.md) 和 [0.0.6 测试报告](artifacts/regression-006-20260918.md)。
+1. 阅读本文，再读 [README.md](README.md)、[TESTING.md](TESTING.md) 和 [0.0.7 测试报告](artifacts/regression-007-20260918.md)。
 2. 项目真实路径为 `C:\0_myfiles\new_projects\remote-desktop`。早期对话中的目录拼写与此不同，请使用实际路径。
 3. 这是 **VS Code 扩展**，不是 Codex 插件。无需添加 `.codex-plugin/plugin.json` 或使用 Codex 插件脚手架。
-4. 0.0.5 曾安装到真实 Remote-SSH 并完成主要交互实测；0.0.6 按用户要求仅做自动化，没有安装到用户窗口或使用电脑操作技能。
+4. 0.0.5 曾安装到真实 Remote-SSH 并完成主要交互实测；0.0.6 和 0.0.7 按用户要求仅做自动化，没有安装到用户窗口或使用电脑操作技能。
 5. 项目已建立 Git，主分支 `main`，仓库 `https://github.com/Wyz129/remote-desktop`（私有）；初始 0.0.5 回退提交为 `4d4cef1`。修改前审查工作树，不要把 `.bak` 当作最新版。
 6. 不要把普通浏览器 UI 测试、本机 Extension Host 测试、历史 SSH 实测混为一组“全部真实远程通过”。本文第 9、10 节给出了覆盖边界。
-7. 当前代码版本为 0.0.6，重命名后扩展 ID 发生变化；安装迁移按 README 执行。接下来应按用户的新反馈选择工作；第 12 节是建议，不是新的授权范围。
+7. 当前代码版本为 0.0.7，0.0.6 重命名后扩展 ID 发生变化；安装迁移按 README 执行。接下来应按用户的新反馈选择工作；第 12 节是建议，不是新的授权范围。
 
 用户的全局规则索引位于 `C:\Users\KunYu\.codex`：编程/测试前读 `编程守则.md`，涉及高危操作时读 `高危操作管控.md`，使用 Python 才读 `python环境使用守则.md`。默认简体中文、英文代码标识符、UTF-8。本项目本身不依赖 Python。
 
@@ -23,10 +23,11 @@
 - 资源管理器有详情、图标两种视图，可以同时存在多个窗口，支持最小化、恢复、关闭、标题栏移动、最大化、还原及四边四角缩放。
 - 左侧 dock 显示运行窗口、最小化窗口和固定程序。关闭窗口要移除运行标签，最小化要保留标签。
 - 文件操作使用统一右键菜单：新建文件/文件夹、重命名、复制、剪切、粘贴、删除、发送到桌面快捷方式、命令快捷方式、终端、刷新。
-- 新建和重命名就地编辑；按 Enter 或点击外部提交，Escape 取消。后端成功后重读目录。
+- 新建和重命名就地编辑；默认英文名 `New Folder` / `New File.txt`，同名时增加 ` (2)` 等后缀；按 Enter 或点击外部提交，Escape 取消。后端成功后重读目录。
 - 桌面图标可以移动，但吸附到网格。支持 Ctrl 多选和框选；跨窗口文件拖动请求移动操作。
 - 文件快捷方式是服务器上的真实符号链接；命令快捷方式是保存在配置中的 VS Code 命令图标。
 - 内嵌终端运行真实 PTY，程序入口目前限定为 shell、Vim、htop。窗口关闭会结束相应进程，最小化不会结束。
+- Webview 内 Ctrl+Alt+T 打开桌面终端；设置可把脚本双击改为桌面内 Vim。脚本只编辑，不自动执行。
 - 窄顶栏采用 Ubuntu 风格：左账号、中服务器时间、右连接状态。下栏显示最近操作的 Linux **等效命令**及完成/失败/取消状态。
 
 项目不提供系统盘符映射、完整远程图形桌面协议、ODB 解析、自动作业提交或后台任务托管。界面中的 Vim/htop 是 TUI 程序，不是转发服务器 GUI。
@@ -36,7 +37,7 @@
 | 项目 | 当前基线 |
 | --- | --- |
 | 扩展 ID | `local-demo.remote-desktop`；旧版 `local-demo.remote-desktop-demo` 应禁用/卸载 |
-| 版本 | `0.0.6` |
+| 版本 | `0.0.7` |
 | 入口命令 | `remoteDesktop.open`；界面名称 `Remote Desktop: Open`；保留 openDemo 隐藏别名 |
 | 扩展运行位置 | `extensionKind: ["workspace"]`，Remote-SSH 时安装在服务器端 |
 | VS Code 最低声明版本 | `^1.85.0`；最低版本未实测，实际自动化使用 1.137.0 |
@@ -89,7 +90,7 @@
 
 扩展只维护一个 `WebviewPanel`；面板内部可以存在多个虚拟窗口。重复执行打开命令只会显示现有面板。
 
-前端启动发送 `ready`，后端先发服务器信息，再识别并读取远程桌面，回复 `remoteState`。本地窗口收到 `status: 'local'` 后使用前端内置示例数据；远程读取失败必须显示真实错误，不能回退到预设 Demo 文件来伪装成功。
+前端启动发送 `ready`，后端先发扩展设置和服务器信息，再识别并读取远程桌面，回复 `remoteState`。本地窗口收到 `status: 'local'` 后使用前端内置示例数据，根路径以该消息的 `rootPath` 为准；远程读取失败必须显示真实错误，不能回退到预设 Demo 文件来伪装成功。
 
 关键历史修复：真正运行在 SSH workspace 扩展主机中时，工作区 URI 通常已经是 `file:`，不是 `vscode-remote:`。不能仅凭 URI scheme 判定本地/远程，也不能假定必须已打开工作区文件夹。`nativeRemoteHost()` 综合 `vscode.env.remoteName`、扩展 URI、实际 `ExtensionKind.Workspace` 和工作区 URI 判断。
 
@@ -130,11 +131,19 @@
 
 前端用 100% 容器布局和 ResizeObserver 重排图标/窗口、调整 xterm；保留隐藏 Webview 的零尺寸保护。设置入口 `#desktopSettings` 打开原生 dialog（显示在虚拟桌面内），含视图、背景和隐藏文件选项，成功确认后才应用，15 秒无确认时允许核对后重试。
 
+0.0.7 在同一 dialog 增加独立的 `#extensionSettingsForm`，包含 manifest 中全部四项 VS Code 设置，支持用户/工作区范围。桌面外观仍通过 `saveDesktopConfig` 保存，扩展设置使用独立协议和按钮。表单以读取时快照判断编辑字段，不能以实时通知更新后的缓存做差异，否则会覆盖其他位置刚修改的设置。保存成功回读实际有效值，工作区覆盖用户值时仍显示工作区值。后端设置事务串行，多字段失败尝试恢复原目标层值；读取等待事务结束。15 秒无回包提示重新读取核对。
+
+`sessionSettings` 在 `ready` 冻结当前面板的 remoteRoot/remoteHome，所有读取和通知计算 `reopenRequired`；改变路径后当前操作保持原映射，关闭并重新打开整个面板才采用新路径。脚本编辑器选项即时更新。初始化本地示例时重映射所有示例条目的路径，不能写死 `/home/demo`。
+
 ### 5.5 内嵌终端
 
 前端为 xterm.js + FitAddon，后端通过 `remote-terminal.js` 加载当前 VS Code / VS Code Server runtime 中的 `node-pty` 或 `@vscode/node-pty`，支持普通、asar、asar.unpacked 路径。不要从工作区或 `NODE_PATH` 加载同名原生模块，不要直接把 Windows 构建的 node-pty 打进 Linux 扩展包。
 
 启动需要受信任工作区和正确扩展主机，工作目录经过后端 URI 校验。程序是 `shell`、`vim`、`htop` 白名单；Vim/htop 从绝对 PATH 项解析，缺失就明确报错。固定应用目前只存程序身份，不存启动目录或任意命令参数；点击固定项从桌面根目录启动。
+
+Ctrl+Alt+T 在 document 捕获阶段拦截，先于 xterm 与宿主 Webview 的冒泡转发；仅在 Webview 内聚焦时可用，设置弹窗、按键重复、输入法组合和 AltGraph 不启动新终端。优先使用聚焦虚拟窗口目录，再选中范围目录，最后桌面根目录；它不是 VS Code 全局快捷键。
+
+脚本编辑器为 Vim 时，`openItem` 按文件扩展名识别并发送 `openTerminal` 的 `filePath`；支持列表见 README，暂不检测无扩展名 shebang。后端 `resolveFile` 验证 native `file:` URI、原路径及链接真实目标所属主目录/工作区、普通文件类型。PTY 将文件作为 `['--', nativeAbsolutePath]` 参数传给 Vim，不拼接 shell 命令。解析期间关闭窗口必须取消启动、释放 pending 名额。Vim 缺失在桌面窗口显示错误，不伪装已打开。
 
 限制：总计 12 个会话，每面板 8 个；单次输入 64 KiB，待发送输出 2 MiB；行列范围 2–500 列、1–200 行。关闭待启动窗口要取消启动并避免孤儿 PTY。关闭 Webview 会清理其终端，恢复配置不自动运行程序。
 
@@ -146,7 +155,9 @@
 
 | 前端 → 扩展 | 关键字段 | 扩展 → 前端 / 用途 |
 | --- | --- | --- |
-| `ready` | 无 | `serverInfo`、`remoteState` 初始化 |
+| `ready` | 无 | `extensionSettings`、`serverInfo`、`remoteState` 初始化；本地 remoteState 带 rootPath |
+| `getExtensionSettings` | requestId | `extensionSettings`：settings、hasWorkspace、target、reopenRequired |
+| `saveExtensionSettings` | requestId、settings 补丁、target: workspace/user | `extensionSettingsSaved`：ok、有效 settings、target、reopenRequired、error；外部更新另发无 requestId 的 extensionSettings |
 | `getServerInfo` | 无 | `serverInfo`：username、hostname、epochMs、timeZone、platform、remote |
 | `readDirectory` | path、requestId，可带 windowId、intent | `remoteDirectory`：path、requestId、entries 或 error；显式操作附带 operationCommand |
 | `refreshRemote` | paths，可带 intent: refresh | `remoteState` 重载桌面/config；请求涉及的目录重读 |
@@ -157,7 +168,7 @@
 | `renameCommandShortcut` / `deleteCommandShortcut` | id，重命名还带 label | `configUpdated` |
 | `executeCommand` | command | 仅运行已保存快捷方式中的命令，且需工作区信任；目前不转发任意 args |
 | `pinApp` / `unpinApp` | app: {id,label,program} / id | `configUpdated` |
-| `openTerminal` | id、path、program、cols、rows | `terminalOpened` / `terminalError` |
+| `openTerminal` | id、path、program、cols、rows；Vim 可带 filePath | `terminalOpened` / `terminalError`；成功时可含原生 filePath |
 | `terminalInput` / `terminalResize` / `terminalClose` | id 与 data / cols,rows / 无 | `terminalData`、`terminalExit`、`terminalError` |
 | `toggleFullscreen` | 无 | `fullscreenResult`，委托 VS Code 禅模式 |
 
@@ -174,6 +185,7 @@
 | `remoteDesktopDemo.openOnStartup` | false | 扩展激活后自动开面板 |
 | `remoteDesktopDemo.remoteHome` | 空字符串 | 远程主目录覆盖；为空自动检测。改变后关闭重开面板 |
 | `remoteDesktopDemo.remoteRoot` | `/home/demo` | 本地示例路径映射，不是远程桌面路径设置 |
+| `remoteDesktopDemo.scriptEditor` | `vscode` | 脚本默认编辑器；`vim` 使用桌面内 PTY 窗口 |
 
 扩展在主目录列举 `Desktop`、`desktop` 或 `桌面`（Desktop 匹配大小写不敏感）。未找到则弹出 VS Code 通知，请用户确认创建 `Desktop`；取消不创建。
 
@@ -259,7 +271,7 @@ try {
 
 ## 9. 测试基线与证据
 
-0.0.6 最新结果见 [本轮报告](artifacts/regression-006-20260918.md)。后续 0.0.5 的独立 SSH 抽测见 [MCP 实测](docs/mcp-live-ui-review-20260917-b73f.md)：跨窗口移动、Vim Ctrl+Shift+V 中文多行粘贴和保存通过，F5 宿主快捷键冲突待解决。以下表格保留 0.0.5 原始开发基线，不代表新版已在 SSH 验收。
+0.0.7 最新结果见 [本轮报告](artifacts/regression-007-20260918.md)：后端 41/41、PTY 13/13、UI 42/42、Extension Host 44 项断言；新增真实设置 API 验证，SSH Vim 文件打开与 Ctrl+Alt+T 实机行为待复测。后续 0.0.5 的独立 SSH 抽测见 [MCP 实测](docs/mcp-live-ui-review-20260917-b73f.md)：跨窗口移动、Vim Ctrl+Shift+V 中文多行粘贴和保存通过，F5 宿主快捷键冲突待解决。以下表格保留 0.0.5 原始开发基线，不代表新版已在 SSH 验收。
 
 | 测试层 | 0.0.5 结果 | 能说明什么 |
 | --- | --- | --- |
@@ -356,9 +368,11 @@ SSH BatchMode 曾因需要密码失败，不要据此假定存在可用的免密
 
 ## 14. 版本、安装包与回退
 
-当前交付包：`artifacts/remote-desktop-0.0.6.vsix`，体积、SHA-256 和包内核对结果见 [0.0.6 报告](artifacts/regression-006-20260918.md)。0.0.6 未自动安装到用户 SSH 窗口。旧 VSIX 和本机截图保留于 artifacts，但 Git 只追踪文本报告。
+当前交付包：`artifacts/remote-desktop-0.0.7.vsix`，体积、SHA-256 和包内核对结果见 [0.0.7 报告](artifacts/regression-007-20260918.md)。本轮未自动安装到用户 SSH 窗口。旧 VSIX 和本机截图保留于 artifacts，但 Git 只追踪文本报告。
 
 源码初始导入提交 `4d4cef1` 保留 0.0.5，实现之前建立的回退点；用新分支/独立目录比较，不改写已推送历史。
+
+0.0.7 修改前回退点为 `a8ec8a5`（完整 0.0.6）。本轮保留扩展 ID、旧设置命名空间与服务器配置格式。
 
 | 检查点 | 路径 | 大小 |
 | --- | --- | --- |
@@ -370,4 +384,4 @@ SSH BatchMode 曾因需要密码失败，不要据此假定存在可用的免密
 
 ## 15. 可直接交给下一个智能体的起始提示
 
-> 继续开发 `C:\0_myfiles\new_projects\remote-desktop`。先阅读 HANDOFF.md、README.md、TESTING.md 和 artifacts/regression-006-20260918.md。项目是 VS Code Remote-SSH 桌面扩展，当前源码 0.0.6，已建立 Git 和私有 GitHub 仓库。旧 ID local-demo.remote-desktop-demo 的 0.0.5 曾实测；新版 ID local-demo.remote-desktop 仅经自动化，不要把旧版运行窗口当作新版。按我接下来的需求实施；分别记录替身自动化、本机 Extension Host、真实 SSH UI 结果。保持服务器桌面配置与 remoteDesktopDemo.* 兼容，不清理用户目录。当前轮无需电脑操作技能验证；后续操作以新授权为准。
+> 继续开发 `C:\0_myfiles\new_projects\remote-desktop`。先阅读 HANDOFF.md、README.md、TESTING.md 和 artifacts/regression-007-20260918.md。项目是 VS Code Remote-SSH 桌面扩展，当前源码 0.0.7，已建立 Git 和私有 GitHub 仓库。新增英文默认名称、完整扩展设置、Webview 内 Ctrl+Alt+T、脚本 Vim 编辑。旧 ID local-demo.remote-desktop-demo 的 0.0.5 曾实测；新版 ID local-demo.remote-desktop 仅经自动化，不要把旧版运行窗口当作新版。按我接下来的需求实施；分别记录替身自动化、本机 Extension Host、真实 SSH UI 结果。保持服务器桌面配置与 remoteDesktopDemo.* 兼容，不清理用户目录。当前轮无需电脑操作技能验证；后续操作以新授权为准。

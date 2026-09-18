@@ -28,12 +28,26 @@
         <form id="settingsForm">
           <header class="settings-heading"><h2 id="settingsTitle">桌面设置</h2><button type="button" id="closeSettings" aria-label="关闭桌面设置" title="关闭">×</button></header>
           <div class="settings-fields">
+            <h3 class="settings-section-title">桌面外观</h3>
             <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
             <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">青绿</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
             <label class="settings-check"><input type="checkbox" id="settingsHidden">显示隐藏文件和文件夹</label>
             <p class="settings-description" id="settingsLocation"></p><p id="settingsError" role="alert"></p>
           </div>
           <footer class="settings-footer"><button type="button" id="cancelSettings">取消</button><button type="submit" id="applySettings" class="primary">应用</button></footer>
+        </form>
+        <form id="extensionSettingsForm">
+          <div class="settings-fields">
+            <h3 class="settings-section-title">VS Code 扩展设置</h3>
+            <label for="extensionSettingsTarget">保存范围</label><select id="extensionSettingsTarget"><option value="workspace">当前工作区</option><option value="user">用户</option></select>
+            <label class="settings-check" title="remoteDesktopDemo.openOnStartup"><input type="checkbox" id="settingsOpenOnStartup">启动 VS Code 时打开桌面</label>
+            <label for="settingsRemoteRoot" title="remoteDesktopDemo.remoteRoot">本地示例根目录</label><input type="text" id="settingsRemoteRoot" spellcheck="false" placeholder="/home/demo">
+            <label for="settingsRemoteHome" title="remoteDesktopDemo.remoteHome">远程主目录</label><input type="text" id="settingsRemoteHome" spellcheck="false" placeholder="留空自动检测">
+            <label for="settingsScriptEditor" title="remoteDesktopDemo.scriptEditor">脚本文件默认开启软件</label><select id="settingsScriptEditor"><option value="vscode">VS Code</option><option value="vim">Vim（桌面内窗口）</option></select>
+            <p class="settings-description">与 VS Code 中此扩展的设置同步。路径更改后需关闭并重新打开桌面；Vim 需要安装在服务器上，仅编辑脚本，不运行脚本。</p>
+            <p id="extensionSettingsStatus" role="status" aria-live="polite"></p><p id="extensionSettingsError" role="alert"></p>
+          </div>
+          <footer class="settings-footer"><button type="button" id="reloadExtensionSettings">重新读取</button><button type="submit" id="saveExtensionSettings" class="primary">保存扩展设置</button></footer>
         </form>
       </dialog>
       <footer class="statusbar"><span class="operation-display" title="文件操作通过 VS Code 文件系统完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
@@ -86,7 +100,7 @@
     <div class="menu-divider"></div>
     <button data-action="shortcut" role="menuitem">发送到桌面快捷方式</button>
     <button data-action="command-shortcut" role="menuitem">创建 VS Code 命令快捷方式</button>
-    <button data-action="terminal" role="menuitem">在此处打开终端</button>
+    <button data-action="terminal" role="menuitem" title="在当前目录打开终端（Ctrl+Alt+T）">在此处打开终端</button>
     <button data-action="refresh" role="menuitem">刷新</button>
     <button data-action="arrange" role="menuitem">整理桌面</button>
   </div>

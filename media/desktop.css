@@ -48,13 +48,20 @@ button:disabled { opacity: .4; cursor: default; }
 .desktop { position: relative; flex: 1; min-width: 0; overflow: hidden; background: linear-gradient(135deg, #294e45, #203f41 50%, #253b44); }
 .desktop[data-wallpaper="purple"] { background: linear-gradient(135deg, #4a294d, #38243e 50%, #252c45); }
 .desktop[data-wallpaper="slate"] { background: linear-gradient(135deg, #3c4652, #28323c 50%, #1c2633); }
-.settings-dialog { position: fixed; width: min(420px, calc(100vw - 24px)); max-height: calc(100vh - 56px); padding: 0; color: var(--text); background: var(--surface); border: 1px solid #72867b; border-radius: 9px; box-shadow: 0 18px 60px #0008; overflow: auto; }
+.settings-dialog { position: fixed; width: min(540px, calc(100vw - 24px)); max-height: calc(100vh - 56px); padding: 0; color: var(--text); background: var(--surface); border: 1px solid #72867b; border-radius: 9px; box-shadow: 0 18px 60px #0008; overflow: auto; }
 .settings-dialog::backdrop { background: #10171566; }
 .settings-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #353c38; }
 .settings-heading h2 { margin: 0; font-size: 14px; }
 .settings-heading button { font-size: 22px; padding: 0; width: 28px; height: 28px; }
 .settings-fields { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 1fr); gap: 18px 12px; align-items: center; }
 .settings-fields select { min-width: 0; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 4px; padding: 7px; font: inherit; }
+.settings-fields input[type="text"] { min-width: 0; width: 100%; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 4px; padding: 7px; font: inherit; }
+.settings-section-title { grid-column: 1 / -1; margin: 0; font-size: 13px; color: #d1e6da; }
+#extensionSettingsForm { border-top: 1px solid var(--line); }
+#extensionSettingsStatus, #extensionSettingsError { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+#extensionSettingsError { color: #f6b4b4; }
+#extensionSettingsStatus { color: var(--muted); }
+#extensionSettingsError:empty, #extensionSettingsStatus:empty { display: none; }
 .settings-check { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
 .settings-check input { accent-color: var(--accent); }
 .settings-description, #settingsError { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.6; }

@@ -35,6 +35,11 @@ function fixture(options = {}) {
   const inputs = [];
   const infoChoices = [];
   const deleteChoices = [];
+  const configuration = { user: { ...options.userSettings }, workspace: { ...options.workspaceSettings } };
+  const configurationListeners = new Set();
+  const emitConfigurationChange = (section = 'remoteDesktopDemo') => {
+    for (const listener of configurationListeners) listener({ affectsConfiguration: (name) => name === section });
+  };
   let failRead;
   let delayedRead;
   const key = uri => typeof uri === 'string' ? uri : uri.path;
@@ -129,11 +134,28 @@ function fixture(options = {}) {
       workspaceFolders: options.noFolders ? [] : [{ uri: TestUri.parse(`${options.native || options.local ? 'file://' : 'vscode-remote://ssh-remote+test'}${home}${options.local ? '' : '/project'}`) }],
       fs: provider,
       getConfiguration: section => ({
-        get: (name, fallback) => section === 'zenMode' && name === 'centerLayout' ? options.centerLayout ?? true : name === 'remoteHome' && !options.autoHome ? home : name === 'remoteRoot' && options.local ? home : fallback,
-        inspect: () => ({ workspaceValue: options.workspaceCenter, globalValue: options.globalCenter }),
-        update: async (key, value, target) => { calls.push(['config', key, value, target]); }
+        get: (name, fallback) => {
+          if (section === 'zenMode' && name === 'centerLayout') return options.centerLayout ?? true;
+          if (section === 'remoteDesktopDemo') {
+            if (!options.noFolders && Object.hasOwn(configuration.workspace, name)) return configuration.workspace[name];
+            if (Object.hasOwn(configuration.user, name)) return configuration.user[name];
+          }
+          return name === 'remoteHome' && !options.autoHome ? home : name === 'remoteRoot' && options.local ? home : fallback;
+        },
+        inspect: name => section === 'remoteDesktopDemo'
+          ? { workspaceValue: configuration.workspace[name], globalValue: configuration.user[name] }
+          : { workspaceValue: options.workspaceCenter, globalValue: options.globalCenter },
+        update: async (key, value, target) => {
+          calls.push(['config', key, value, target]);
+          if (section === 'remoteDesktopDemo') {
+            await options.onConfigUpdate?.(key, value, target);
+            const values = target === 2 ? configuration.workspace : configuration.user;
+            if (value === undefined) delete values[key]; else values[key] = value;
+            emitConfigurationChange();
+          }
+        }
       }),
-      onDidChangeConfiguration: disposable,
+      onDidChangeConfiguration: listener => { configurationListeners.add(listener); return { dispose: () => configurationListeners.delete(listener) }; },
       onDidChangeWorkspaceFolders: disposable,
       createFileSystemWatcher: () => ({ onDidChange: disposable, onDidCreate: disposable, onDidDelete: disposable, dispose() {} })
     },
@@ -185,7 +207,7 @@ function fixture(options = {}) {
     const started = new Promise(resolve => { delayedRead = { gate, started: resolve }; });
     return { started, resume };
   }
-  return { api, home, desktop, nodes, calls, messages, warnings, inputs, infoChoices, deleteChoices, file, directory, send, panel, context, delayNextReadFile, setFailRead: value => { failRead = value; } };
+  return { api, home, desktop, nodes, calls, messages, warnings, inputs, infoChoices, deleteChoices, file, directory, send, panel, context, configuration, emitConfigurationChange, delayNextReadFile, setFailRead: value => { failRead = value; } };
 }
 
 test('remote refresh rereads directory and edited config, without native Explorer refresh command', async () => {
@@ -673,4 +695,157 @@ test('terminal command display waits for successful PTY startup and does not rec
   await failed.send({ type: 'openTerminal', id: 'failed-test', path: failed.desktop, program: 'htop' });
   assert.equal(failed.messages.findLast(item => item.type === 'operationCommand').status, 'error');
   assert.equal(failed.messages.findLast(item => item.type === 'operationCommand').detail, 'Program missing');
+});
+
+test('extension settings expose all effective options on ready, request and external updates', async () => {
+  const f = fixture({ native: true });
+  await f.send({ type: 'ready' });
+  assert.deepEqual(f.messages.findLast(item => item.type === 'extensionSettings'), {
+    type: 'extensionSettings', settings: { openOnStartup: false, remoteRoot: '/home/demo', remoteHome: f.home, scriptEditor: 'vscode' }, hasWorkspace: true, target: 'workspace', reopenRequired: false
+  });
+  await f.send({ type: 'getExtensionSettings', requestId: 'settings-read' });
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettings').requestId, 'settings-read');
+  f.configuration.user.scriptEditor = 'vim';
+  f.emitConfigurationChange();
+  await new Promise(resolve => setImmediate(resolve));
+  const external = f.messages.findLast(item => item.type === 'extensionSettings');
+  assert.equal(external.settings.scriptEditor, 'vim');
+  assert.equal(external.requestId, undefined);
+  const count = f.messages.length;
+  f.emitConfigurationChange('editor');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.messages.length, count);
+});
+
+test('extension settings update only whitelisted fields at the selected scope and return effective values', async () => {
+  const f = fixture({ native: true, userSettings: { custom: 'preserved' }, workspaceSettings: { scriptEditor: 'vscode' } });
+  await f.send({ type: 'ready' });
+  await f.send({ type: 'saveExtensionSettings', target: 'user', requestId: 'user-save', settings: { openOnStartup: true, scriptEditor: 'vim' } });
+  let response = f.messages.findLast(item => item.type === 'extensionSettingsSaved');
+  assert.equal(response.ok, true); assert.equal(response.target, 'user'); assert.equal(response.requestId, 'user-save');
+  assert.equal(response.settings.openOnStartup, true);
+  assert.equal(response.settings.scriptEditor, 'vscode', 'workspace override remains authoritative');
+  assert.equal(response.reopenRequired, false);
+  assert.deepEqual(f.configuration.user, { custom: 'preserved', openOnStartup: true, scriptEditor: 'vim' });
+  await f.send({ type: 'saveExtensionSettings', target: 'workspace', settings: { scriptEditor: 'vim', remoteHome: '/srv/another-user' } });
+  response = f.messages.findLast(item => item.type === 'extensionSettingsSaved');
+  assert.equal(response.settings.scriptEditor, 'vim'); assert.equal(response.reopenRequired, true);
+  await f.send({ type: 'refreshRemote' });
+  assert.equal(f.messages.findLast(item => item.type === 'remoteState').rootPath, f.desktop, 'live session must stay at its original home until reopened');
+  await f.send({ type: 'saveExtensionSettings', target: 'workspace', settings: { remoteHome: '' } });
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettingsSaved').ok, true, 'automatic home detection can be restored by clearing the field');
+});
+
+test('invalid extension settings and workspace saves without folders do not mutate any setting', async () => {
+  const f = fixture({ native: true });
+  for (const settings of [null, [], { other: true }, { scriptEditor: 'sh' }, { openOnStartup: 'true' }, { remoteRoot: '' }, { remoteRoot: 'relative' }, { remoteRoot: '/home\\demo' }, { remoteHome: '/home\nother' }, { remoteHome: null }]) {
+    await f.send({ type: 'saveExtensionSettings', target: 'workspace', settings, requestId: 'invalid' });
+    const reply = f.messages.findLast(item => item.type === 'extensionSettingsSaved');
+    assert.equal(reply.ok, false); assert.equal(reply.requestId, 'invalid'); assert.ok(reply.error);
+  }
+  await f.send({ type: 'saveExtensionSettings', target: 'folder', settings: { scriptEditor: 'vim' } });
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettingsSaved').ok, false);
+  assert.equal(f.calls.some(call => call[0] === 'config'), false);
+  const noWorkspace = fixture({ native: true, noFolders: true });
+  await noWorkspace.send({ type: 'getExtensionSettings' });
+  assert.equal(noWorkspace.messages.at(-1).target, 'user');
+  await noWorkspace.send({ type: 'saveExtensionSettings', target: 'workspace', settings: { scriptEditor: 'vim' } });
+  assert.equal(noWorkspace.messages.at(-1).ok, false);
+  await noWorkspace.send({ type: 'saveExtensionSettings', target: 'user', settings: { scriptEditor: 'vim' } });
+  assert.equal(noWorkspace.messages.findLast(item => item.type === 'extensionSettingsSaved').ok, true);
+});
+
+test('partial VS Code setting failures restore exact target values and preserve unknown fields', async () => {
+  const f = fixture({ native: true, workspaceSettings: { remoteRoot: '/original', custom: 42 }, onConfigUpdate: async (key) => {
+    if (key === 'scriptEditor') throw new Error('settings file is read-only');
+  } });
+  await f.send({ type: 'saveExtensionSettings', target: 'workspace', requestId: 'failed-save', settings: { openOnStartup: true, remoteRoot: '/updated', scriptEditor: 'vim' } });
+  const response = f.messages.findLast(item => item.type === 'extensionSettingsSaved');
+  assert.equal(response.ok, false); assert.match(response.error, /read-only/);
+  assert.deepEqual(f.configuration.workspace, { remoteRoot: '/original', custom: 42 });
+  assert.equal(response.settings.openOnStartup, false);
+  assert.equal(response.settings.remoteRoot, '/original');
+  assert.deepEqual(f.calls.filter(call => call[0] === 'config').slice(-2), [['config', 'remoteRoot', '/original', 2], ['config', 'openOnStartup', undefined, 2]]);
+});
+
+test('settings transactions serialize writes and local mapping stays stable until the desktop reopens', async () => {
+  let release; let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const entered = new Promise(resolve => { started = resolve; });
+  const f = fixture({ local: true, onConfigUpdate: async (key) => { if (key === 'remoteRoot') { started(); await gate; } } });
+  await f.send({ type: 'ready' });
+  const first = f.send({ type: 'saveExtensionSettings', target: 'workspace', requestId: 'first', settings: { remoteRoot: '/new-root' } });
+  await entered;
+  const second = f.send({ type: 'saveExtensionSettings', target: 'workspace', requestId: 'second', settings: { scriptEditor: 'vim' } });
+  assert.equal(f.calls.some(call => call[0] === 'config' && call[1] === 'scriptEditor'), false);
+  release(); await Promise.all([first, second]);
+  assert.deepEqual(f.messages.filter(item => item.type === 'extensionSettingsSaved').map(item => item.requestId), ['first', 'second']);
+  await f.send({ type: 'openResource', path: `${f.desktop}/a.txt`, kind: 'file' });
+  assert.equal(f.calls.findLast(call => call[0] === 'command')[2].path, `${f.desktop}/a.txt`);
+  await f.send({ type: 'ready' });
+  await f.send({ type: 'openResource', path: '/new-root/Desktop/a.txt', kind: 'file' });
+  assert.equal(f.calls.findLast(call => call[0] === 'command')[2].path, `${f.desktop}/a.txt`);
+});
+
+test('Vim file resolution accepts regular files and safe links but rejects folders, escapes and nonnative hosts', async () => {
+  const f = fixture({ native: true }); await f.send({ type: 'ready' });
+  await f.send({ type: 'openTerminal', id: 'get-manager', path: f.desktop, program: 'vim' });
+  const config = f.calls.find(call => call[0] === 'terminalManager')[1];
+  assert.equal(await config.resolveFile(`${f.desktop}/a.txt`), `${f.desktop}/a.txt`);
+  f.nodes.set(`${f.desktop}/link.py`, { type: 64, target: `${f.desktop}/a.txt` });
+  assert.equal(await config.resolveFile(`${f.desktop}/link.py`), `${f.desktop}/link.py`);
+  await assert.rejects(config.resolveFile(`${f.desktop}/folder`), /普通文件/);
+  await assert.rejects(config.resolveFile(`${f.desktop}/missing.py`), /Missing/);
+  await assert.rejects(config.resolveFile('/etc/passwd'), /路径不在/);
+  f.nodes.set(`${f.desktop}/escape.py`, { type: 64, target: '/etc/passwd' });
+  await assert.rejects(config.resolveFile(`${f.desktop}/escape.py`), /链接目标不在/);
+  const remoteUi = fixture(); await remoteUi.send({ type: 'ready' });
+  await remoteUi.send({ type: 'openTerminal', id: 'ui-manager', path: remoteUi.desktop, program: 'vim' });
+  await assert.rejects(remoteUi.calls.find(call => call[0] === 'terminalManager')[1].resolveFile(`${remoteUi.desktop}/a.txt`), /扩展主机/);
+});
+
+test('Vim startup command shows the requested file with shell-safe quoting', async () => {
+  const f = fixture({ native: true, terminalReply: 'opened' }); await f.send({ type: 'ready' });
+  await f.send({ type: 'openTerminal', id: 'vim-file', path: f.desktop, program: 'vim', filePath: `${f.desktop}/O'Brien $(echo ignored).py` });
+  assert.equal(f.messages.findLast(item => item.type === 'operationCommand').command, `cd -- '${f.desktop}' && vim -- '${f.desktop}/O'"'"'Brien $(echo ignored).py'`);
+});
+
+test('directory settings keep the reopen warning on reads and external updates until a new desktop session starts', async () => {
+  const f = fixture({ local: true }); await f.send({ type: 'ready' });
+  await f.send({ type: 'saveExtensionSettings', settings: { remoteRoot: '/new-root' }, target: 'workspace' });
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettingsSaved').reopenRequired, true);
+  await f.send({ type: 'getExtensionSettings', requestId: 'reopen-settings' });
+  assert.equal(f.messages.findLast(item => item.requestId === 'reopen-settings').reopenRequired, true);
+  f.configuration.workspace.scriptEditor = 'vim'; f.emitConfigurationChange();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettings').reopenRequired, true);
+  await f.send({ type: 'ready' });
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettings').reopenRequired, false);
+  assert.equal(f.messages.findLast(item => item.type === 'remoteState').rootPath, '/new-root');
+  f.configuration.workspace.remoteHome = '/another-home'; f.emitConfigurationChange();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.messages.findLast(item => item.type === 'extensionSettings').reopenRequired, true);
+});
+
+test('extension settings reads wait for multi-field saves and failed-write rollback before publishing a snapshot', async () => {
+  for (const fail of [false, true]) {
+    let release; let started;
+    const gate = new Promise(resolve => { release = resolve; });
+    const entered = new Promise(resolve => { started = resolve; });
+    const f = fixture({ local: true, onConfigUpdate: async (key) => {
+      if (key === 'scriptEditor') { started(); await gate; if (fail) throw new Error('settings write failed'); }
+    } });
+    await f.send({ type: 'ready' });
+    const saving = f.send({ type: 'saveExtensionSettings', target: 'workspace', settings: { remoteRoot: '/new-root', scriptEditor: 'vim' } });
+    await entered;
+    assert.equal(f.configuration.workspace.remoteRoot, '/new-root', 'first field has already been written');
+    const reading = f.send({ type: 'getExtensionSettings', requestId: 'queued-read' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.messages.some(item => item.requestId === 'queued-read'), false, 'must not publish the intermediate settings');
+    release(); await Promise.all([saving, reading]);
+    const reply = f.messages.findLast(item => item.requestId === 'queued-read');
+    assert.equal(reply.settings.remoteRoot, fail ? f.home : '/new-root');
+    assert.equal(reply.settings.scriptEditor, fail ? 'vscode' : 'vim');
+    assert.equal(reply.reopenRequired, !fail);
+  }
 });

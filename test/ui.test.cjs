@@ -65,12 +65,20 @@ async function scenario(name, fn, { config = {}, viewport = { width: 1440, heigh
     window.mockRemote = data;
     window.mockRemoteEnabled = useRemote;
     window.mockRemotePaused = false;
+    window.mockExtensionSettings = { settings: { openOnStartup: false, remoteRoot: '/home/demo', remoteHome: '', scriptEditor: 'vscode' }, hasWorkspace: true, target: 'workspace', reopenRequired: false };
     window.prompt = () => { throw new Error('window.prompt is unavailable in VS Code webviews'); };
     window.receiveHostMessage = message => window.dispatchEvent(new MessageEvent('message', { data: message }));
     window.sendRemoteState = (refresh = false) => window.receiveHostMessage({ type: 'remoteState', status: 'ready', rootPath: window.mockRemote.rootPath, homePath: window.mockRemote.homePath, folder: window.mockRemote.rootPath, entries: window.mockRemote.directories[window.mockRemote.rootPath], config: window.mockRemote.config, refresh });
     window.acquireVsCodeApi = () => ({
       postMessage: message => {
         window.demoMessages.push(message);
+        if (message.type === 'ready' || message.type === 'getExtensionSettings') queueMicrotask(() => {
+          window.receiveHostMessage({ type: 'extensionSettings', ...window.mockExtensionSettings, requestId: message.requestId });
+        });
+        if (message.type === 'saveExtensionSettings') queueMicrotask(() => {
+          if (!window.extensionSettingsSaveError) Object.assign(window.mockExtensionSettings.settings, message.settings);
+          window.receiveHostMessage({ type: 'extensionSettingsSaved', ...window.mockExtensionSettings, requestId: message.requestId, ok: !window.extensionSettingsSaveError, error: window.extensionSettingsSaveError });
+        });
         if (!window.mockRemoteEnabled || window.mockRemotePaused) return;
         // Keep the extension boundary asynchronous, as it is in a real webview.
         queueMicrotask(() => {
@@ -150,6 +158,137 @@ test('Desktop settings wait for save acknowledgement, then apply views, wallpape
   assert.equal(await page.locator('#settingsWallpaper').inputValue(), 'purple');
   assert.equal(await page.locator('#settingsHidden').isChecked(), false);
   await page.screenshot({ path: path.join(artifacts, 'settings-006.png'), fullPage: true });
+}));
+
+test('New English filenames resolve collisions in desktop and explorer without creating before confirmation', () => scenario('english-defaults-007', async page => {
+  await page.evaluate(() => {
+    const root = window.mockRemote.rootPath;
+    window.mockRemote.directories[root].push({ name: 'New Folder', type: 'folder', path: `${root}/New Folder` });
+    window.mockRemote.directories[`${root}/projects`].push({ name: 'New File.txt', type: 'file', path: `${root}/projects/New File.txt` });
+    window.sendRemoteState(true);
+  });
+  await desktopAction(page, 'new-folder');
+  assert.equal(await page.locator('input.name-editor').inputValue(), 'New Folder (2)');
+  await page.locator('input.name-editor').press('Escape');
+  const win = await openDesktopFolder(page, 'projects');
+  await listingMenu(win); await page.locator('#context [data-action="new-file"]').click();
+  assert.equal(await page.locator('input.name-editor').inputValue(), 'New File (2).txt');
+  assert.equal((await messages(page, 'fileOperation')).length, 0);
+  await page.locator('input.name-editor').press('Enter');
+  const request = await waitForMessage(page, 'fileOperation', 'new-file');
+  assert.equal(request.name, 'New File (2).txt');
+}));
+
+test('Desktop settings expose every extension preference and save only edited VS Code fields', () => scenario('extension-settings-007', async page => {
+  await page.evaluate(() => { window.mockExtensionSettings.settings.remoteHome = '/home/tester'; });
+  await page.locator('#desktopSettings').click();
+  await page.waitForFunction(() => !document.querySelector('#settingsScriptEditor').disabled);
+  assert.equal(await page.locator('#settingsOpenOnStartup').isChecked(), false);
+  assert.equal(await page.locator('#settingsRemoteHome').inputValue(), '/home/tester');
+  assert.equal(await page.locator('#settingsRemoteRoot').inputValue(), '/home/demo');
+  await page.locator('#settingsScriptEditor').selectOption('vim');
+  await clearMessages(page); await page.locator('#saveExtensionSettings').click();
+  const request = await waitForMessage(page, 'saveExtensionSettings');
+  assert.deepEqual(request.settings, { scriptEditor: 'vim' }); assert.equal(request.target, 'workspace');
+  assert.equal((await messages(page, 'saveDesktopConfig')).length, 0);
+  await page.waitForFunction(() => document.querySelector('#extensionSettingsStatus').textContent.includes('已保存'));
+  await page.locator('#settingsOpenOnStartup').check(); await page.locator('#settingsRemoteRoot').fill('/home/sample');
+  await page.locator('#settingsRemoteHome').fill('/home/tester/new'); await page.locator('#extensionSettingsTarget').selectOption('user');
+  await page.evaluate(() => { window.mockExtensionSettings.reopenRequired = true; });
+  await clearMessages(page); await page.locator('#saveExtensionSettings').click();
+  const paths = await waitForMessage(page, 'saveExtensionSettings');
+  assert.deepEqual(paths.settings, { openOnStartup: true, remoteRoot: '/home/sample', remoteHome: '/home/tester/new' });
+  assert.equal(paths.target, 'user');
+  await page.waitForFunction(() => document.querySelector('#extensionSettingsStatus').textContent.includes('重新打开'));
+  await page.screenshot({ path: path.join(artifacts, 'settings-007.png'), fullPage: true });
+}));
+
+test('Editing one preference preserves an unrelated external VS Code settings change', () => scenario('extension-settings-external-007', async page => {
+  await page.locator('#desktopSettings').click();
+  await page.waitForFunction(() => !document.querySelector('#settingsScriptEditor').disabled);
+  await page.evaluate(() => { window.mockExtensionSettings.settings.scriptEditor = 'vim'; });
+  await receive(page, { type: 'extensionSettings', settings: { openOnStartup: false, remoteRoot: '/home/demo', remoteHome: '', scriptEditor: 'vim' }, hasWorkspace: true });
+  await page.locator('#settingsOpenOnStartup').check();
+  await clearMessages(page); await page.locator('#saveExtensionSettings').click();
+  const request = await waitForMessage(page, 'saveExtensionSettings');
+  assert.deepEqual(request.settings, { openOnStartup: true });
+  await page.waitForFunction(() => document.querySelector('#extensionSettingsStatus').textContent.includes('已保存'));
+  assert.equal(await page.locator('#settingsScriptEditor').inputValue(), 'vim');
+}));
+
+test('Local demo uses the session root and retains it until reopening after a settings change', () => scenario('local-root-007', async page => {
+  await receive(page, { type: 'remoteState', status: 'local', rootPath: '/custom/root' });
+  assert.equal(await page.locator('#desktopPath').textContent(), '/custom/root');
+  await page.locator('#icons .icon[data-path="/custom/root/README.md"]').dblclick();
+  assert.equal((await waitForMessage(page, 'openResource')).path, '/custom/root/README.md');
+  await receive(page, { type: 'extensionSettings', settings: { openOnStartup: false, remoteRoot: '/another/root', remoteHome: '', scriptEditor: 'vscode' }, hasWorkspace: true, reopenRequired: true });
+  await page.keyboard.press('Control+Alt+t');
+  assert.equal((await waitForMessage(page, 'openTerminal')).path, '/custom/root');
+  await page.reload();
+  await receive(page, { type: 'remoteState', status: 'local', rootPath: '/another/root' });
+  assert.equal(await page.locator('#icons .icon[data-path="/another/root/projects"]').count(), 1);
+  await page.locator('#icons .icon[data-path="/another/root/projects"]').dblclick();
+  assert.equal(await page.locator('.window-path').inputValue(), '/another/root/projects');
+  assert.equal(await page.locator('.entry[data-path="/another/root/projects/train.py"]').count(), 1);
+}, { remote: false }));
+
+test('Extension settings failure preserves the active editor and cancellation makes no changes', () => scenario('extension-settings-errors-007', async page => {
+  await page.locator('#desktopSettings').click();
+  await page.waitForFunction(() => !document.querySelector('#settingsScriptEditor').disabled);
+  await page.locator('#settingsScriptEditor').selectOption('vim');
+  await page.evaluate(() => { window.extensionSettingsSaveError = 'Settings file is read-only'; });
+  await page.locator('#saveExtensionSettings').click();
+  await page.waitForFunction(() => document.querySelector('#extensionSettingsError').textContent.includes('read-only'));
+  await page.locator('#closeSettings').click();
+  await desktopIcon(page, 'run.sh').dblclick();
+  assert.equal((await waitForMessage(page, 'openResource')).path, `${remoteRoot}/run.sh`);
+  assert.equal((await messages(page, 'openTerminal')).length, 0);
+  await page.locator('#desktopSettings').click();
+  await page.waitForFunction(() => !document.querySelector('#settingsScriptEditor').disabled);
+  assert.equal(await page.locator('#settingsScriptEditor').inputValue(), 'vscode');
+  await page.locator('#settingsScriptEditor').selectOption('vim'); await clearMessages(page);
+  await page.locator('#cancelSettings').click();
+  assert.equal((await messages(page, 'saveExtensionSettings')).length, 0);
+}));
+
+test('Script editor opens Vim with the script path in a desktop window while ordinary files stay in VS Code', () => scenario('script-vim-007', async page => {
+  const settings = { openOnStartup: false, remoteRoot: '/home/demo', remoteHome: '', scriptEditor: 'vim' };
+  await receive(page, { type: 'extensionSettings', settings, hasWorkspace: true });
+  await desktopIcon(page, 'run.sh').dblclick();
+  const terminal = await waitForMessage(page, 'openTerminal');
+  assert.equal(terminal.program, 'vim'); assert.equal(terminal.path, remoteRoot); assert.equal(terminal.filePath, `${remoteRoot}/run.sh`);
+  assert.equal((await messages(page, 'openResource')).length, 0);
+  const vim = page.locator(`.terminal-window[data-window-id="${terminal.id}"]`);
+  assert.equal(await vim.locator('.window-title').textContent(), 'Vim — run.sh');
+  await receive(page, { type: 'terminalError', id: terminal.id, error: '服务器未安装 vim' });
+  assert.match(await vim.locator('.terminal-status').textContent(), /未安装 vim/);
+  await windowAction(vim, 'close').click();
+  await desktopIcon(page, 'notes.txt').dblclick();
+  assert.equal((await waitForMessage(page, 'openResource')).path, `${remoteRoot}/notes.txt`);
+  await page.evaluate(() => { const root = window.mockRemote.rootPath; window.mockRemote.directories[`${root}/projects`].push({name: "space 中文'job.PY", type:'file', path:`${root}/projects/space 中文'job.PY`}); });
+  const win = await openDesktopFolder(page, 'projects'); await clearMessages(page);
+  await win.locator('.entry').filter({hasText:"space 中文'job.PY"}).dblclick();
+  const file = await waitForMessage(page, 'openTerminal');
+  assert.equal(file.filePath, `${remoteRoot}/projects/space 中文'job.PY`); assert.equal(file.path, `${remoteRoot}/projects`);
+}));
+
+test('Ctrl Alt T opens one desktop terminal in the focused directory and never sends the chord to xterm', () => scenario('terminal-shortcut-007', async page => {
+  await page.keyboard.press('Control+Alt+t');
+  const first = await waitForMessage(page, 'openTerminal'); assert.equal(first.program, 'shell'); assert.equal(first.path, remoteRoot);
+  const terminal = page.locator(`.terminal-window[data-window-id="${first.id}"]`);
+  await receive(page, { type: 'terminalOpened', id: first.id, program: 'shell', cwd: remoteRoot });
+  await terminal.locator('.xterm-helper-textarea').focus(); await clearMessages(page);
+  await page.keyboard.press('Control+Alt+t');
+  assert.equal((await messages(page, 'openTerminal')).length, 1);
+  assert.equal((await messages(page, 'terminalInput')).length, 0);
+  while (await page.locator('.terminal-window').count()) await windowAction(page.locator('.terminal-window').last(), 'close').click();
+  const explorer = await openDesktopFolder(page, 'projects');
+  await explorer.locator('.window-path').focus(); await clearMessages(page);
+  await page.keyboard.press('Control+Alt+t');
+  assert.equal((await waitForMessage(page, 'openTerminal')).path, `${remoteRoot}/projects`);
+  await page.locator('#desktopSettings').click(); await clearMessages(page);
+  await page.keyboard.press('Control+Alt+t');
+  assert.equal((await messages(page, 'openTerminal')).length, 0);
 }));
 
 test('Settings cancel and failed save leave the desktop unchanged and permit retry', () => scenario('settings-failure-006', async page => {
@@ -357,6 +496,7 @@ test('Desktop creates a named folder only after Enter and reloads after host suc
   await page.locator('#context [data-action="new-folder"]').click();
   const editor = page.locator('#icons input.name-editor');
   await editor.waitFor();
+  assert.equal(await editor.inputValue(), 'New Folder');
   assert.equal((await messages(page, 'fileOperation')).length, 0);
   await editor.fill('new remote folder');
   assert.equal((await messages(page, 'fileOperation')).length, 0);
@@ -374,6 +514,7 @@ test('Desktop creates a named folder only after Enter and reloads after host suc
   await clearMessages(page);
   await desktopMenu(page);
   await page.locator('#context [data-action="new-file"]').click();
+  assert.equal(await page.locator('input.name-editor').inputValue(), 'New File.txt');
   await page.locator('input.name-editor').fill('cancelled.txt');
   await page.locator('input.name-editor').press('Escape');
   assert.equal((await messages(page, 'fileOperation')).length, 0);

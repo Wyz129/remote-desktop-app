@@ -2,7 +2,7 @@
   "name": "remote-desktop",
   "displayName": "Remote Desktop",
   "description": "Remote-SSH 桌面与多窗口资源管理器，支持远程文件操作和持久化快捷方式。",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "local-demo",
   "private": true,
   "license": "UNLICENSED",
@@ -33,7 +33,7 @@
     "test:terminal": "node --test test/terminal.test.cjs",
     "test:vscode": "node scripts/test-vscode.cjs",
     "test": "npm run vscode:prepublish && npm run check && npm run test:backend && npm run test:terminal && npm run test:ui && npm run test:vscode",
-    "package": "vsce package --no-rewrite-relative-links --skip-license --out artifacts/remote-desktop-0.0.6.vsix"
+    "package": "vsce package --no-rewrite-relative-links --skip-license --out artifacts/remote-desktop-0.0.7.vsix"
   },
   "contributes": {
     "commands": [
@@ -77,6 +77,19 @@
           "type": "string",
           "default": "",
           "description": "Remote-SSH 主目录的绝对路径；留空时在远程扩展主机读取登录用户主目录。"
+        },
+        "remoteDesktopDemo.scriptEditor": {
+          "type": "string",
+          "enum": [
+            "vscode",
+            "vim"
+          ],
+          "enumDescriptions": [
+            "在 VS Code 编辑器中打开脚本文件。",
+            "在虚拟桌面的 Vim 终端窗口中编辑脚本文件（需要服务器安装 Vim）。"
+          ],
+          "default": "vscode",
+          "description": "脚本文件默认开启软件。适用于常见脚本扩展名；Vim 仅编辑文件，不执行脚本。"
         }
       }
     }

@@ -11,6 +11,7 @@ function fixture(overrides = {}) {
   const bin = path.join(root, 'bin');
   const shell = path.join(bin, process.platform === 'win32' ? 'cmd.exe' : 'bash');
   const executablePaths = new Set([shell, path.join(bin, 'vim'), path.join(bin, 'htop')]);
+  const scriptFile = path.join(cwd, "-中文 space;$(hello)'script.py");
   const messages = [];
   const spawned = [];
   const panel = {};
@@ -18,14 +19,15 @@ function fixture(overrides = {}) {
   let native = true;
   const fileSystem = {
     statSync(value) {
-      if (value !== cwd && !executablePaths.has(value)) throw new Error('ENOENT');
-      return { isDirectory: () => value === cwd, isFile: () => executablePaths.has(value) };
+      if (value !== cwd && value !== scriptFile && !executablePaths.has(value)) throw new Error('ENOENT');
+      return { isDirectory: () => value === cwd, isFile: () => value === scriptFile || executablePaths.has(value) };
     },
     accessSync(value) { if (!executablePaths.has(value)) throw new Error('EACCES'); }
   };
   const options = {
     send: async (target, message) => { messages.push({ target, ...message }); },
     resolveCwd: () => cwd,
+    resolveFile: value => { if (value !== scriptFile) throw new Error('File outside allowed roots'); return value; },
     isTrusted: () => trusted,
     isNativeHost: () => native,
     runtime: { platform: process.platform, env: { PATH: bin, SHELL: shell, ComSpec: shell, ELECTRON_RUN_AS_NODE: '1' } },
@@ -48,7 +50,7 @@ function fixture(overrides = {}) {
   };
   const manager = createTerminalManager(options);
   return {
-    manager, panel, cwd, bin, shell, messages, spawned, options, executablePaths,
+    manager, panel, cwd, bin, shell, scriptFile, messages, spawned, options, executablePaths,
     setTrusted(value) { trusted = value; }, setNative(value) { native = value; },
     send: (message, target = panel) => manager.handleMessage({ id: 'terminal-1', ...message }, target)
   };
@@ -103,6 +105,40 @@ test('program selection uses executable argv and rejects arbitrary commands or a
   assert.equal(f.spawned[0].file, f.shell);
   assert.deepEqual(f.spawned[0].args, process.platform === 'win32' ? [] : ['-i']);
   f.manager.dispose();
+});
+
+test('Vim receives a validated script as a single argv argument after -- without executing it', async () => {
+  const f = fixture();
+  await f.send({ type: 'openTerminal', program: 'vim', filePath: f.scriptFile });
+  assert.equal(f.spawned.length, 1);
+  assert.deepEqual(f.spawned[0].args, ['--', f.scriptFile]);
+  assert.equal(f.messages.find(message => message.type === 'terminalOpened').filePath, f.scriptFile);
+  assert.deepEqual(f.spawned[0].writes, []);
+  f.manager.dispose();
+});
+
+test('script requests reject other programs, invalid paths, directories and out-of-scope files', async () => {
+  for (const program of ['shell', 'htop']) {
+    const f = fixture(); await f.send({ type: 'openTerminal', program, filePath: f.scriptFile });
+    assert.equal(f.spawned.length, 0); assert.match(f.messages.at(-1).error, /Vim/);
+  }
+  for (const filePath of ['', 42, '/tmp/a\nb.py', '/outside.py']) {
+    const f = fixture(); await f.send({ type: 'openTerminal', program: 'vim', filePath });
+    assert.equal(f.spawned.length, 0); assert.equal(f.messages.at(-1).type, 'terminalError');
+  }
+  const f = fixture({ resolveFile: value => value });
+  await f.send({ type: 'openTerminal', program: 'vim', filePath: f.cwd });
+  assert.equal(f.spawned.length, 0); assert.match(f.messages.at(-1).error, /不是普通文件/);
+});
+
+test('closing a Vim window during file resolution cancels spawn and releases its pending slot', async () => {
+  let resolve; const pending = new Promise(done => { resolve = done; });
+  const f = fixture({ resolveFile: () => pending });
+  const open = f.send({ type: 'openTerminal', program: 'vim', filePath: f.scriptFile });
+  await settle(); await f.send({ type: 'terminalClose' }); resolve(f.scriptFile); await open;
+  assert.equal(f.spawned.length, 0);
+  await f.send({ type: 'openTerminal', id: 'terminal-2', program: 'shell' });
+  assert.equal(f.spawned.length, 1); f.manager.dispose();
 });
 
 test('sessions are isolated by panel; explicit close kills only its PTY and permits id reuse', async () => {

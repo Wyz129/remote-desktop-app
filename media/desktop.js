@@ -55,6 +55,14 @@ let saveTimer;
 let pendingConfig = {};
 let settingsRequest = null;
 let settingsTimer;
+let extensionSettings = { openOnStartup: false, remoteRoot: DEMO_ROOT, remoteHome: '', scriptEditor: 'vscode' };
+let extensionSettingsFormBaseline = { ...extensionSettings };
+let extensionSettingsRequest = null;
+let extensionSettingsRead = null;
+let extensionSettingsTimer;
+let extensionSettingsReady = false;
+let extensionSettingsHasWorkspace = false;
+let extensionSettingsReopenRequired = false;
 let fullscreenTimer;
 let dragPayload = null;
 
@@ -202,11 +210,13 @@ function applyConfig(config, initial = false) {
 }
 function visibleEntry(item) { return state.showHiddenFiles || item.kind === 'command' || !item.name.startsWith('.'); }
 function settingsBusy(busy) {
-  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy;
+  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy || Boolean(extensionSettingsRequest);
   $('applySettings').textContent = busy ? '正在保存…' : '应用';
+  extensionSettingsBusy();
 }
 function closeSettings() {
-  if (settingsRequest) return;
+  if (settingsRequest || extensionSettingsRequest) return;
+  extensionSettingsRead = null; clearTimeout(extensionSettingsTimer);
   $('settingsDialog').close(); $('desktopSettings').focus();
 }
 function openSettings() {
@@ -218,6 +228,60 @@ function openSettings() {
   $('settingsError').textContent = '';
   $('settingsLocation').textContent = remoteMode ? '应用后保存到服务器桌面配置，并更新已打开的资源管理器。' : '应用后保存在当前 VS Code 桌面视图中。';
   settingsBusy(false); $('settingsDialog').showModal();
+  loadExtensionSettings();
+}
+function extensionSettingsBusy() {
+  const blocked = Boolean(extensionSettingsRequest || extensionSettingsRead || settingsRequest);
+  for (const control of $('extensionSettingsForm').querySelectorAll('button, select, input')) control.disabled = blocked || !extensionSettingsReady;
+  $('reloadExtensionSettings').disabled = blocked;
+  $('extensionSettingsTarget').querySelector('[value="workspace"]').disabled = !extensionSettingsHasWorkspace;
+  $('saveExtensionSettings').textContent = extensionSettingsRequest ? '正在保存…' : '保存扩展设置';
+}
+function showExtensionSettings(settings, message) {
+  extensionSettingsFormBaseline = { ...settings };
+  $('settingsOpenOnStartup').checked = settings.openOnStartup;
+  $('settingsRemoteRoot').value = settings.remoteRoot;
+  $('settingsRemoteHome').value = settings.remoteHome;
+  $('settingsScriptEditor').value = settings.scriptEditor;
+  if (!extensionSettingsHasWorkspace) $('extensionSettingsTarget').value = 'user';
+  else if (message.target) $('extensionSettingsTarget').value = message.target;
+  $('extensionSettingsStatus').textContent = extensionSettingsReopenRequired ? '目录映射已更改，关闭并重新打开桌面后生效。' : '显示当前有效值；工作区设置会覆盖用户设置。';
+}
+function loadExtensionSettings() {
+  if (extensionSettingsRequest || settingsRequest) return;
+  extensionSettingsRead = `settings-read-${nextRequest++}`;
+  $('extensionSettingsStatus').textContent = '正在读取扩展设置…'; $('extensionSettingsError').textContent = '';
+  extensionSettingsBusy();
+  vscode.postMessage({ type: 'getExtensionSettings', requestId: extensionSettingsRead });
+  clearTimeout(extensionSettingsTimer);
+  extensionSettingsTimer = setTimeout(() => {
+    if (!extensionSettingsRead) return;
+    extensionSettingsRead = null; extensionSettingsReady = false; extensionSettingsBusy();
+    $('extensionSettingsError').textContent = '未收到扩展设置，请重新读取。';
+  }, 15000);
+}
+function submitExtensionSettings(event) {
+  event.preventDefault();
+  if (!extensionSettingsReady || extensionSettingsRequest || extensionSettingsRead || settingsRequest) return;
+  const settings = {
+    openOnStartup: $('settingsOpenOnStartup').checked,
+    remoteRoot: $('settingsRemoteRoot').value,
+    remoteHome: $('settingsRemoteHome').value,
+    scriptEditor: $('settingsScriptEditor').value
+  };
+  // Submit only edited fields so changing the editor does not create path or
+  // startup overrides in another VS Code configuration scope.
+  const patch = Object.fromEntries(Object.entries(settings).filter(([key, value]) => value !== extensionSettingsFormBaseline[key]));
+  if (!Object.keys(patch).length) { $('extensionSettingsStatus').textContent = '没有需要保存的更改。'; return; }
+  extensionSettingsRequest = `settings-write-${nextRequest++}`;
+  $('extensionSettingsError').textContent = ''; settingsBusy(false);
+  vscode.postMessage({ type: 'saveExtensionSettings', requestId: extensionSettingsRequest, settings: patch, target: $('extensionSettingsTarget').value });
+  clearTimeout(extensionSettingsTimer);
+  extensionSettingsTimer = setTimeout(() => {
+    if (!extensionSettingsRequest) return;
+    extensionSettingsRequest = null; extensionSettingsReady = false; settingsBusy(false);
+    $('extensionSettingsError').textContent = '未收到保存确认，设置可能已更改。请重新读取后核对。';
+  }, 15000);
 }
 function applyDesktopSettings(config) {
   // Only this request's preference fields are applied. A config reply may also
@@ -229,7 +293,7 @@ function applyDesktopSettings(config) {
   showInterfaceAction('更新桌面设置'); notify(remoteMode ? '桌面设置已保存到服务器' : '桌面设置已保存');
 }
 function submitSettings(event) {
-  event.preventDefault(); if (settingsRequest) return;
+  event.preventDefault(); if (settingsRequest || extensionSettingsRequest) return;
   const config = { viewMode: $('settingsViewMode').value, wallpaper: $('settingsWallpaper').value, showHiddenFiles: $('settingsHidden').checked };
   if (!remoteMode) { applyDesktopSettings(config); closeSettings(); return; }
   clearTimeout(saveTimer);
@@ -273,6 +337,9 @@ function openItem(item, scope = 'desktop') {
   if (item.broken) { notify(`快捷方式目标不存在：${item.path}`); return; }
   if (item.kind === 'command') { vscode.postMessage({ type: 'executeCommand', command: item.command, ...(item.args !== undefined ? { args: item.args } : {}) }); return; }
   if (item.type === 'folder') { openFolder(item.path, scope === 'desktop' ? undefined : scope); return; }
+  if (extensionSettings.scriptEditor === 'vim' && /\.(?:sh|bash|zsh|fish|py|pyw|js|mjs|cjs|jsx|ts|mts|cts|tsx|rb|pl|php|lua|r|ps1|psm1|bat|cmd)$/i.test(item.name)) {
+    openTerminal(parentOf(item.path), 'vim', item.path); return;
+  }
   vscode.postMessage({ type: 'openResource', path: item.path, kind: 'file', ...(item.remoteUri ? { uri: item.remoteUri } : {}) });
 }
 function syncSelection() {
@@ -540,17 +607,17 @@ function fitTerminal(win) {
     vscode.postMessage({ type: 'terminalResize', id: win.id, cols: record.cols, rows: record.rows });
   }
 }
-function openTerminal(path, program = 'shell') {
+function openTerminal(path, program = 'shell', filePath) {
   if (!Object.hasOwn(PROGRAM_LABELS, program)) return;
   const offset = state.windows.length * 34;
   const win = { id: `terminal-${nextWindow++}`, kind: 'terminal', program, folder: path, minimized: false, maximized: false, position: { x: 24 + offset, y: 44 + offset }, size: { width: 740, height: 500 }, z: ++nextLayer };
   state.windows.push(win);
   const element = $('terminalTemplate').content.firstElementChild.cloneNode(true);
   element.dataset.windowId = win.id; element.dataset.program = program;
-  element.setAttribute('aria-label', `${PROGRAM_LABELS[program]} 终端 ${path}`);
-  element.querySelector('.window-title').textContent = `${PROGRAM_LABELS[program]} — ${basename(path)}`;
-  element.querySelector('.terminal-location').textContent = path;
-  element.querySelector('.terminal-location').title = path;
+  element.setAttribute('aria-label', `${PROGRAM_LABELS[program]} 终端 ${filePath || path}`);
+  element.querySelector('.window-title').textContent = `${PROGRAM_LABELS[program]} — ${basename(filePath || path)}`;
+  element.querySelector('.terminal-location').textContent = filePath || path;
+  element.querySelector('.terminal-location').title = filePath || path;
   renderToolIcons(element); windowElements.set(win.id, element); $('windows').append(element);
   element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
   element.addEventListener('click', event => {
@@ -573,7 +640,7 @@ function openTerminal(path, program = 'shell') {
   terminal.onData(data => { if (record.active && record.opened) vscode.postMessage({ type: 'terminalInput', id: win.id, data }); });
   record.observer = new ResizeObserver(() => fitTerminal(win)); record.observer.observe(element.querySelector('.terminal-surface'));
   fitTerminal(win);
-  vscode.postMessage({ type: 'openTerminal', id: win.id, path, program, cols: terminal.cols, rows: terminal.rows });
+  vscode.postMessage({ type: 'openTerminal', id: win.id, path, program, ...(filePath ? { filePath } : {}), cols: terminal.cols, rows: terminal.rows });
   terminal.focus(); save();
 }
 function disposeTerminal(id, tellHost = true) {
@@ -888,7 +955,7 @@ function beginNameEditor(operation, context) {
   if (operation === 'rename' && selected.length !== 1) return;
   const surface = getSurface(context.scope); if (!surface) return;
   const isNew = operation !== 'rename';
-  const item = original || { name: operation === 'new-folder' ? nextName(context.parent, '新建文件夹') : nextName(context.parent, '新建文件', '.txt'), type: operation === 'new-folder' ? 'folder' : 'file' };
+  const item = original || { name: operation === 'new-folder' ? nextName(context.parent, 'New Folder') : nextName(context.parent, 'New File', '.txt'), type: operation === 'new-folder' ? 'folder' : 'file' };
   let element;
   if (isNew) {
     surface.querySelector('.empty')?.remove();
@@ -1017,10 +1084,16 @@ function applyDemoOperation(operation) {
   const verbs = { 'new-file': '新建文件', 'new-folder': '新建文件夹', rename: '重命名', delete: '删除', paste: '粘贴', shortcut: '创建快捷方式' };
   showOperationCommand(`# 本地示例：${verbs[operation.operation] || operation.operation}（仅模拟数据，无 Linux 指令）`);
 }
-function initializeLocal() {
-  remoteMode = false; initialized = true; rootPath = DEMO_ROOT; homePath = DEMO_ROOT;
+function initializeLocal(sessionRoot) {
+  const configuredRoot = sessionRoot || extensionSettings.remoteRoot;
+  try { rootPath = typeof configuredRoot === 'string' && configuredRoot.startsWith('/') ? resolveDirectoryAddress(configuredRoot, '/') : DEMO_ROOT; }
+  catch { rootPath = DEMO_ROOT; }
+  remoteMode = false; initialized = true; homePath = rootPath;
   directories = Object.create(null);
-  for (const [path, entries] of Object.entries(demoDirectories)) setDirectory(path, entries);
+  for (const [path, entries] of Object.entries(demoDirectories)) {
+    const suffix = path.slice(DEMO_ROOT.length);
+    setDirectory(suffix ? (rootPath === '/' ? suffix : rootPath + suffix) : rootPath, entries);
+  }
   if (previous.rootPath !== rootPath) { state.positions = {}; state.shortcuts = []; }
   rebuildItems(); connectionStatus = '本地示例 · 未连接 SSH'; renderServerInfo(); $('desktopPath').textContent = rootPath;
   restoreWindows(); renderIcons(); notify('本地示例');
@@ -1038,6 +1111,35 @@ function restoreWindows() {
 }
 window.addEventListener('message', event => {
   const message = event.data; if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'extensionSettings' || message.type === 'extensionSettingsSaved') {
+    const isSave = message.type === 'extensionSettingsSaved';
+    const matchingSave = isSave && extensionSettingsRequest && message.requestId === extensionSettingsRequest;
+    const matchingRead = !isSave && extensionSettingsRead && message.requestId === extensionSettingsRead;
+    if (message.requestId && !matchingSave && !matchingRead) return;
+    if (message.settings && typeof message.settings === 'object') {
+      extensionSettings = { ...extensionSettings, ...message.settings };
+      extensionSettingsHasWorkspace = Boolean(message.hasWorkspace);
+      extensionSettingsReopenRequired = Boolean(message.reopenRequired);
+      extensionSettingsReady = true;
+    }
+    if (matchingSave || matchingRead) {
+      clearTimeout(extensionSettingsTimer);
+      if (matchingSave) extensionSettingsRequest = null;
+      if (matchingRead) extensionSettingsRead = null;
+      settingsBusy(Boolean(settingsRequest));
+      if (message.ok === false || message.error) {
+        $('extensionSettingsError').textContent = message.error || '扩展设置操作失败，请重试';
+      } else {
+        showExtensionSettings(extensionSettings, message);
+        $('extensionSettingsError').textContent = '';
+        if (matchingSave) {
+          $('extensionSettingsStatus').textContent = extensionSettingsReopenRequired ? '扩展设置已保存；目录映射需要关闭并重新打开桌面后生效。' : '扩展设置已保存；显示当前有效值，工作区设置优先。';
+          showInterfaceAction('保存 VS Code 扩展设置');
+        }
+      }
+    }
+    return;
+  }
   if (message.type === 'fullscreenResult') {
     clearTimeout(fullscreenTimer); $('fullscreen').disabled = false;
     notify(message.message || (message.ok ? '已切换全屏视图；再次点击图标或按两次 Esc 退出' : '全屏请求失败'));
@@ -1060,7 +1162,7 @@ window.addEventListener('message', event => {
   }
   if (['terminalOpened', 'terminalData', 'terminalExit', 'terminalError'].includes(message.type)) { handleTerminalMessage(message); return; }
   if (message.type === 'remoteState') {
-    if (message.status === 'local') { if (!initialized) initializeLocal(); return; }
+    if (message.status === 'local') { if (!initialized) initializeLocal(message.rootPath); return; }
     if (message.status === 'ready' && Array.isArray(message.entries)) {
       const path = message.rootPath || message.folder;
       if (typeof path !== 'string') return;
@@ -1142,6 +1244,16 @@ document.addEventListener('pointerdown', event => {
   if (!event.target.closest('#context')) $('context').hidden = true;
   if (!event.target.closest('#appContext')) $('appContext').hidden = true;
 });
+// Capture before xterm and VS Code's Webview forwarding handlers, reserving
+// Ubuntu's terminal shortcut without sending Ctrl+Alt+T bytes to a TUI.
+document.addEventListener('keydown', event => {
+  if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.getModifierState('AltGraph') || (event.code !== 'KeyT' && event.key.toLowerCase() !== 't')) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  if (event.repeat || event.isComposing || !initialized || $('settingsDialog').open) return;
+  const focusedWindow = getWindow(event.target.closest('.window[data-window-id]')?.dataset.windowId);
+  const selectedWindow = getWindow(selection.scope);
+  openTerminal(focusedWindow?.folder || selectedWindow?.folder || rootPath);
+}, true);
 document.addEventListener('keydown', event => {
   if ($('settingsDialog').open) return;
   if (event.target.closest('input, textarea, .terminal-window, [contenteditable="true"]')) return;
@@ -1165,9 +1277,11 @@ document.addEventListener('keydown', event => {
 $('newWindow').addEventListener('click', () => openFolder(rootPath));
 $('desktopSettings').addEventListener('click', openSettings);
 $('settingsForm').addEventListener('submit', submitSettings);
+$('extensionSettingsForm').addEventListener('submit', submitExtensionSettings);
+$('reloadExtensionSettings').addEventListener('click', loadExtensionSettings);
 $('cancelSettings').addEventListener('click', closeSettings);
 $('closeSettings').addEventListener('click', closeSettings);
-$('settingsDialog').addEventListener('cancel', event => { if (settingsRequest) event.preventDefault(); });
+$('settingsDialog').addEventListener('cancel', event => { event.preventDefault(); closeSettings(); });
 $('fullscreen').addEventListener('click', requestFullscreen);
 for (const [id, name] of Object.entries({ newWindow: 'Plus', desktopSettings: 'Settings', fullscreen: 'Maximize' })) {
   const button = $(id), label = button.querySelector('span:first-child');

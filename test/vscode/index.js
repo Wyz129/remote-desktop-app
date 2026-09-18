@@ -113,6 +113,43 @@ async function run() {
     check(state.ready === true, 'opening after close waits for a real handshake');
     check(state.readyCount > firstReadyCount, 'opening after close increments readyCount');
 
+    const settingsMessages = [];
+    const settingsPanel = { webview: { postMessage: async message => { settingsMessages.push(message); return true; } } };
+    const extensionConfig = vscode.workspace.getConfiguration('remoteDesktopDemo');
+    const settingsKeys = ['openOnStartup', 'remoteRoot', 'remoteHome', 'scriptEditor'];
+    const originalSettings = Object.fromEntries(settingsKeys.map(key => [key, extensionConfig.inspect(key)]));
+    try {
+      await api.handleMessage({ type: 'getExtensionSettings', requestId: 'actual-read' }, settingsPanel);
+      const initial = settingsMessages.find(message => message.requestId === 'actual-read');
+      check(initial?.hasWorkspace && initial.target === 'workspace', 'extension settings identify the real workspace scope');
+      check(JSON.stringify(Object.keys(initial.settings).sort()) === JSON.stringify(Object.keys(extension.packageJSON.contributes.configuration.properties).map(key => key.replace('remoteDesktopDemo.', '')).sort()), 'desktop settings expose every contributed VS Code preference');
+      await api.handleMessage({ type: 'saveExtensionSettings', requestId: 'actual-save', target: 'workspace', settings: { scriptEditor: 'vim', openOnStartup: true } }, settingsPanel);
+      const saved = settingsMessages.find(message => message.requestId === 'actual-save');
+      const effective = vscode.workspace.getConfiguration('remoteDesktopDemo');
+      check(saved?.ok && effective.get('scriptEditor') === 'vim' && effective.get('openOnStartup') === true, 'desktop settings persist through the real VS Code configuration API', JSON.stringify(saved));
+      check(extensionConfig.inspect('remoteRoot').workspaceValue === originalSettings.remoteRoot.workspaceValue && extensionConfig.inspect('remoteHome').workspaceValue === originalSettings.remoteHome.workspaceValue, 'saving editor and startup creates no unrelated path overrides');
+      await api.handleMessage({ type: 'saveExtensionSettings', requestId: 'actual-user', target: 'user', settings: { scriptEditor: 'vscode' } }, settingsPanel);
+      const userSaved = settingsMessages.find(message => message.requestId === 'actual-user');
+      check(userSaved?.ok && userSaved.settings.scriptEditor === 'vim' && extensionConfig.inspect('scriptEditor').globalValue === 'vscode', 'user save reports effective workspace override without claiming it changed');
+      await api.handleMessage({ type: 'saveExtensionSettings', requestId: 'actual-invalid', target: 'workspace', settings: { scriptEditor: 'sh -c anything' } }, settingsPanel);
+      check(settingsMessages.find(message => message.requestId === 'actual-invalid')?.ok === false && vscode.workspace.getConfiguration('remoteDesktopDemo').get('scriptEditor') === 'vim', 'invalid editor choice cannot modify actual settings');
+      settingsMessages.length = 0;
+      await extensionConfig.update('scriptEditor', 'vscode', vscode.ConfigurationTarget.Workspace);
+      const started = Date.now();
+      while (Date.now() - started < 5000 && !settingsMessages.some(message => message.type === 'extensionSettings' && !message.requestId && message.settings.scriptEditor === 'vscode')) await delay(50);
+      check(settingsMessages.some(message => message.type === 'extensionSettings' && !message.requestId && message.settings.scriptEditor === 'vscode'), 'external VS Code settings changes publish effective values to the desktop');
+      await api.handleMessage({ type: 'saveExtensionSettings', requestId: 'actual-root', target: 'workspace', settings: { remoteRoot: '/next-demo-root' } }, settingsPanel);
+      await api.handleMessage({ type: 'getExtensionSettings', requestId: 'actual-root-reread' }, settingsPanel);
+      check(settingsMessages.find(message => message.requestId === 'actual-root-reread')?.reopenRequired === true, 'changed directory settings retain the reopen notice on reread');
+      await api.openResource({ type: 'openResource', path: '/home/demo/README.md', kind: 'file' });
+      check(diagnostics(api).openRequests.at(-1)?.delegated === true, 'active desktop file mapping survives a saved root change until reopening');
+    } finally {
+      for (const key of settingsKeys) {
+        await extensionConfig.update(key, originalSettings[key].workspaceValue, vscode.ConfigurationTarget.Workspace);
+        await extensionConfig.update(key, originalSettings[key].globalValue, vscode.ConfigurationTarget.Global);
+      }
+    }
+
     check(commands.includes('workbench.action.toggleZenMode'), 'VS Code exposes the fullscreen view command');
     const fullscreenMessages = [];
     const fullscreenPanel = { webview: { postMessage: async message => { fullscreenMessages.push(message); return true; } } };

@@ -7,6 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 
 const CONFIG_LIMIT = 64 * 1024;
+const EXTENSION_SETTINGS_DEFAULTS = { openOnStartup: false, remoteRoot: '/home/demo', remoteHome: '', scriptEditor: 'vscode' };
 const errorText = (error) => error instanceof Error ? error.message : String(error);
 const isMissing = (error) => ['FileNotFound', 'EntryNotFound', 'ENOENT'].includes(error?.code) || error?.name === 'EntryNotFound (FileSystemError)';
 // Display only: these strings never enter a shell or a VS Code command argument.
@@ -53,6 +54,9 @@ function activate(context) {
   let fullscreenQueue = Promise.resolve();
   let initialization;
   let terminalManager;
+  let settingsQueue = Promise.resolve();
+  let sessionSettings;
+  const settingsPanels = new Set();
   const pendingTerminalCommands = new WeakMap();
 
   function isRemoteWorkspace() {
@@ -74,7 +78,7 @@ function activate(context) {
     if (!isRemoteWorkspace()) return undefined;
     const folder = vscode.workspace.workspaceFolders?.[0];
     const template = folder?.uri || context.extensionUri;
-    const configured = vscode.workspace.getConfiguration('remoteDesktopDemo').get('remoteHome', '');
+    const configured = (sessionSettings || extensionSettings()).remoteHome;
     if (configured) {
       const normalized = normalizePath(configured);
       if (!normalized) throw new Error('remoteDesktopDemo.remoteHome 必须是远程主目录的绝对路径。');
@@ -100,7 +104,7 @@ function activate(context) {
     if (isRemoteWorkspace()) return uriForRemotePath(value);
     const folder = vscode.workspace.workspaceFolders?.[0];
     const normalized = normalizePath(value);
-    const root = normalizePath(String(vscode.workspace.getConfiguration('remoteDesktopDemo').get('remoteRoot', '/home/demo')));
+    const root = normalizePath(String((sessionSettings || extensionSettings()).remoteRoot));
     if (!folder || !normalized || !root || !containsPath(root, normalized)) return undefined;
     const relative = normalized.slice(root.length).replace(/^\/+/, '');
     return relative ? vscode.Uri.joinPath(folder.uri, ...relative.split('/')) : folder.uri;
@@ -129,6 +133,77 @@ function activate(context) {
     catch (error) { output.appendLine(`Webview notification failed: ${errorText(error)}`); }
   }
 
+  function extensionSettings() {
+    const config = vscode.workspace.getConfiguration('remoteDesktopDemo');
+    return Object.fromEntries(Object.entries(EXTENSION_SETTINGS_DEFAULTS).map(([key, fallback]) => [key, config.get(key, fallback)]));
+  }
+
+  function settingsSnapshot(target, requestId) {
+    const hasWorkspace = Boolean(vscode.workspace.workspaceFolders?.length);
+    const settings = extensionSettings();
+    const reopenRequired = Boolean(sessionSettings && ['remoteRoot', 'remoteHome'].some((key) => sessionSettings[key] !== settings[key]));
+    return { settings, hasWorkspace, target: target || (hasWorkspace ? 'workspace' : 'user'), reopenRequired, ...(requestId !== undefined ? { requestId } : {}) };
+  }
+
+  async function sendExtensionSettings(targetPanel, requestId) {
+    if (targetPanel) settingsPanels.add(targetPanel);
+    // Never expose one field from an unfinished multi-setting write or rollback.
+    await settingsQueue;
+    await send(targetPanel, { type: 'extensionSettings', ...settingsSnapshot(undefined, requestId) });
+  }
+
+  function validateExtensionSettings(patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('扩展设置必须是有效的设置对象。');
+    for (const [key, value] of Object.entries(patch)) {
+      if (!Object.hasOwn(EXTENSION_SETTINGS_DEFAULTS, key)) throw new Error(`不支持修改此设置：${key}`);
+      if (key === 'openOnStartup' && typeof value !== 'boolean') throw new Error('启动时打开桌面必须是布尔值。');
+      if (key === 'scriptEditor' && !['vscode', 'vim'].includes(value)) throw new Error('脚本文件默认开启软件必须为 vscode 或 vim。');
+      if (['remoteRoot', 'remoteHome'].includes(key) && !(key === 'remoteHome' && value === '')
+        && (typeof value !== 'string' || !normalizePath(value) || /[\x00-\x1f\x7f]/.test(value))) {
+        throw new Error(`${key} 必须是绝对 POSIX 路径${key === 'remoteHome' ? '或留空' : ''}。`);
+      }
+    }
+    return patch;
+  }
+
+  async function saveExtensionSettings(message, targetPanel) {
+    const targetName = message.target || settingsSnapshot().target;
+    const work = settingsQueue.catch(() => {}).then(async () => {
+      try {
+        if (!['workspace', 'user'].includes(targetName)) throw new Error('设置保存范围必须为 workspace 或 user。');
+        if (targetName === 'workspace' && !vscode.workspace.workspaceFolders?.length) throw new Error('请先打开工作区文件夹，或改为保存到用户设置。');
+        const patch = validateExtensionSettings(message.settings);
+        const target = targetName === 'workspace' ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+        const config = vscode.workspace.getConfiguration('remoteDesktopDemo');
+        const valueKey = targetName === 'workspace' ? 'workspaceValue' : 'globalValue';
+        const originals = new Map(Object.keys(patch).map((key) => [key, config.inspect(key)?.[valueKey]]));
+        const changed = [];
+        try {
+          for (const [key, value] of Object.entries(patch)) {
+            if (Object.is(originals.get(key), value)) continue;
+            await config.update(key, value, target);
+            changed.push(key);
+          }
+        } catch (error) {
+          const rollbackErrors = [];
+          for (const key of changed.reverse()) {
+            try { await config.update(key, originals.get(key), target); }
+            catch (rollbackError) { rollbackErrors.push(`${key}: ${errorText(rollbackError)}`); }
+          }
+          throw new Error(`${errorText(error)}${rollbackErrors.length ? `；部分设置回滚失败：${rollbackErrors.join('；')}` : ''}`);
+        }
+        const snapshot = settingsSnapshot(targetName, message.requestId);
+        await send(targetPanel, { type: 'extensionSettingsSaved', ok: true, ...snapshot });
+      } catch (error) {
+        const snapshot = settingsSnapshot(['workspace', 'user'].includes(targetName) ? targetName : undefined, message.requestId);
+        await send(targetPanel, { type: 'extensionSettingsSaved', ok: false, ...snapshot, error: errorText(error) });
+        output.appendLine(`Extension settings save failed: ${errorText(error)}`);
+      }
+    });
+    settingsQueue = work.catch(() => {});
+    await work;
+  }
+
   function linuxCommandsAvailable() {
     return process.platform === 'linux' && (!isRemoteWorkspace() || nativeRemoteHost());
   }
@@ -153,7 +228,8 @@ function activate(context) {
     const requested = pendingTerminalCommands.get(targetPanel)?.get(message.id);
     if (!requested) return;
     if (message.type === 'terminalOpened') {
-      const program = message.program === 'shell' ? '"${SHELL:-/bin/sh}" -i' : message.program;
+      const filePath = message.filePath || requested.filePath;
+      const program = message.program === 'shell' ? '"${SHELL:-/bin/sh}" -i' : message.program === 'vim' && filePath ? `vim -- ${shellQuote(filePath)}` : message.program;
       const command = linuxCommandsAvailable() ? `cd -- ${shellQuote(message.cwd)} && ${program}` : displayComment(`VS Code PTY：在 ${message.cwd} 启动 ${message.program}`);
       await sendOperationCommand(targetPanel, command, 'success', linuxCommandsAvailable() ? '终端启动的 Linux 等效命令；终端输入不记录在此处。' : '通过 VS Code 扩展主机 PTY 启动；终端输入不记录在此处。');
     } else {
@@ -180,6 +256,22 @@ function activate(context) {
         resolveCwd: (value) => {
           const uri = value ? requireUri(value) : (remoteDesktopRoot || vscode.workspace.workspaceFolders?.[0]?.uri);
           if (!uri || uri.scheme !== 'file' || (isRemoteWorkspace() && !nativeRemoteHost())) throw new Error('桌面终端需要插件运行在当前工作区的扩展主机中。');
+          return uri.fsPath;
+        },
+        resolveFile: async (value) => {
+          const uri = requireUri(value);
+          if (uri.scheme !== 'file' || (isRemoteWorkspace() && !nativeRemoteHost())) throw new Error('Vim 文件编辑需要插件运行在当前工作区的扩展主机中。');
+          const resolved = await fs.promises.realpath(uri.fsPath);
+          const roots = [remoteHomeRoot, ...(vscode.workspace.workspaceFolders || []).map((folder) => folder.uri)].filter((root) => root?.scheme === 'file');
+          let allowed = false;
+          for (const root of roots) {
+            const rootPath = await fs.promises.realpath(root.fsPath);
+            const relative = path.relative(rootPath, resolved);
+            if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) { allowed = true; break; }
+          }
+          if (!allowed) throw new Error('文件链接目标不在当前远程主目录或工作区内。');
+          const stat = await fs.promises.stat(resolved);
+          if (!stat.isFile()) throw new Error('Vim 只能打开普通文件。');
           return uri.fsPath;
         },
         isNativeHost: () => !isRemoteWorkspace() || nativeRemoteHost(),
@@ -332,7 +424,7 @@ function activate(context) {
   }
 
   async function inspectRemoteDesktop() {
-    if (!isRemoteWorkspace()) return { status: 'local' };
+    if (!isRemoteWorkspace()) return { status: 'local', rootPath: normalizePath((sessionSettings || extensionSettings()).remoteRoot) || '/home/demo' };
     const home = remoteHomeUri();
     if (!home) return { status: 'error', message: '无法定位远程主目录，请设置 remoteDesktopDemo.remoteHome，并将插件安装到 SSH 扩展主机。' };
     remoteHomeRoot = home;
@@ -602,7 +694,10 @@ function activate(context) {
       if (message.type === 'ready') {
         ready = true;
         readyCount += 1;
+        await settingsQueue;
+        sessionSettings = extensionSettings();
         output.appendLine(`Webview ready: ${isRemoteWorkspace() ? 'remote workspace' : 'local demo'}.`);
+        await sendExtensionSettings(targetPanel);
         await sendServerInfo(targetPanel);
         initialization = inspectRemoteDesktop().catch((error) => ({ status: 'error', message: `读取远程桌面失败：${errorText(error)}` }));
         remoteState = await initialization;
@@ -610,6 +705,10 @@ function activate(context) {
         await send(targetPanel, { type: 'remoteState', ...remoteState });
       } else if (message.type === 'getServerInfo') {
         await sendServerInfo(targetPanel);
+      } else if (message.type === 'getExtensionSettings') {
+        await sendExtensionSettings(targetPanel, message.requestId);
+      } else if (message.type === 'saveExtensionSettings') {
+        await saveExtensionSettings(message, targetPanel);
       } else if (message.type === 'refreshRemote') {
         await refreshRemote(message, targetPanel);
       } else if (message.type === 'openResource') {
@@ -729,8 +828,9 @@ function activate(context) {
     const receiver = currentPanel.webview.onDidReceiveMessage((message) => handleMessage(message, currentPanel));
     currentPanel.onDidDispose(() => {
       receiver.dispose();
+      settingsPanels.delete(currentPanel);
       terminalManager?.disposePanel(currentPanel);
-      if (panel === currentPanel) { panel = undefined; ready = false; }
+      if (panel === currentPanel) { panel = undefined; ready = false; sessionSettings = undefined; }
     });
     try {
       const template = fs.readFileSync(vscode.Uri.joinPath(mediaRoot, 'desktop.html').fsPath, 'utf8');
@@ -748,7 +848,13 @@ function activate(context) {
     } catch (error) { closeDemo(); output.appendLine(errorText(error)); throw error; }
   }
 
-  context.subscriptions.push(output, vscode.commands.registerCommand('remoteDesktop.open', openDemo), vscode.commands.registerCommand('remoteDesktop.openDemo', openDemo), { dispose: () => { closeDemo(); terminalManager?.dispose(); } });
+  const settingsListener = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration('remoteDesktopDemo')) {
+      // Publish after the current transaction, including rollback, has settled.
+      void settingsQueue.then(() => Promise.all([...settingsPanels].map((target) => sendExtensionSettings(target)))).catch((error) => output.appendLine(`Extension settings notification failed: ${errorText(error)}`));
+    }
+  });
+  context.subscriptions.push(output, vscode.commands.registerCommand('remoteDesktop.open', openDemo), vscode.commands.registerCommand('remoteDesktop.openDemo', openDemo), settingsListener, { dispose: () => { closeDemo(); settingsPanels.clear(); terminalManager?.dispose(); } });
   if (vscode.workspace.getConfiguration('remoteDesktopDemo').get('openOnStartup', false)) openDemo();
   return {
     getDiagnostics: () => ({ openPanels: panel ? 1 : 0, ready, readyCount, openRequests: [...openRequests], remoteState: { ...remoteState }, nativeRemoteHost: nativeRemoteHost(), configPath: configUri?.path, configError }),

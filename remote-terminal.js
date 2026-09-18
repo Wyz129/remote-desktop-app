@@ -45,7 +45,7 @@ function loadRuntimePty(options = {}) {
     } catch (error) { failures.push(`${candidate}: ${errorText(error)}`); }
   }
   options.log?.(`Desktop PTY resolution failed:\n${failures.join('\n')}`);
-  throw new Error('无法加载当前 VS Code 扩展主机的 PTY 模块。请确认插件安装在 SSH 服务器端，并更新 VS Code / VS Code Server 后重试；详细原因见 Remote Desktop Demo 输出。');
+  throw new Error('无法加载当前 VS Code 扩展主机的 PTY 模块。请确认插件安装在 SSH 服务器端，并更新 VS Code / VS Code Server 后重试；详细原因见 Remote Desktop 输出。');
 }
 
 function dimensions(message) {
@@ -168,6 +168,7 @@ function createTerminalManager(options) {
       if (closedPanels.has(panel)) throw new Error('桌面窗口已关闭。');
       if (message.type === 'openTerminal') {
         if (!PROGRAMS.has(message.program || 'shell')) throw new Error('不支持的终端程序。');
+        if (message.filePath !== undefined && (message.program !== 'vim' || typeof message.filePath !== 'string' || !message.filePath || /[\x00-\x1f\x7f]/.test(message.filePath))) throw new Error('文件路径只支持通过 Vim 打开，且必须是有效路径。');
         if (cancelledIds.get(panel)?.has(id)) throw new Error('该终端启动已取消，请使用新的会话标识。');
         if (panels.get(panel)?.has(id) || pendingOpens.get(panel)?.has(id)) throw new Error('该终端会话已经存在。');
         if (sessionCount + pendingCount >= MAX_SESSIONS || (panels.get(panel)?.size || 0) + (pendingOpens.get(panel)?.size || 0) >= MAX_PANEL_SESSIONS) throw new Error('桌面终端数量已达上限，请关闭部分窗口后重试。');
@@ -176,6 +177,8 @@ function createTerminalManager(options) {
         pendingOpens.get(panel).set(id, opening);
         pendingCount += 1;
         const cwd = await options.resolveCwd(message.path);
+        if (opening.cancelled || closedPanels.has(panel)) return;
+        const filePath = message.filePath === undefined ? undefined : await options.resolveFile(message.filePath);
         // Closing the terminal or its entire panel while resolving must cancel spawn.
         if (opening.cancelled) return;
         clearPending(panel, id, opening);
@@ -186,6 +189,11 @@ function createTerminalManager(options) {
         if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || !fileSystem.statSync(cwd).isDirectory()) throw new Error('终端工作目录不存在或不是文件夹。');
         const program = message.program || 'shell';
         const executable = resolveProgram(program, runtime, fileSystem);
+        if (filePath !== undefined) {
+          if (typeof filePath !== 'string' || !path.isAbsolute(filePath) || /[\x00-\x1f\x7f]/.test(filePath) || !fileSystem.statSync(filePath).isFile()) throw new Error('Vim 目标不存在或不是普通文件。');
+          // Pass the validated filename as one argv item, never as shell text.
+          executable.args = ['--', filePath];
+        }
         if (!ptyModule) ptyModule = options.loadPty ? options.loadPty() : loadRuntimePty({ appRoot: options.appRoot, runtime, log: options.log });
         const env = { ...runtime.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
         delete env.ELECTRON_RUN_AS_NODE;
@@ -194,7 +202,7 @@ function createTerminalManager(options) {
         if (!panels.has(panel)) panels.set(panel, new Map());
         panels.get(panel).set(id, session);
         sessionCount += 1;
-        enqueue(session, { type: 'terminalOpened', id, program, cwd, pid: pty.pid });
+        enqueue(session, { type: 'terminalOpened', id, program, cwd, ...(filePath !== undefined ? { filePath } : {}), pid: pty.pid });
         session.listeners.push(pty.onData((data) => {
           if (!session.closed) enqueue(session, { type: 'terminalData', id, data });
         }));
