@@ -13,32 +13,35 @@ async function browserLaunch(userData, env) {
   const harness = path.join(project, 'test/helpers/browser-harness.cjs');
   const executable = process.env.REMOTE_DESKTOP_TEST_EXE;
   if (!executable) return { args: [harness, '--smoke-test', `--user-data-dir=${userData}`], env };
+  const { createPackage } = require('@electron/asar');
   // Packaged applications always load their own app.asar. Give the exact shipped
   // runtime an isolated harness entry, while requiring the original shipped
   // modules/preloads/UI directly from app.asar (never an extracted source copy).
   const distribution = path.dirname(path.resolve(executable)), runtime = path.join(userData, 'runtime');
-  const copyRuntime = async (source, target) => {
-    await fs.mkdir(target, { recursive: true });
-    for (const entry of await fs.readdir(source, { withFileTypes: true })) {
-      if (entry.name === 'resources') continue;
-      const from = path.join(source, entry.name), to = path.join(target, entry.name);
-      if (entry.isDirectory()) await copyRuntime(from, to);
-      else { try { await fs.link(from, to); } catch { await fs.copyFile(from, to); } }
-    }
-  };
-  await copyRuntime(distribution, runtime);
-  const application = path.join(runtime, 'resources/app'); await fs.mkdir(application, { recursive: true });
+  // Keep the packaged executable and native resources intact. Swap only the
+  // temporary app.asar for a harness that imports the shipped app.asar files.
+  await fs.cp(distribution, runtime, { recursive: true });
+  const application = path.join(userData, 'packaged-browser-harness');
+  await fs.mkdir(path.join(application, 'test/helpers'), { recursive: true });
+  for (const name of ['browser-harness.cjs', 'ssh-fixture.cjs']) await fs.copyFile(path.join(project, 'test/helpers', name), path.join(application, 'test/helpers', name));
   await fs.writeFile(path.join(application, 'package.json'), JSON.stringify({ name: 'isolated-packaged-browser-test', main: 'main.cjs' }));
-  await fs.writeFile(path.join(application, 'main.cjs'), `require(${JSON.stringify(harness)});\n`);
+  const shippedNodeModules = path.join(distribution, 'resources', 'app.asar', 'node_modules');
+  await fs.writeFile(path.join(application, 'main.cjs'), `const Module = require('node:module'); process.env.NODE_PATH = ${JSON.stringify(shippedNodeModules)}; Module._initPaths(); require('./test/helpers/browser-harness.cjs');\n`);
+  const testAsar = path.join(userData, 'browser-harness.asar');
+  await createPackage(application, testAsar);
+  await fs.copyFile(testAsar, path.join(runtime, 'resources/app.asar'));
   return { executablePath: path.join(runtime, path.basename(executable)), args: ['--smoke-test', `--user-data-dir=${userData}`], env: { ...env, REMOTE_DESKTOP_BROWSER_MODULE_ROOT: path.join(distribution, 'resources/app.asar') } };
 }
 
 test('real isolated Electron browser uses SSH DNS, isolates APIs and preserves cookies/POST/blob downloads with local/server destinations', { timeout: 120000 }, async t => {
   const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-browser-electron-'));
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
-  const application = await electron.launch(await browserLaunch(userData, env));
+  const launch = await browserLaunch(userData, env);
+  const application = await electron.launch(launch);
+  const processErrors = []; application.process().stderr?.on('data', chunk => processErrors.push(chunk.toString()));
   t.after(async () => { const timer = setTimeout(() => { if (application.process().exitCode === null) spawnSync('taskkill', ['/PID', String(application.process().pid), '/T', '/F'], { windowsHide: true }); }, 10000); try { await application.evaluate(() => closeBrowserFixture()).catch(() => {}); await application.close(); } finally { clearTimeout(timer); } await fs.rm(userData, { recursive: true, force: true }); });
-  await application.firstWindow(); await waitFor(application, () => Boolean(globalThis.browserManager));
+  try { await application.firstWindow(); } catch (error) { throw new Error(`${error.message}\nPackaged Electron stderr:\n${processErrors.join('').slice(-8000)}`); }
+  await waitFor(application, () => Boolean(globalThis.browserManager));
   await application.evaluate(() => browserManager.open('http://remote-only.invalid:8765/'));
   await waitFor(application, () => [...browserManager.windows.values()][0]?.view.webContents.getTitle() === 'Remote fixture');
   await application.evaluate(() => {const state=[...browserManager.windows.values()][0];state.view.webContents.on('console-message',(_event,...details)=>browserFixture.logs.push(details));});
