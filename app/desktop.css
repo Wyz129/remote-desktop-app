@@ -50,13 +50,18 @@ button:disabled { opacity: .4; cursor: default; }
 .desktop { position: relative; flex: 1; min-width: 0; overflow: hidden; background: linear-gradient(135deg, #294e45, #203f41 50%, #253b44); }
 .desktop[data-wallpaper="purple"] { background: linear-gradient(135deg, #4a294d, #38243e 50%, #252c45); }
 .desktop[data-wallpaper="slate"] { background: linear-gradient(135deg, #3c4652, #28323c 50%, #1c2633); }
-.settings-dialog { position: fixed; width: min(540px, calc(100vw - 24px)); max-height: calc(100vh - 56px); padding: 0; color: var(--text); background: var(--surface); border: 1px solid #72867b; border-radius: 9px; box-shadow: 0 18px 60px #0008; overflow: auto; }
-.settings-dialog::backdrop { background: #10171566; }
+.settings-dialog { margin: 0; padding: 0; color: var(--text); }
+.settings-dialog:not([open]) { display: none; }
+.settings-dialog.window { border-radius: 4px; background: var(--surface); }
+.settings-dialog .window-title { margin: 0; font-size: 12px; }
+.settings-app-icon { font-size: 19px; color: var(--accent); }
+.settings-content { flex: 1; min-height: 0; overflow: auto; }
+.settings-dialog .settings-tabs { flex: none; background: #262c28; }
 .settings-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #353c38; }
 .settings-heading h2 { margin: 0; font-size: 14px; }
 .settings-heading button { font-size: 22px; padding: 0; width: 28px; height: 28px; }
 .settings-tabs { display: flex; gap: 4px; padding: 10px 16px 0; border-bottom: 1px solid var(--line); }
-.settings-tabs button { border-radius: 5px 5px 0 0; padding: 9px 12px; }
+.settings-tabs button { border-radius: 2px 2px 0 0; padding: 9px 12px; }
 .settings-tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); border-bottom: 2px solid var(--accent); }
 .system-settings-panel { padding: 16px 20px 20px; }
 .system-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
@@ -171,6 +176,11 @@ button:disabled { opacity: .4; cursor: default; }
 .listing.icon-view .shortcut-mark { width: 15px; height: 15px; font-size: 11px; left: -5px; }
 .empty { grid-column: 1 / -1; margin: 20px 10px; text-align: center; color: var(--muted); font-size: 12px; pointer-events: none; }
 .window-footer { height: 29px; padding: 7px 12px; border-top: 1px solid var(--line); color: var(--muted); background: #242b27; font-size: 11px; flex: none; }
+.window-picker-bar { display: flex; align-items: end; gap: 7px; flex: none; padding: 10px 12px; background: #303b35; border-top: 1px solid var(--line); }
+.window-picker-bar label { display: grid; flex: 1; gap: 5px; min-width: 0; font-size: 11px; color: var(--muted); }
+.window-picker-path { min-width: 0; width: 100%; padding: 7px; font: inherit; color: var(--text); background: #202622; border: 1px solid var(--line); border-radius: 3px; }
+.window-picker-bar button { flex: none; padding: 7px 10px; }
+.window-picker-bar .primary { background: #48735c; }
 .terminal-window { width: 740px; height: 500px; }
 .resize-handle { position: absolute; z-index: 10; touch-action: none; user-select: none; }
 .resize-handle[data-resize="n"], .resize-handle[data-resize="s"] { left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
@@ -232,6 +242,10 @@ button:disabled { opacity: .4; cursor: default; }
 }
 
 /* Standalone connection, transfers and image windows. */
+.browser-surface { flex:1; min-height:0; display:grid; place-items:center; background:#17231d; }
+.browser-surface > button { padding:12px 22px; }
+.pinned-app.active { background:#8ac3a72b; box-shadow:inset 3px 0 #a8ddbd; }
+.pinned-app.minimized { opacity:.65; }
 .connection-dialog { color:var(--text); background:#26362f; border:1px solid #718a7d; border-radius:12px; width:min(600px,calc(100vw - 36px)); max-height:calc(100vh - 48px); padding:22px; box-shadow:0 24px 80px #0009; }
 .connection-dialog::backdrop { background:#06140dbc; backdrop-filter:blur(3px); }
 .connection-dialog h2 { margin:0; font-size:20px; } .connection-dialog p { font-size:13px; line-height:1.7; color:#c4d3ca; }

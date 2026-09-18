@@ -333,13 +333,15 @@ function registerIpc() {
   handle('ssh:cancel-download', id => { return browserManager?.cancel(id) || transferCenter.cancel(id) || backend?.cancelDownload(id) || false; });
   handle('workbench:open', (remotePath, options) => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return workbench.open(remotePath, { readOnly: Boolean(options?.readOnly) }); });
   handle('browser:open', url => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return browserManager.open(url); });
+  handle('browser:layout', (id, bounds, hidden) => browserManager.setLayout(id, bounds, Boolean(hidden)));
+  handle('browser:close', id => browserManager.close(id));
   handle('ssh:open-local', filePath => { if (!completedDownloads.has(filePath)) throw new Error('只能定位当前应用完成下载的文件。'); shell.showItemInFolder(filePath); });
   ipcMain.on('desktop:send', (event, message) => { try { requireSender(event); handleDesktopMessage(message).catch(error => post({ type: 'desktopError', error: error.message })); } catch {} });
 }
 app.whenReady().then(async () => {
   await loadSettings();
   workbench = createWorkbenchManager({ getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
-  browserManager = createBrowserManager({ getBackend: requireBackend, getParent: () => windowRef, onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
+  browserManager = createBrowserManager({ embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
     uploadFile: ({ localPath, remoteDirectory, id, signal, onProgress }) => { requireBackend(); if (!uploader || sessionTransition) throw new Error('SSH 连接正在切换。'); return uploader.upload(localPath, remoteDirectory, { id, signal, onProgress }); } });
   registerIpc(); createWindow();
   instanceBridge = new InstanceBridge({ userDataDir: app.getPath('userData'), metadata: { pid: process.pid, executable: process.execPath }, callbacks: {

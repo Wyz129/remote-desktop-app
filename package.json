@@ -2,7 +2,7 @@
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
   "description": "独立 SSH 文档工作台、服务器浏览器、传输中心与命令行实例",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -44,7 +44,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.1.0"
+      "output": "artifacts/electron-1.1.1"
     },
     "files": [
       "main.cjs",

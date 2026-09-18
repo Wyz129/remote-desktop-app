@@ -98,3 +98,57 @@ test('real isolated Electron browser uses SSH DNS, isolates APIs and preserves c
   assert.equal(await application.evaluate(() => browserManager.context), null);
 });
 
+test('embedded browser uses desktop child views, opens popup links and POST in focused tabs, and closes without destroying desktop', { timeout: 60000 }, async t => {
+  const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-browser-embedded-'));
+  const env = { ...process.env, REMOTE_DESKTOP_BROWSER_EMBEDDED: '1' }; delete env.ELECTRON_RUN_AS_NODE;
+  const application = await electron.launch(await browserLaunch(userData, env));
+  const processErrors = []; application.process().stderr?.on('data', chunk => processErrors.push(chunk.toString()));
+  t.after(() => { if (processErrors.length) console.error(processErrors.join('')); });
+  t.after(async () => { const timer = setTimeout(() => { if (application.process().exitCode === null) spawnSync('taskkill', ['/PID', String(application.process().pid), '/T', '/F'], { windowsHide: true }); }, 10000); try { await application.evaluate(() => closeBrowserFixture()).catch(() => {}); await application.close(); } finally { clearTimeout(timer); } await fs.rm(userData, { recursive: true, force: true }); });
+  await application.firstWindow(); await waitFor(application, () => Boolean(globalThis.browserManager));
+  const opened = await application.evaluate(() => browserManager.open('http://remote-only.invalid:8765/'));
+  assert.equal(opened.embedded, true);
+  await waitFor(application, () => [...browserManager.windows.values()][0].view.webContents.getTitle() === 'Remote fixture');
+  const initial = await application.evaluate(({ BrowserWindow }) => {
+    const [id, state] = [...browserManager.windows][0]; globalThis.firstBrowserTab = state.activeTabId;
+    browserManager.setLayout(id, { x: 40, y: 50, width: 600, height: 450 }, false);
+    return { count: BrowserWindow.getAllWindows().length, embedded: state.embedded, view: state.view.getBounds(), toolbar: state.toolbar.getBounds(), children: state.window.contentView.children.length, visible: state.view.getVisible(), sameSession: state.toolbar.webContents.session === state.context.partition };
+  });
+  assert.equal(initial.count, 1); assert.equal(initial.embedded, true); assert.equal(initial.children, 2); assert.equal(initial.visible, true); assert.equal(initial.sameSession, false);
+  assert.deepEqual(initial.toolbar, { x: 40, y: 50, width: 600, height: 148 }); assert.deepEqual(initial.view, { x: 40, y: 198, width: 600, height: 302 });
+  assert.equal((await application.evaluate(() => browserManager.open())).id, opened.id);
+  await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return state.view.webContents.executeJavaScript(`const link=document.createElement('a');link.href='/popup-link';link.target='_blank';document.body.append(link);link.click()`, true); });
+  await waitFor(application, () => [...browserManager.windows.values()][0].tabs.size === 2 && [...browserManager.windows.values()][0].view.webContents.getURL().endsWith('/popup-link'));
+  assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+  assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].activeTabId !== firstBrowserTab), true);
+  assert.equal(await application.evaluate(() => browserFixture.windowEvents.at(-1).type), 'focus');
+  const popupSecurity = JSON.parse(await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('JSON.stringify({node:typeof require,desktop:typeof window.remoteDesktop,browser:typeof window.serverBrowser})')));
+  assert.deepEqual(popupSecurity, { node: 'undefined', desktop: 'undefined', browser: 'undefined' });
+  assert.deepEqual(await application.evaluate(() => { const state = [...browserManager.windows.values()][0], prefs = state.view.webContents.getLastWebPreferences(); return { node: prefs.nodeIntegration, sandbox: prefs.sandbox, isolation: prefs.contextIsolation, session: state.view.webContents.session === state.context.partition, preload: Boolean(prefs.preload) }; }), { node: false, sandbox: true, isolation: true, session: true, preload: false });
+  await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript(`const form=document.createElement('form');form.action='/popup-post';form.target='_blank';form.method='POST';const value=document.createElement('input');value.name='secret';value.value='roundtrip';form.append(value);document.body.append(form);form.submit()`, true));
+  await waitFor(application, () => [...browserManager.windows.values()][0].tabs.size === 3 && [...browserManager.windows.values()][0].view.webContents.getTitle() === 'Popup POST');
+  assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('document.body.textContent')), 'secret=roundtrip');
+  assert.ok(await application.evaluate(() => browserFixture.requests.some(value => value.url === '/popup-post' && value.method === 'POST' && value.cookie === 'session=fixture')));
+  // Download initiated by an inactive tab still belongs to the same browser.
+  await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return state.tabs.get(firstBrowserTab).view.webContents.executeJavaScript('document.getElementById("download").click()', true); });
+  await waitFor(application, () => browserFixture.transfers.some(value => value.status === 'completed'));
+  assert.equal(await fs.readFile(path.join(userData, 'result.txt'), 'utf8'), 'authenticated:GET:');
+  await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('window.open("file:///C:/Windows/win.ini")', true));
+  assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].tabs.size), 3);
+  const visibility = await application.evaluate(() => { const [id, state] = [...browserManager.windows][0]; browserManager.setLayout(id, null, true); const hidden = [...state.tabs.values()].every(tab => !tab.view.getVisible()) && !state.toolbar.getVisible(); browserManager.setLayout(id, null, false); return { hidden, active: state.view.getVisible(), visibleTabs: [...state.tabs.values()].filter(tab => tab.view.getVisible()).length }; });
+  assert.deepEqual(visibility, { hidden: true, active: true, visibleTabs: 1 });
+  const toolbarState = await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript('JSON.stringify({tabs:document.querySelectorAll(".browser-tab").length,active:document.querySelectorAll(".browser-tab.active").length})'));
+  assert.deepEqual(JSON.parse(toolbarState), { tabs: 3, active: 1 });
+  await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript('document.querySelector(".browser-tab.active .tab-close").click()'));
+  await waitFor(application, () => [...browserManager.windows.values()][0].tabs.size === 2);
+  const closed = await application.evaluate(({ BrowserWindow }) => { const [id, state] = [...browserManager.windows][0]; const parent = state.window; browserManager.close(id); return { parentDestroyed: parent.isDestroyed(), count: BrowserWindow.getAllWindows().length, children: parent.contentView.children.length, browsers: browserManager.windows.size, event: browserFixture.windowEvents.at(-1) }; });
+  assert.equal(closed.parentDestroyed, false); assert.equal(closed.count, 1); assert.equal(closed.children, 0); assert.equal(closed.browsers, 0); assert.equal(closed.event.type, 'closed');
+  await application.evaluate(() => browserManager.open('http://remote-only.invalid:8765/'));
+  await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return browserManager.action(state, 'closeTab', { id: state.activeTabId }); });
+  await waitFor(application, () => browserManager.windows.size === 0);
+  assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+  await application.evaluate(() => browserManager.open('http://remote-only.invalid:8765/'));
+  await application.evaluate(() => browserManager.disconnect());
+  assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+});
+

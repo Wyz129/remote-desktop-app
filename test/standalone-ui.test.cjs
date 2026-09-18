@@ -46,6 +46,10 @@ async function scenario(name, fn) {
     window.connectedState = () => window.receive({ type:'remoteState', status:'ready', rootPath:root, homePath:'/home/tester', entries:window.directories[root], config:{viewMode:'details', shortcuts:[{command:'workbench.action.showCommands',label:'Legacy'}]} });
     window.remoteDesktop = {
       onMessage(callback) { window.receive = callback; },
+      onBrowserEvent(callback) { window.browserEvent = callback; },
+      async openBrowser() { window.calls.push({type:'openBrowser'}); if (window.deferBrowserOpen) return new Promise(resolve=>{window.resolveBrowserOpen=resolve;}); return {id:41,embedded:true}; },
+      async layoutBrowser(id,bounds,hidden) { window.calls.push({type:'browserLayout',id,bounds,hidden}); },
+      async closeBrowser(id) { window.calls.push({type:'closeBrowser',id}); window.browserEvent({type:'closed',id}); return true; },
       send(message) {
         window.messages.push(message);
         queueMicrotask(() => {
@@ -255,7 +259,7 @@ test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => s
 
 test('builtin_home_and_settings_remain_available_without_connection_or_pins', () => scenario('builtin-shortcuts', async page => {
   await page.locator('#closeConnection').click();
-  assert.equal(await page.locator('#builtinApps button').count(),2);
+  assert.equal(await page.locator('#builtinApps button').count(),3);
   await page.locator('#settingsShortcut').click();
   await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
   assert.equal(await page.locator('#applySettings').isDisabled(),true);
@@ -274,12 +278,53 @@ test('builtin_home_and_settings_remain_available_without_connection_or_pins', ()
   await win.locator('[data-window-action="minimize"]').click(); await page.locator('#homeShortcut').click();
   assert.equal(await page.locator('.window').count(),1); assert.equal(await win.isVisible(),true);
   await page.evaluate(()=>window.receive({type:'configUpdated',config:{pinnedApps:[]}}));
-  assert.equal(await page.locator('#builtinApps button').count(),2);
+  assert.equal(await page.locator('#builtinApps button').count(),3);
   await page.locator('#homeShortcut').click({button:'right'});
   assert.equal(await page.locator('#appContext').isVisible(),false);
   await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
-  assert.equal(await page.locator('#builtinApps button').count(),2);
+  assert.equal(await page.locator('#builtinApps button').count(),3);
   await page.locator('#settingsShortcut').click(); await page.locator('#settingsDialog[open]').waitFor();
+}));
+
+test('settings_single_window_preserves_input_and_supports_desktop_window_controls', () => scenario('settings-window', async page => {
+  await connect(page);
+  await page.locator('#settingsShortcut').click();
+  const win = page.locator('#settingsDialog');
+  await page.waitForFunction(() => document.getElementById('settingsDownloadThreshold').value === '50');
+  assert.equal(await win.evaluate(element => element.matches(':modal')), false);
+  assert.equal(await win.evaluate(element => element.parentElement.id), 'windows');
+  await page.locator('#settingsDesktopPath').fill('/shared/pending-desktop');
+  await page.locator('#settingsDownloadThreshold').fill('73');
+  await page.locator('#desktopSettings').click();
+  await page.locator('#settingsShortcut').click();
+  assert.equal(await page.locator('.settings-dialog[open]').count(), 1);
+  assert.equal(await page.locator('#settingsDesktopPath').inputValue(), '/shared/pending-desktop');
+  assert.equal(await page.locator('#settingsDownloadThreshold').inputValue(), '73');
+  const before = await win.boundingBox();
+  const bar = await win.locator('.titlebar').boundingBox();
+  await page.mouse.move(bar.x + 180, bar.y + 16); await page.mouse.down();
+  await page.mouse.move(bar.x + 230, bar.y + 45, { steps: 5 }); await page.mouse.up();
+  const moved = await win.boundingBox();
+  assert.ok(moved.x > before.x + 30); assert.ok(moved.y > before.y + 10);
+  const handle = await win.locator('.resize-handle[data-resize="se"]').boundingBox();
+  await page.mouse.move(handle.x + 3, handle.y + 3); await page.mouse.down();
+  await page.mouse.move(handle.x + 73, handle.y + 23, { steps: 5 }); await page.mouse.up();
+  assert.ok((await win.boundingBox()).width > moved.width + 40);
+  await win.locator('[data-window-action="maximize"]').click();
+  assert.equal(await win.evaluate(element => element.classList.contains('maximized')), true);
+  await win.locator('[data-window-action="maximize"]').click();
+  await win.locator('[data-window-action="minimize"]').click();
+  assert.equal(await win.isVisible(), false);
+  await page.locator('#settingsShortcut').click();
+  assert.equal(await win.isVisible(), true);
+  assert.equal(await page.locator('#settingsDownloadThreshold').inputValue(), '73');
+  await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-settings-window.png') });
+  await page.locator('#closeSettings').click();
+  assert.equal(await win.isVisible(), false);
+  assert.equal(await page.locator('#windowTabs [data-window-id="settings-window"]').count(), 0);
+  await page.locator('#settingsShortcut').click();
+  assert.equal(await page.locator('#settingsDesktopPath').inputValue(), desktop);
+  assert.equal(await page.locator('.settings-dialog[open]').count(), 1);
 }));
 
 test('home_without_desktop_browses_real_home_without_creating_or_faking_desktop', () => scenario('home-without-desktop', async page => {
@@ -494,7 +539,7 @@ test('transfer_center_upload_destination_download_and_browser_entry', () => scen
     window.remoteDesktop.upload=async(localPath,remoteDirectory,id)=>{window.calls.push({type:'upload',localPath,remoteDirectory,id});return {id,path:remoteDirectory+'/code.py',done:12,total:12};};
     window.remoteDesktop.chooseDownloadDirectory=async()=> 'D:\\saved';
     window.remoteDesktop.download=async(path,id,destination)=>{window.calls.push({type:'download',path,id,destination});return {id,path:destination+'\\code.py'};};
-    window.remoteDesktop.openBrowser=async url=>window.calls.push({type:'openBrowser',url});
+    window.remoteDesktop.openBrowser=async url=>{window.calls.push({type:'openBrowser',url});return {id:41,embedded:true};};
   });
   await connect(page);await page.locator('#downloadsButton').click();await page.locator('#transferRemotePath').fill('/shared');await page.locator('#transferUploadFiles').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='upload'));
@@ -503,4 +548,126 @@ test('transfer_center_upload_destination_download_and_browser_entry', () => scen
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='download'&&value.destination==='D:\\saved'));
   await page.locator('#closeDownloads').click();await page.locator('#browserButton').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openBrowser'));
+}));
+
+test('transfer_server_picker_reuses_virtual_explorer_and_selects_files_without_opening_editor', () => scenario('transfer-explorer-picker', async page => {
+  await page.evaluate(() => { window.remoteDesktop.openDocument = async path => window.calls.push({type:'openDocument',path}); });
+  await connect(page); await icon(page,'projects').dblclick();
+  const win = page.locator('#windows .window').first();
+  await win.getByText('source.txt',{exact:true}).waitFor();
+  await page.locator('#downloadsButton').click();
+  await page.locator('#transferRemotePath').fill(`${desktop}/projects`);
+  await page.locator('#transferBrowse').click();
+  await win.locator('.window-picker-bar').waitFor();
+  assert.equal(await page.locator('#windows .window').count(),1);
+  assert.equal(await page.locator('#downloadsPanel').isVisible(),false);
+  assert.equal(await win.locator('.window-path').inputValue(),`${desktop}/projects`);
+  await win.getByText('source.txt',{exact:true}).dblclick();
+  await page.locator('#downloadsPanel').waitFor();
+  assert.equal(await page.locator('#transferRemotePath').inputValue(),`${desktop}/projects/source.txt`);
+  assert.equal(await win.locator('.window-picker-bar').isVisible(),false);
+  assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='openDocument')),false);
+  assert.equal(await page.locator('#windows .window').count(),1);
+}));
+
+test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_directory', () => scenario('transfer-explorer-path', async page => {
+  await connect(page); await page.locator('#downloadsButton').click();
+  await page.locator('#transferRemotePath').fill(desktop); await page.locator('#transferBrowse').click();
+  const win = page.locator('.server-picker-window'); await win.getByText('notes.txt',{exact:true}).waitFor();
+  await page.evaluate(() => { window.deniedDirectory = '/private'; window.deniedFile = '/private'; });
+  await win.locator('.window-path').fill('/private'); await win.locator('.window-path').press('Enter');
+  await page.waitForFunction(()=>document.querySelector('.server-picker-window .window-error')?.textContent.includes('无访问权限'));
+  assert.equal(await win.locator('.window-path').inputValue(),desktop);
+  await win.locator('.window-picker-path').fill('/private'); await win.locator('[data-window-action="pick"]').click();
+  await page.waitForFunction(()=>document.querySelector('.server-picker-window .window-error')?.textContent.includes('无访问权限'));
+  assert.equal(await win.count(),1);
+  await win.locator('.window-picker-path').fill('~/Desktop/notes.txt'); await win.locator('.window-picker-path').press('Enter');
+  await page.locator('#downloadsPanel').waitFor();
+  assert.equal(await page.locator('#transferRemotePath').inputValue(),`${desktop}/notes.txt`);
+  assert.equal(await page.locator('.server-picker-window').count(),0);
+  await page.locator('#transferRemotePath').fill(desktop); await page.locator('#transferBrowse').click();
+  await page.locator('.server-picker-window [data-window-action="cancel-picker"]').click();
+  await page.locator('#downloadsPanel').waitFor();
+  assert.equal(await page.locator('#transferRemotePath').inputValue(),desktop);
+}));
+
+test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenario('browser-window', async page => {
+  await connect(page);
+  assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), ['homeShortcut','browserShortcut','settingsShortcut']);
+  await page.locator('#browserShortcut').click();
+  const win = page.locator('.browser-window'); await win.waitFor();
+  await page.waitForFunction(()=>window.calls.some(call=>call.type==='browserLayout'&&!call.hidden));
+  const bounds = await win.locator('.browser-surface').boundingBox();
+  const layout = await page.evaluate(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1));
+  assert.ok(Math.abs(layout.bounds.x-bounds.x)<=1); assert.ok(Math.abs(layout.bounds.height-bounds.height)<=1);
+  await page.locator('#browserButton').click(); assert.equal(await win.count(),1);
+  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='openBrowser').length),1);
+  await win.locator('[data-window-action="maximize"]').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).bounds.width>1200);
+  await win.locator('[data-window-action="minimize"]').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#browserShortcut').click();
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#settingsShortcut').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#browserShortcut').click();
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  assert.equal(await page.locator('#settingsDialog').isVisible(),true,'nonmodal settings may remain open behind active browser');
+  await page.locator('#settingsShortcut').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#closeSettings').click();
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#downloadsButton').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#closeDownloads').click();
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#connectButton').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#closeConnection').click();
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.evaluate(()=>{document.getElementById('context').hidden=false;});
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.locator('#browserShortcut').click();
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await win.locator('[data-window-action="minimize"]').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  await page.evaluate(()=>window.browserEvent({type:'focus',id:41}));
+  await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
+  assert.equal(await win.isVisible(),true,'new popup tab focus restores its virtual browser');
+  await page.evaluate(()=>window.browserEvent({type:'closed',id:41}));
+  assert.equal(await win.count(),0);
+  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='closeBrowser').length),0,'closed event does not recursively close manager');
+  await page.locator('#browserShortcut').click(); await win.waitFor();
+  await win.locator('[data-window-action="close"]').click();
+  assert.equal(await win.count(),0); assert.ok(await page.evaluate(()=>window.calls.some(call=>call.type==='closeBrowser')));
+  await page.locator('#browserShortcut').click(); await win.waitFor();
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
+  assert.equal(await win.count(),0);
+  await page.evaluate(()=>window.browserEvent({type:'focus',id:41}));
+  assert.equal(await win.count(),0,'late popup cannot resurrect disconnected shell');
+}));
+
+test('embedded_browser_deduplicates_pending_open_and_disposes_late_connection_result', () => scenario('browser-window-opening', async page => {
+  await connect(page); await page.evaluate(()=>{window.deferBrowserOpen=true;});
+  await page.locator('#browserShortcut').click(); await page.locator('#browserButton').click();
+  await page.waitForFunction(()=>typeof window.resolveBrowserOpen==='function');
+  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='openBrowser').length),1);
+  await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveBrowserOpen({id:88,embedded:true});});
+  await page.waitForFunction(()=>window.calls.some(call=>call.type==='closeBrowser'&&call.id===88));
+  assert.equal(await page.locator('.browser-window').count(),0);
+}));
+
+test('cancelled_pending_transfer_picker_can_be_reopened_in_reused_explorer', () => scenario('transfer-picker-pending-cancel', async page => {
+  await connect(page); await icon(page,'projects').dblclick();
+  await page.locator('#downloadsButton').click(); await page.locator('#transferRemotePath').fill(`${desktop}/projects`);
+  await page.locator('#transferBrowse').click();
+  await page.evaluate(()=>{const list=window.remoteDesktop.list;window.remoteDesktop.list=path=>path==='/deferred' ? new Promise(resolve=>{window.resolvePickerList=resolve;}) : list(path);});
+  const win = page.locator('.server-picker-window');
+  await win.locator('.window-picker-path').fill('/deferred'); await win.locator('[data-window-action="pick"]').click();
+  await page.waitForFunction(()=>typeof window.resolvePickerList==='function');
+  await win.locator('[data-window-action="cancel-picker"]').click(); await page.locator('#downloadsPanel').waitFor();
+  await page.locator('#transferBrowse').click(); await win.waitFor();
+  assert.equal(await win.locator('[data-window-action="pick"]').isEnabled(),true,'new picker must reset a cancelled pending validation');
+  await page.evaluate(()=>window.resolvePickerList([]));
+  assert.equal(await win.count(),1,'old validation cannot close the new picker');
 }));

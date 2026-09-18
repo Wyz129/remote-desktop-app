@@ -1,6 +1,6 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-19。对象为 `remote-desktop-app` 1.1.0，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-19。对象为 `remote-desktop-app` 1.1.1，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
 
@@ -8,16 +8,18 @@
 | --- | --- | --- |
 | `npm run check` | 通过 | 主进程、preload、SSH/文件服务、独立渲染器语法 |
 | `npm run test:backend` | 82/82 通过（SSH 31 + 文件/配置服务 32 + 关闭保护 8 + 时钟 9 + 位置偏好 2） | ssh2 客户端与本机隔离 ssh2.Server 的 TCP 回环 SSH/SFTP；部分纯名称与恶意元数据测试使用注入替身 |
-| `npm run test:ui` | 24/24 通过 | 真实 HTML/CSS/JS/xterm，Chrome 无头运行，Electron/SSH 边界为注入替身 |
+| `npm run test:ui` | 30/30 通过 | 真实 HTML/CSS/JS/xterm，Chrome 无头运行；含单设置窗口、浏览器窗口层级与迟到回调、虚拟选择器取消后重开 |
+| `npm run test:modules` | 30/30 通过 | 上传、实例桥、文档冲突、Jupyter、SSH 代理与预览服务 |
+| `npm run test:workbench` | 4/4 通过 | Monaco、Notebook、只读、HTML 预览，服务边界使用替身 |
 | `npm run test:vim` | 7/7 通过 | 本机 Git 自带真实 Vim 9.1，独立临时文件；实际保存、丢弃、交换文件清理、只读和未命名失败，非远程 SSH Vim |
 | `npm run test:electron` | 1/1 集成场景通过 | 真实 Electron 44.4.2 主进程/preload/渲染器 + 本机 TCP 回环 SSH 服务端 |
 | `npm run test:workspace` | 1/1 通过 | 真实 Electron + Monaco、快捷方式真实目标、CLI exec/upload、冲突、HTML 资源和 Notebook |
-| `npm run test:browser` | 1/1 通过 | 源码和打包 EXE 的真实 Electron 隔离网页、SSH DNS、Cookie/POST/Blob 下载、取消和上传服务器 |
+| `npm run test:browser` | 2/2 通过 | Electron 隔离网页、SSH DNS、Cookie/POST/Blob 下载；嵌入子视图、新标签和弹窗 POST、后台下载、关闭/断线保留主桌面 |
 | `npm run test:cli` | 1/1 通过（Windows） | 打包/源码 CLI 默认数据目录、无 Node 启动器和实例发现 |
 | `npm audit` | 0 vulnerabilities | 全部已安装生产/开发依赖，执行日期 2026-09-18 |
 | 用户真实远程服务器 | 未执行 | 本轮未提供实机凭据，未操作现有 VS Code/SSH 窗口 |
 
-UI 结果保存在 `artifacts/standalone-ui-results.json`，已检查 `standalone-connect.png`、`standalone-desktop.png`、`standalone-image.png`。这些截图来自替身 SSH API 的无头 UI，不是用户服务器截图。真实 Electron 和打包 EXE 的结果分别为 `artifacts/electron-results.json`、`artifacts/packaged-electron-results.json`。最终交付、修复及哈希见 [交付报告](artifacts/standalone-110-20260919.md)；早期后端交接报告的 28 项结果已经被本轮最终结果取代。
+UI 结果保存在 `artifacts/standalone-ui-results.json`；本轮还检查了设置窗口截图 `artifacts/standalone-settings-window.png`。这些截图来自替身 SSH API 的无头 UI，不是用户服务器截图。真实 Electron 和打包 EXE 的结果分别为 `artifacts/electron-results.json`、`artifacts/packaged-electron-results.json`。最新交付、验证边界及哈希见 [1.1.1 交付记录](docs/RELEASE-1.1.1.md)，旧版交付报告保留作历史记录。
 
 ## 复现命令
 
@@ -30,7 +32,7 @@ npm.cmd run test:ui
 npm.cmd run test:electron
 ```
 
-也可运行 `npm.cmd test`，按 check → backend → vim → ui → electron 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。本次七项均实际执行，无跳过。
+也可运行 `npm.cmd test`，按 check → backend → modules → vim → ui → workbench → electron → workspace → browser → cli 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。本次七项均实际执行，无跳过。
 
 后端与 Electron 测试使用系统临时目录及隔离的用户数据，不需要管理员权限、用户服务器密码或远程安装软件。Electron 通过 `--smoke-test` 隐藏测试窗口并配置独立 `--user-data-dir`，不覆盖用户日常应用设置。
 

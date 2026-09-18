@@ -18,6 +18,7 @@
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
       <div id="builtinApps" class="builtin-apps" aria-label="系统快捷方式">
         <button id="homeShortcut" class="pinned-app" title="Home · 远程主目录" aria-label="Home · 远程主目录"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">Home</span></button>
+        <button id="browserShortcut" class="pinned-app" title="服务器浏览器" aria-label="服务器浏览器"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">浏览器</span></button>
         <button id="settingsShortcut" class="pinned-app" title="设置 · 控制面板" aria-label="设置 · 控制面板"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">设置</span></button>
       </div>
       <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
@@ -27,12 +28,13 @@
       <div class="desktop-caption"><span class="caption-icon" aria-hidden="true">▦</span><span id="desktopPath">桌面</span></div>
       <div id="icons" class="icons" aria-label="桌面文件"></div>
       <div id="windows"></div>
-      <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
-        <header class="settings-heading"><h2 id="settingsTitle">设置 · 控制面板</h2><button type="button" id="closeSettings" aria-label="关闭设置" title="关闭">×</button></header>
+      <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle" tabindex="-1">
+        <header class="titlebar"><span class="settings-app-icon" aria-hidden="true">⚙</span><h2 id="settingsTitle" class="window-title">设置 · 控制面板</h2><div class="window-controls" aria-label="设置窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化设置" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化设置" title="最大化">□</button><button type="button" id="closeSettings" class="window-control close" data-window-action="close" aria-label="关闭设置" title="关闭">×</button></div></header>
         <nav class="settings-tabs" role="tablist" aria-label="控制面板分类">
           <button type="button" id="desktopSettingsTab" role="tab" aria-selected="true" aria-controls="desktopSettingsPanel" data-settings-tab="desktop">虚拟桌面与应用</button>
           <button type="button" id="systemSettingsTab" role="tab" aria-selected="false" aria-controls="systemSettingsPanel" data-settings-tab="system" tabindex="-1">远程系统</button>
         </nav>
+        <div class="settings-content">
         <section id="desktopSettingsPanel" role="tabpanel" aria-labelledby="desktopSettingsTab">
         <form id="settingsForm">
           <div class="settings-fields">
@@ -75,6 +77,7 @@
           </dl>
           <p class="settings-description system-settings-note">这里通过 SSH 读取 Ubuntu / Linux 的常用系统信息。时间、语言、网络等系统设置的修改需要相应权限，请在远程终端或服务器管理工具中操作。Ubuntu 桌面会话的显示、声音等图形设置不会通过本应用的 SSH 连接生效。</p>
         </section>
+        </div>
       </dialog>
       <footer class="statusbar"><span class="operation-display" title="文件操作通过 SSH 完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
     </main>
@@ -94,6 +97,7 @@
       <p class="window-error" role="alert" hidden></p>
       <div class="column-headings" aria-hidden="true"><span>名称</span><span>类型</span><span>大小</span></div>
       <div class="listing" aria-label="目录内容"></div>
+      <div class="window-picker-bar" hidden><label>选中路径<input class="window-picker-path" aria-label="选中的服务器路径" spellcheck="false" autocomplete="off"></label><button type="button" class="window-picker-select primary" data-window-action="pick">选择</button><button type="button" data-window-action="cancel-picker">取消</button></div>
       <footer class="window-footer"></footer>
     </section>
   </template>
@@ -135,7 +139,6 @@
 <p class="transfer-help">小文件使用 SSH 流，大文件和文件夹使用 SFTP。上传保留已有同名项目并自动编号。</p>
 <p id="transferError" role="alert"></p></section>
 <p id="downloadsEmpty">尚无传输任务</p><div id="downloadItems"></div></aside>
-<dialog id="transferPickerDialog" class="connection-dialog directory-picker" aria-labelledby="transferPickerTitle"><h2 id="transferPickerTitle">选择服务器项目</h2><form id="transferPickerForm" class="directory-picker-address"><button type="button" id="transferPickerUp">↑</button><input id="transferPickerPath" aria-label="服务器目录地址"><button>打开</button></form><p id="transferPickerError" role="alert"></p><div id="transferPickerEntries" class="directory-picker-entries"></div><footer class="settings-footer"><button id="transferPickerCancel">取消</button><button id="transferPickerSelect" class="primary">使用此目录</button></footer></dialog>
 <template id="imageTemplate"><section class="window image-window" aria-label="图片查看器" tabindex="-1"><header class="titlebar"><span aria-hidden="true">▧</span><strong class="window-title"></strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button class="window-control close" data-window-action="close" aria-label="关闭图片">×</button></div></header><div class="image-controls"><button data-image-action="out" aria-label="缩小图片">−</button><button data-image-action="in" aria-label="放大图片">＋</button><button data-image-action="actual">100%</button><button data-image-action="fit">适应窗口</button><span class="image-scale">加载中…</span><span class="image-help">滚轮局部缩放 · 拖动平移</span></div><div class="image-viewport"><img draggable="false" alt=""></div><footer class="window-footer image-status" role="status">正在载入…</footer></section></template>
   <div id="selectionBox" class="selection-box" hidden></div>
   <div id="dragGhost" class="drag-ghost" hidden></div>

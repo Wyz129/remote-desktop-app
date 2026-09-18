@@ -10,10 +10,13 @@ const { UploadService } = require(path.join(moduleRoot, 'lib/upload-service.cjs'
 const { createSshFixture } = require('./ssh-fixture.cjs');
 process.on('uncaughtException', error => { console.error(error); app.exit(1); });
 process.on('unhandledRejection', error => { console.error(error); app.exit(1); });
-globalThis.browserFixture = { moduleRoot, runtime: process.versions.electron, transfers: [], requests: [], uploaded: [], logs: [], savePath: path.join(app.getPath('userData'), 'result.txt') };
+globalThis.browserFixture = { moduleRoot, runtime: process.versions.electron, transfers: [], requests: [], uploaded: [], logs: [], windowEvents: [], savePath: path.join(app.getPath('userData'), 'result.txt') };
 app.whenReady().then(async () => {
   const server = http.createServer((request, response) => {
     browserFixture.requests.push({ url: request.url, cookie: request.headers.cookie, method: request.method, host: request.headers.host });
+    if (request.url === '/popup-post') {
+      const chunks = []; request.on('data', data => chunks.push(data)); request.on('end', () => { response.setHeader('Content-Type', 'text/html'); response.end(`<!doctype html><title>Popup POST</title><body>${Buffer.concat(chunks).toString()}</body>`); }); return;
+    }
     if (request.url === '/download' || request.url === '/post') {
       if (request.headers.cookie !== 'session=fixture') { response.writeHead(403).end('Login required'); return; }
       const chunks = []; request.on('data', data => chunks.push(data)); request.on('end', () => {
@@ -37,7 +40,7 @@ app.whenReady().then(async () => {
   const uploader = new UploadService(backend);
   const parent = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } }); await parent.loadURL('about:blank');
   dialog.showSaveDialog = async () => ({ canceled: false, filePath: browserFixture.savePath });
-  globalThis.browserManager = createBrowserManager({ getBackend: () => backend, getParent: () => parent, onTransfer: value => browserFixture.transfers.push(value), uploadFile: async options => { const result = await uploader.upload(options.localPath, options.remoteDirectory, { id: options.id, signal: options.signal, onProgress: options.onProgress }); const content = await fs.readFile(fixture.mapPath(result.path), 'utf8'); browserFixture.uploaded.push({ content, directory: options.remoteDirectory }); return result; } });
+  globalThis.browserManager = createBrowserManager({ embedded: process.env.REMOTE_DESKTOP_BROWSER_EMBEDDED === '1', getBackend: () => backend, getParent: () => parent, onEvent: value => browserFixture.windowEvents.push(value), onTransfer: value => browserFixture.transfers.push(value), uploadFile: async options => { const result = await uploader.upload(options.localPath, options.remoteDirectory, { id: options.id, signal: options.signal, onProgress: options.onProgress }); const content = await fs.readFile(fixture.mapPath(result.path), 'utf8'); browserFixture.uploaded.push({ content, directory: options.remoteDirectory }); return result; } });
   globalThis.browserFixtureBackend = backend;
   globalThis.closeBrowserFixture = async () => { await browserManager.disconnect(); await uploader.close(); await backend.disconnect(); await fixture.close(); await new Promise(resolve => server.close(resolve)); };
   if (!process.argv.includes('--smoke-test')) parent.show();
