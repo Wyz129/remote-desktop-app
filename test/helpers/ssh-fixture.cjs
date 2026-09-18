@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { once } = require('node:events');
+const net = require('node:net');
 const { Server, utils } = require('ssh2');
 
 const HOME = '/srv/fixture-user';
@@ -31,7 +32,7 @@ async function createSshFixture(options = {}) {
   const outsideRoot = path.join(root, 'outside');
   const fileSystemRoot = path.join(root, 'filesystem');
   await fsp.mkdir(serverRoot); await fsp.mkdir(downloads); await fsp.mkdir(outsideRoot); await fsp.mkdir(path.join(fileSystemRoot, 'srv'), { recursive: true });
-  const calls = { exec: [], auth: [], sftp: [], shell: [], pty: [], resize: [], errors: [] };
+  const calls = { exec: [], auth: [], sftp: [], shell: [], pty: [], resize: [], errors: [], forwards: [] };
   const connections = new Set();
   const username = 'fixture-user';
   const password = crypto.randomBytes(20).toString('hex');
@@ -187,6 +188,13 @@ async function createSshFixture(options = {}) {
       if (context.method === 'password' && context.username === username && context.password === password) context.accept();
       else context.reject(['password']);
     });
+    client.on('tcpip', (accept, reject, info) => {
+      calls.forwards.push(info);
+      const target = options.forwardTargets?.[`${info.destIP}:${info.destPort}`];
+      if (!target) { reject(); return; }
+      const socket = net.connect({host:'127.0.0.1',port:target}, () => { const stream=accept(); socket.pipe(stream); stream.pipe(socket); stream.on('error',()=>socket.destroy()); stream.on('close',()=>socket.destroy()); });
+      socket.on('error', () => { try { reject(); } catch {} });
+    });
     client.on('ready', () => client.on('session', accept => {
       const session = accept(); session.on('error', () => {});
       session.on('pty', (acceptPty, _reject, info) => { calls.pty.push(info); acceptPty?.(); });
@@ -211,6 +219,15 @@ async function createSshFixture(options = {}) {
       session.on('exec', (acceptExec, _reject, info) => {
         calls.exec.push(info.command); const stream = acceptExec(); stream.on('error', () => {});
         void (async () => {
+          if (info.command === 'fixture-command') { stream.write('remote command reply\n'); stream.stderr.write('fixture diagnostic\n'); stream.exit(7); stream.end(); return; }
+          const uploadPrefix = 'umask 077; set -C; cat > ';
+          if (info.command.startsWith(uploadPrefix)) {
+            const remote = unquote(info.command.slice(uploadPrefix.length)); checkWritable(remote);
+            const output = fs.createWriteStream(mapPath(remote), { flags:'wx' });
+            output.on('error', error => { stream.stderr.write(error.message); stream.exit(1); stream.end(); });
+            output.once('finish', () => { stream.exit(0); stream.end(); });
+            stream.once('close',()=>output.destroy()); stream.pipe(output); return;
+          }
           if (info.command.startsWith('cd -- ') && / && exec (?:"\$\{SHELL:-\/bin\/sh\}" -l|vim(?: -.*)?|htop)$/.test(info.command)) { serveShell(stream, info.command); return; }
           if (info.command.includes('$HOME') && info.command.startsWith('printf')) { stream.write(options.homeOutput === undefined ? HOME : options.homeOutput); stream.exit(0); stream.end(); return; }
           if (info.command.startsWith('# remote-desktop-server-clock-v1\n')) {

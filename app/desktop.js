@@ -64,6 +64,7 @@ let settingsBaseline = null;
 let directoryPicker = null;
 let fileAccessChoice = null;
 const fileAccessRequests = new Set();
+let transferDestination = null, transferPicker = null;
 
 function isCommandShortcut(value) { return value && typeof value.command === 'string' && value.command.trim(); }
 function toolIcon(name) {
@@ -429,10 +430,10 @@ function openDirectoryPicker() {
   $('desktopPickerDialog').showModal();
   loadPickerDirectory(desktopAvailable ? rootPath : homePath || '/');
 }
-function showFileAccessDialog(item, readOnly, detail) {
-  fileAccessChoice = readOnly ? { item, generation: connectionGeneration } : null;
+function showFileAccessDialog(item, readOnly, detail, mode = 'workbench') {
+  fileAccessChoice = readOnly ? { item, mode, generation: connectionGeneration } : null;
   $('fileAccessTitle').textContent = readOnly ? '无编辑权限' : '无访问权限';
-  $('fileAccessDetail').textContent = `${item.path}\n${detail || (readOnly ? '当前账号不能写入此文件。可使用 Vim 只读打开。' : '当前账号无法读取此文件。')}`;
+  $('fileAccessDetail').textContent = `${item.path}\n${detail || (readOnly ? '当前账号不能写入此文件，可只读打开。' : '当前账号无法读取此文件。')}`;
   $('fileAccessReadOnly').hidden = !readOnly;
   $('fileAccessCancel').textContent = readOnly ? '取消' : '关闭';
   if (!$('fileAccessDialog').open) $('fileAccessDialog').showModal();
@@ -454,7 +455,7 @@ function itemType(item) {
   if (item.isSymbolicLink) return item.type === 'folder' ? '文件夹快捷方式' : '文件快捷方式';
   return item.type === 'folder' ? '文件夹' : item.type === 'large' ? '大型文件' : '文件';
 }
-async function openItem(item, scope = 'desktop') {
+async function openItem(item, scope = 'desktop', mode = 'auto') {
   if (!item || !remoteMode) return;
   if (item.broken) { notify('快捷方式目标不存在：' + item.path); return; }
   if (item.kind === 'command') { notify('原 VS Code 命令快捷方式不适用于独立应用。'); return; }
@@ -471,10 +472,15 @@ async function openItem(item, scope = 'desktop') {
     if (remoteMode && generation === connectionGeneration) showFileAccessDialog(item, false, accessError(error));
     return;
   } finally { if (generation === connectionGeneration) fileAccessRequests.delete(item.path); }
-  if (/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(item.name)) { openImage(item); return; }
-  if (/\.(zip|gz|bz2|xz|7z|rar|tar|exe|dll|so|bin|odb|pdf|docx?|xlsx?|pptx?|mp4|mp3|wav|sqlite|db)$/i.test(item.name)) { notify('此文件适合下载后在本地打开，请右键选择“下载到本地”。'); return; }
-  if (!access.writable) { showFileAccessDialog(item, true, access.error); return; }
-  openTerminal(parentOf(item.path), 'vim', item.path);
+  if (mode === 'auto' && /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(item.name)) { openImage(item); return; }
+  if (mode === 'auto' && /\.(zip|gz|bz2|xz|7z|rar|tar|exe|dll|so|bin|odb|pdf|docx?|xlsx?|pptx?|mp4|mp3|wav|sqlite|db)$/i.test(item.name)) { notify('此文件适合下载后在本地打开，请右键选择“下载到本地”。'); return; }
+  if (!access.writable) { showFileAccessDialog(item, true, access.error, mode); return; }
+  await openDocument(item, mode, false);
+}
+async function openDocument(item, mode, readOnly) {
+  if (mode === 'vim' || !api.openDocument) { openTerminal(parentOf(item.path), 'vim', item.path, readOnly); return; }
+  try { await api.openDocument(item.path, { readOnly }); }
+  catch(error) { notify(error.message || String(error)); }
 }
 
 function syncSelection() {
@@ -1082,6 +1088,7 @@ function showMenu(event, context) {
   buttons.querySelector('[data-action="cut"]').disabled = !files.length;
   buttons.querySelector('[data-action="paste"]').disabled = !state.clipboard?.paths?.length;
   buttons.querySelector('[data-action="arrange"]').hidden = context.scope !== 'desktop';
+  for (const action of ['workbench','vim']) buttons.querySelector(`[data-action="${action}"]`).disabled = files.length !== 1 || files[0].type === 'folder';
   buttons.hidden = false;
   buttons.style.left = `${clamp(event.clientX, window.innerWidth - buttons.offsetWidth - 6)}px`;
   buttons.style.top = `${clamp(event.clientY, window.innerHeight - buttons.offsetHeight - 6)}px`;
@@ -1157,6 +1164,7 @@ function beginNameEditor(operation, context) {
 function performAction(action, context) {
   const selected = selectedItems(context.scope), paths = selectedFilePaths(context.scope);
   if (action === 'open') selected.forEach(item => openItem(item, context.scope));
+  else if (action === 'workbench' || action === 'vim') selected.forEach(item => openItem(item, context.scope, action));
   else if (action === 'new-file' || action === 'new-folder' || action === 'rename') beginNameEditor(action, context);
   else if (action === 'copy' || action === 'cut') {
     if (!paths.length) return;
@@ -1288,13 +1296,15 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
       showOperationCommand(command.command, command.status, typeof command.detail === 'string' ? command.detail : '');
     }
     if (Array.isArray(message.entries)) {
-      if (latest || !Object.hasOwn(directories, message.path)) setDirectory(message.path, message.entries);
-      if (navigatingWindow) commitNavigation(navigatingWindow, message.path, request.mode);
+      const resolvedPath = typeof message.resolvedPath === 'string' && message.resolvedPath.startsWith('/') ? message.resolvedPath : message.path;
+      if (latest || !Object.hasOwn(directories, resolvedPath)) setDirectory(resolvedPath, message.entries);
+      if (message.path === rootPath && resolvedPath !== rootPath) setDirectory(rootPath, message.entries);
+      if (navigatingWindow) commitNavigation(navigatingWindow, resolvedPath, request.mode);
       if (latest) {
         if (message.path === rootPath) renderIcons();
-        for (const win of state.windows) if (!win.kind && win.folder === message.path && !win.pendingNavigation) { win.error = null; renderWindow(win); }
+        for (const win of state.windows) if (!win.kind && win.folder === resolvedPath && !win.pendingNavigation) { win.error = null; renderWindow(win); }
       }
-      if (latest || navigatingWindow) notify(`已${navigatingWindow ? '打开' : '刷新'} ${message.path}`);
+      if (latest || navigatingWindow) notify(`已${navigatingWindow ? '打开' : '刷新'} ${resolvedPath}`);
     } else if (message.error) {
       if (navigatingWindow) {
         navigatingWindow.pendingNavigation = null; navigatingWindow.error = `${message.accessDenied ? accessError(message.error) : message.error}\n请求目录：${message.path}`;
@@ -1398,7 +1408,7 @@ $('fileAccessCancel').addEventListener('click', () => { fileAccessChoice = null;
 $('fileAccessDialog').addEventListener('cancel', () => { fileAccessChoice = null; });
 $('fileAccessReadOnly').addEventListener('click', () => {
   const choice = fileAccessChoice; fileAccessChoice = null; $('fileAccessDialog').close();
-  if (choice && remoteMode && choice.generation === connectionGeneration) openTerminal(parentOf(choice.item.path), 'vim', choice.item.path, true);
+  if (choice && remoteMode && choice.generation === connectionGeneration) void openDocument(choice.item, choice.mode, true);
 });
 $('extensionSettingsForm').addEventListener('submit', submitExtensionSettings);
 $('reloadExtensionSettings').addEventListener('click', loadExtensionSettings);
@@ -1440,6 +1450,7 @@ function clearWindowViews(preserveTerminals = false) {
 function clearRemoteDesktop(preserveTerminals = false) {
   connectionGeneration++; fileAccessRequests.clear(); fileAccessChoice = null;
   closeDirectoryPicker(); $('fileAccessDialog').close();
+  transferPicker = null; $('transferPickerDialog').close();
   clearTimeout(saveTimer); clearTimeout(settingsTimer); pendingConfig = {}; settingsRequest = null;
   if (editor) editor.cancel();
   clearWindowViews(preserveTerminals);
@@ -1455,6 +1466,8 @@ function clearRemoteDesktop(preserveTerminals = false) {
 async function initializeConnection() {
   $('connectButton').replaceChildren(toolIcon('Plug'));
   $('downloadsButton').replaceChildren(toolIcon('Download'));
+  $('browserButton').replaceChildren(toolIcon('Globe'));
+  $('browserButton').addEventListener('click', async () => { try { await api.openBrowser(); } catch(error) { notify(error.message); } });
   $('connectButton').addEventListener('click', () => { if (!$('connectionDialog').open) $('connectionDialog').showModal(); });
   $('closeConnection').addEventListener('click', () => $('connectionDialog').close());
   $('connectionForm').addEventListener('submit', async event => {
@@ -1476,19 +1489,20 @@ async function initializeConnection() {
   });
   $('skipDesktop').addEventListener('click', () => $('missingDesktopDialog').close());
   $('createDesktop').addEventListener('click', () => { $('missingDesktopDialog').close(); host.postMessage({ type: 'createDesktop' }); });
-  $('downloadsButton').addEventListener('click', () => { $('downloadsPanel').hidden = !$('downloadsPanel').hidden; });
+  $('downloadsButton').addEventListener('click', () => { $('downloadsPanel').hidden = !$('downloadsPanel').hidden; if (!$('transferRemotePath').value) $('transferRemotePath').value = contextFor(selection.scope).parent; api.listTransfers?.().then(tasks => tasks.forEach(updateDownload)).catch(error => notify(error.message)); });
   $('closeDownloads').addEventListener('click', () => { $('downloadsPanel').hidden = true; });
   api.onDownloadProgress(updateDownload);
   document.addEventListener('keydown', event => {
     if (event.key === 'F11' || (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'f')) { event.preventDefault(); requestFullscreen(); }
   }, true);
   clearRemoteDesktop(); $('connectionDialog').showModal();
-  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; $('sshHost').value = saved.host || ''; $('sshUsername').value = saved.username || ''; $('sshPort').value = saved.port || 22; }
+  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; $('sshHost').value = saved.host || ''; $('sshUsername').value = saved.username || ''; $('sshPort').value = saved.port || 22; $('sshPrivateKey').value = saved.privateKeyPath || ''; }
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
 }
 function updateDownload(value) {
   if (!value || typeof value.id !== 'string') return;
-  const task = downloadTasks.get(value.id); if (!task) return;
+  if (!downloadTasks.has(value.id)) createTransferRow(value.id, value.source || value.name || value.path || value.id, value.direction || 'download');
+  const task = downloadTasks.get(value.id);
   Object.assign(task, value);
   const row = task.element;
   row.querySelector('.download-status').textContent = task.status === 'complete' ? '已完成 · ' + (task.path || '') : task.status === 'cancelled' ? '已取消' : task.status === 'error' ? task.error || '下载失败' : (task.method ? task.method.toUpperCase() + ' · ' : '') + (task.total > 0 ? Math.min(100, Math.round(task.done / task.total * 100)) + '%' : '准备中…');
@@ -1496,19 +1510,62 @@ function updateDownload(value) {
   if (task.total > 0) { progress.max = task.total; progress.value = Math.max(0, task.done || 0); } else progress.removeAttribute('value');
   row.querySelector('button').disabled = ['complete','cancelled','error'].includes(task.status);
 }
-async function startDownload(remotePath) {
-  if (!remoteMode) { notify('请先连接 SSH'); return; }
-  const id = 'download-' + Date.now() + '-' + nextRequest++;
+function createTransferRow(id, remotePath, direction = 'download') {
+  if (downloadTasks.has(id)) return;
   const row = document.createElement('section'); row.className = 'download-item'; row.dataset.downloadId = id;
-  const title = document.createElement('strong'); title.textContent = basename(remotePath); title.title = remotePath;
+  const title = document.createElement('strong'); title.textContent = `${direction === 'upload' ? '↑ 上传' : '↓ 下载'} · ${basename(direction === 'upload' ? remotePath.replace(/\\/g, '/') : remotePath)}`; title.title = remotePath;
   const status = document.createElement('p'); status.className = 'download-status'; status.textContent = '准备中…'; status.setAttribute('role','status');
   const progress = document.createElement('progress'); progress.setAttribute('aria-label', basename(remotePath) + ' 下载进度');
   const cancel = document.createElement('button'); cancel.textContent = '取消'; cancel.addEventListener('click', async () => { cancel.disabled = true; status.textContent = '正在取消…'; try { await api.cancelDownload(id); } catch(error) { status.textContent = error.message; cancel.disabled = false; } });
   row.append(title, status, progress, cancel); $('downloadItems').append(row); $('downloadsPanel').hidden = false; $('downloadsEmpty').hidden = true;
-  downloadTasks.set(id, { id, remotePath, status:'running', element:row });
-  try { const result = await api.download(remotePath, id); updateDownload({ ...result, id, status: 'complete' }); notify('下载完成：' + (result.path || basename(remotePath))); }
+  downloadTasks.set(id, { id, remotePath, direction, status:'running', element:row });
+}
+async function startDownload(remotePath) {
+  if (!remoteMode) { notify('请先连接 SSH'); return; }
+  const id = 'download-' + Date.now() + '-' + nextRequest++;
+  createTransferRow(id, remotePath);
+  try { const result = await api.download(remotePath, id, transferDestination); updateDownload({ ...result, id, status: 'complete' }); notify('下载完成：' + (result.path || basename(remotePath))); }
   catch(error) { const cancelled = error.code === 'ABORT_ERR' || /取消|cancel|abort/i.test(error.message || ''); updateDownload({ id, status: cancelled ? 'cancelled' : 'error', error: error.message }); }
 }
+async function startUpload(kind) {
+  if (!remoteMode) { $('transferError').textContent = '请先连接 SSH'; return; }
+  try {
+    const target = resolveDirectoryAddress($('transferRemotePath').value, rootPath);
+    const files = await api.chooseUpload(kind);
+    for (const localPath of files) {
+      const id = 'upload-' + Date.now() + '-' + nextRequest++;
+      createTransferRow(id, localPath, 'upload');
+      void api.upload(localPath, target, id).then(result => { updateDownload({ ...result, id, status:'complete' }); refreshDirectory(target); }, error => updateDownload({ id, status:/取消|cancel|abort/i.test(error.message) ? 'cancelled' : 'error', error:error.message }));
+    }
+  } catch(error) { $('transferError').textContent = error.message; }
+}
+async function readTransferDirectory(path) {
+  const picker = transferPicker; if (!picker) return;
+  const request = ++picker.request; $('transferPickerError').textContent = '';
+  try {
+    const entries = await api.list(path);
+    if (picker !== transferPicker || request !== picker.request || !remoteMode) return;
+    picker.path = path; picker.selected = path; $('transferPickerPath').value = path; $('transferPickerSelect').textContent = '使用此目录';
+    $('transferPickerEntries').replaceChildren();
+    for (const entry of entries) {
+      const button = document.createElement('button'); button.textContent = `${entry.type === 'folder' || entry.type === 'directory' ? '📁' : '📄'} ${entry.name}`;
+      button.dataset.path = entry.path;
+      button.addEventListener('click', () => { picker.selected = entry.path; $('transferPickerSelect').textContent = '选择 ' + entry.name; });
+      button.addEventListener('dblclick', () => { if (['folder','directory'].includes(entry.type)) void readTransferDirectory(entry.path); else { $('transferRemotePath').value = entry.path; $('transferPickerDialog').close(); transferPicker = null; } });
+      $('transferPickerEntries').append(button);
+    }
+  } catch(error) { if (picker === transferPicker && request === picker.request) { $('transferPickerPath').value = picker.path || path; $('transferPickerError').textContent = error.message; } }
+}
+$('transferBrowse').addEventListener('click', () => { if (!remoteMode) return notify('请先连接 SSH'); transferPicker = {path:null,selected:null,request:0}; $('transferPickerDialog').showModal(); void readTransferDirectory(rootPath); });
+$('transferPickerForm').addEventListener('submit', event => { event.preventDefault(); try { void readTransferDirectory(resolveDirectoryAddress($('transferPickerPath').value, transferPicker?.path || '/')); } catch(error) { $('transferPickerError').textContent = error.message; } });
+$('transferPickerUp').addEventListener('click', () => { if(transferPicker?.path) void readTransferDirectory(parentOf(transferPicker.path)); });
+$('transferPickerCancel').addEventListener('click', () => { transferPicker = null; $('transferPickerDialog').close(); });
+$('transferPickerSelect').addEventListener('click', () => { if(transferPicker?.selected) $('transferRemotePath').value = transferPicker.selected; transferPicker = null; $('transferPickerDialog').close(); });
+$('transferPickerDialog').addEventListener('cancel', () => { transferPicker = null; });
+$('transferUploadFiles').addEventListener('click', () => startUpload('files'));
+$('transferUploadFolder').addEventListener('click', () => startUpload('directory'));
+$('transferDownload').addEventListener('click', () => { try { void startDownload(resolveDirectoryAddress($('transferRemotePath').value, rootPath)); } catch(error) { $('transferError').textContent = error.message; } });
+$('transferChooseDestination').addEventListener('click', async () => { try { const value = await api.chooseDownloadDirectory(); if(value) { transferDestination = value; $('transferDestination').textContent = value; } } catch(error) { $('transferError').textContent = error.message; } });
 function imageTransform(win) {
   const record = images.get(win.id); if (!record) return;
   record.image.style.transform = 'translate(' + record.x + 'px,' + record.y + 'px) scale(' + record.scale + ')';

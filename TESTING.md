@@ -1,6 +1,6 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-18。对象为 `remote-desktop-app` 1.0.2，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-19。对象为 `remote-desktop-app` 1.1.0，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
 
@@ -8,14 +8,16 @@
 | --- | --- | --- |
 | `npm run check` | 通过 | 主进程、preload、SSH/文件服务、独立渲染器语法 |
 | `npm run test:backend` | 82/82 通过（SSH 31 + 文件/配置服务 32 + 关闭保护 8 + 时钟 9 + 位置偏好 2） | ssh2 客户端与本机隔离 ssh2.Server 的 TCP 回环 SSH/SFTP；部分纯名称与恶意元数据测试使用注入替身 |
-| `npm run test:ui` | 22/22 通过 | 真实 HTML/CSS/JS/xterm，Chrome 无头运行，Electron/SSH 边界为注入替身 |
+| `npm run test:ui` | 24/24 通过 | 真实 HTML/CSS/JS/xterm，Chrome 无头运行，Electron/SSH 边界为注入替身 |
 | `npm run test:vim` | 7/7 通过 | 本机 Git 自带真实 Vim 9.1，独立临时文件；实际保存、丢弃、交换文件清理、只读和未命名失败，非远程 SSH Vim |
 | `npm run test:electron` | 1/1 集成场景通过 | 真实 Electron 44.4.2 主进程/preload/渲染器 + 本机 TCP 回环 SSH 服务端 |
-| `npm run package` 与打包后 EXE 测试 | 打包成功；EXE 集成场景 1/1 通过 | Windows x64 展开目录；包内 15 个核心文件与源码字节一致 |
+| `npm run test:workspace` | 1/1 通过 | 真实 Electron + Monaco、快捷方式真实目标、CLI exec/upload、冲突、HTML 资源和 Notebook |
+| `npm run test:browser` | 1/1 通过 | 真实 Electron 隔离网页、SSH DNS、Cookie/POST/Blob 下载、取消和上传服务器 |
+| `npm run test:cli` | 1/1 通过（Windows） | 打包/源码 CLI 默认数据目录、无 Node 启动器和实例发现 |
 | `npm audit` | 0 vulnerabilities | 全部已安装生产/开发依赖，执行日期 2026-09-18 |
 | 用户真实远程服务器 | 未执行 | 本轮未提供实机凭据，未操作现有 VS Code/SSH 窗口 |
 
-UI 结果保存在 `artifacts/standalone-ui-results.json`，已检查 `standalone-connect.png`、`standalone-desktop.png`、`standalone-image.png`。这些截图来自替身 SSH API 的无头 UI，不是用户服务器截图。真实 Electron 和打包 EXE 的结果分别为 `artifacts/electron-results.json`、`artifacts/packaged-electron-results.json`。最终交付、修复及哈希见 [交付报告](artifacts/standalone-102-20260918.md)；早期后端交接报告的 28 项结果已经被本轮最终结果取代。
+UI 结果保存在 `artifacts/standalone-ui-results.json`，已检查 `standalone-connect.png`、`standalone-desktop.png`、`standalone-image.png`。这些截图来自替身 SSH API 的无头 UI，不是用户服务器截图。真实 Electron 和打包 EXE 的结果分别为 `artifacts/electron-results.json`、`artifacts/packaged-electron-results.json`。最终交付、修复及哈希见 [交付报告](artifacts/standalone-110-20260919.md)；早期后端交接报告的 28 项结果已经被本轮最终结果取代。
 
 ## 复现命令
 
@@ -36,7 +38,7 @@ npm.cmd run test:electron
 
 ```powershell
 npm.cmd run package
-$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.0.2\win-unpacked\Remote Desktop.exe').Path
+$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.0\win-unpacked\Remote Desktop.exe').Path
 npm.cmd run test:electron
 Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 ```
@@ -109,7 +111,7 @@ UI 替身测试只证明渲染器行为与协议输出，不证明 SSH 后端或
 
 实际 SSH 测试结束后另写日期、服务器/系统、应用提交、测试目录、通过项和未覆盖项；不要引用旧扩展历史结果替代。
 
-## 1.0.2 新增回归
+## 1.1.0 新增回归
 
 - 允许 `/`、公共目录及外部符号链接；禁止整体修改主目录、当前桌面及其祖先。拒绝访问保留上一个成功位置、历史与内容。
 - 权限夹具通过 SSH 命令/SFTP 制造不可读、只读和目录拒绝；文件权限检查涵盖特殊引用路径。它模拟授权结果，不宣称测试了真实 Linux ACL 配置。

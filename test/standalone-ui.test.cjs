@@ -474,3 +474,33 @@ test('clock_uses_server_zone_or_explicit_offset_without_client_timezone_fallback
   await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'SERVER-CUSTOM',remote:true}));
   assert.equal(await page.locator('#serverClock').textContent(),'服务器时间 —');
 }));
+
+test('workbench_default_readonly_and_explicit_vim_routes_are_distinct', () => scenario('workbench-open-routes', async page => {
+  await page.evaluate(() => { window.remoteDesktop.openDocument = async(path,options) => window.calls.push({type:'openDocument',path,...options}); });
+  await connect(page); await icon(page,'notes.txt').dblclick();
+  await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&!value.readOnly));
+  assert.equal(await page.locator('.terminal-window').count(),0);
+  await page.evaluate(()=>{window.readOnlyFile='/home/tester/Desktop/notes.txt';});
+  await icon(page,'notes.txt').dblclick();await page.locator('#fileAccessReadOnly').click();
+  await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&value.readOnly));
+  await page.evaluate(()=>{window.readOnlyFile=null;});await icon(page,'notes.txt').click({button:'right'});await page.locator('#context [data-action=vim]').click();
+  await page.locator('.terminal-window').waitFor();
+  assert.equal(await page.evaluate(()=>window.messages.filter(value=>value.type==='openTerminal').at(-1).program),'vim');
+}));
+
+test('transfer_center_upload_destination_download_and_browser_entry', () => scenario('transfer-controls', async page => {
+  await page.evaluate(() => {
+    window.remoteDesktop.chooseUpload=async kind=>{window.calls.push({type:'chooseUpload',kind});return ['D:\\projects\\code.py'];};
+    window.remoteDesktop.upload=async(localPath,remoteDirectory,id)=>{window.calls.push({type:'upload',localPath,remoteDirectory,id});return {id,path:remoteDirectory+'/code.py',done:12,total:12};};
+    window.remoteDesktop.chooseDownloadDirectory=async()=> 'D:\\saved';
+    window.remoteDesktop.download=async(path,id,destination)=>{window.calls.push({type:'download',path,id,destination});return {id,path:destination+'\\code.py'};};
+    window.remoteDesktop.openBrowser=async url=>window.calls.push({type:'openBrowser',url});
+  });
+  await connect(page);await page.locator('#downloadsButton').click();await page.locator('#transferRemotePath').fill('/shared');await page.locator('#transferUploadFiles').click();
+  await page.waitForFunction(()=>window.calls.some(value=>value.type==='upload'));
+  assert.match(await page.locator('#downloadItems strong').textContent(),/^↑ 上传 · code.py$/);
+  await page.locator('#transferChooseDestination').click();await page.locator('#transferRemotePath').fill('/shared/code.py');await page.locator('#transferDownload').click();
+  await page.waitForFunction(()=>window.calls.some(value=>value.type==='download'&&value.destination==='D:\\saved'));
+  await page.locator('#closeDownloads').click();await page.locator('#browserButton').click();
+  await page.waitForFunction(()=>window.calls.some(value=>value.type==='openBrowser'));
+}));

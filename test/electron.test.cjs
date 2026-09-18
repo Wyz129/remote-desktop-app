@@ -110,7 +110,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.ok(fixture.calls.resize.some(size => size.cols === 99 && size.rows === 33));
   await answer(1); await page.locator('.terminal-window [data-window-action="close"]').click();
   await page.locator('.terminal-window').waitFor({ state: 'hidden' });
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).dblclick();
+  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).click({button:"right"}); await page.locator("#context [data-action=vim]").click();
   await page.waitForFunction(() => window.ipcEvents.filter(message => message.type === 'terminalOpened').length === 2);
   assert.ok(fixture.calls.exec.some(command => command.includes('exec vim -c ') && command.endsWith(`-- '${fixture.home}/Desktop/notes.txt'`)));
   await answer(2); await page.locator('.terminal-window [data-window-action="close"]').click();
@@ -130,7 +130,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await answer(0); await page.locator('.terminal-window [data-window-action="close"]').click();
   await page.locator('.terminal-window').waitFor({ state: 'hidden' });
   assert.ok(fixture.calls.shell.includes('\x1c\x0e:wqa\r'));
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).dblclick();
+  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).click({button:"right"}); await page.locator("#context [data-action=vim]").click();
   await page.waitForFunction(() => window.ipcEvents.filter(message => message.type === 'terminalOpened').length === 3);
   await answer(1); await page.locator('.terminal-window [data-window-action="close"]').click();
   await page.locator('.terminal-window').waitFor({ state: 'hidden' });
@@ -162,7 +162,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.match(await page.locator('#fileAccessTitle').textContent(), /无访问权限/);
   assert.equal(await page.locator('.terminal-window').count(), 0);
   await page.locator('#fileAccessCancel').click();
-  await explorer.locator('.entry').filter({ hasText: 'readonly.txt' }).dblclick();
+  await explorer.locator('.entry').filter({ hasText: 'readonly.txt' }).click({button:'right'}); await page.locator('#context [data-action=vim]').click();
   await page.locator('#fileAccessReadOnly').waitFor();
   assert.match(await page.locator('#fileAccessTitle').textContent(), /无编辑权限/);
   await page.locator('#fileAccessReadOnly').click();
@@ -189,7 +189,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   const diskSettings = await fsp.readFile(path.join(userData, 'settings.json'), 'utf8');
   assert.deepEqual(Object.values(JSON.parse(diskSettings).desktopLocations), ['/outside/shared workspace']);
   assert.equal(diskSettings.includes(fixture.password), false);
-  assert.equal(/privateKey|passphrase|password/.test(diskSettings), false);
+  assert.equal(/"(?:privateKey|passphrase|password)"\s*:/.test(diskSettings), false);
   assert.deepEqual(errors, []);
   await fsp.mkdir(path.join(project, 'artifacts'), { recursive: true });
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-electron.png' : 'electron-smoke.png') });

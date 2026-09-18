@@ -1,8 +1,8 @@
 {
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
-  "description": "独立 Remote Desktop 应用：通过 SSH 浏览远程桌面并下载文件。",
-  "version": "1.0.2",
+  "description": "独立 SSH 文档工作台、服务器浏览器、传输中心与命令行实例",
+  "version": "1.1.0",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -10,13 +10,22 @@
   "scripts": {
     "start": "node scripts/start-app.cjs",
     "dev": "node scripts/start-app.cjs --enable-logging",
-    "check": "node --check main.cjs && node --check preload.cjs && node --check lib/ssh-backend.cjs && node --check lib/desktop-service.cjs && node --check lib/terminal-guard.cjs && node --check app/desktop.js && node --check lib/server-clock.cjs && node --check lib/desktop-preferences.cjs",
+    "check": "node scripts/check-syntax.cjs",
     "test:backend": "node --test test/standalone-backend.test.cjs test/desktop-service.test.cjs test/terminal-close.test.cjs test/server-clock.test.cjs test/desktop-preferences.test.cjs",
     "test:ui": "node --test test/standalone-ui.test.cjs",
     "test:vim": "node --test test/real-vim.test.cjs",
     "test:electron": "node --test test/electron.test.cjs",
-    "test": "npm run check && npm run test:backend && npm run test:vim && npm run test:ui && npm run test:electron",
-    "package": "electron-builder --dir"
+    "test:modules": "node --test test/upload-service.test.cjs test/instance-bridge.test.cjs test/document-service.test.cjs test/jupyter-client.test.cjs test/ssh-network.test.cjs test/preview-server.test.cjs",
+    "test:workbench": "node --test test/workbench-ui.test.cjs",
+    "test:workspace": "node --test test/workspace-electron.test.cjs",
+    "test:browser": "node --test test/browser-electron.test.cjs",
+    "test:cli": "node --test test/cli-packaged.test.cjs",
+    "test": "npm run check && npm run test:backend && npm run test:modules && npm run test:vim && npm run test:ui && npm run test:workbench && npm run test:electron && npm run test:workspace && npm run test:browser && npm run test:cli",
+    "package": "electron-builder --dir",
+    "assets:workbench": "node scripts/vendor-workbench.cjs",
+    "postinstall": "npm run assets:workbench",
+    "prepackage": "npm run assets:workbench",
+    "cli": "node scripts/cli.cjs"
   },
   "devDependencies": {
     "electron": "^44.4.2",
@@ -24,13 +33,18 @@
     "playwright": "^1.63.0"
   },
   "dependencies": {
-    "ssh2": "^1.17.0"
+    "dompurify": "^3.4.15",
+    "katex": "^0.18.7",
+    "marked": "^18.0.13",
+    "monaco-editor": "^0.53.0",
+    "ssh2": "^1.17.0",
+    "ws": "^8.21.3"
   },
   "build": {
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.0.2"
+      "output": "artifacts/electron-1.1.0"
     },
     "files": [
       "main.cjs",
@@ -39,11 +53,28 @@
       "app/**/*",
       "media/lucide*",
       "media/xterm*",
-      "package.json"
+      "package.json",
+      "workbench-preload.cjs",
+      "browser-preload.cjs",
+      "media/workbench/**/*"
     ],
     "npmRebuild": false,
     "win": {
       "target": "dir"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "scripts/cli.cjs",
+        "to": "cli/scripts/cli.cjs"
+      },
+      {
+        "from": "scripts/rdesktop.cmd",
+        "to": "cli/scripts/rdesktop.cmd"
+      },
+      {
+        "from": "lib/instance-bridge.cjs",
+        "to": "cli/lib/instance-bridge.cjs"
+      }
+    ]
   }
 }

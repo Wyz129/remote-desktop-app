@@ -1,6 +1,6 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-18。独立应用版本：1.0.2。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-18。独立应用版本：1.1.0。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
 
 ## 1. 仓库与工作边界
 
@@ -106,15 +106,15 @@ xterm 连接 SSH PTY，白名单仅 shell/vim/htop；普通文件通过 Vim 编�
 
 ## 7. 验证状态与后续实机边界
 
-最终 `npm test` 通过：后端 82/82（SSH 31、文件/配置服务 32、关闭保护 8、时钟 9、位置偏好 2）、真实本机 Vim 7/7、无头 UI 22/22、真实 Electron 进程集成 1/1。`npm run package` 生成 Windows x64 展开目录，直接启动打包 EXE 的同一集成场景也 1/1 通过。包内 15 个核心文件及 3 个许可证与源码一致，`npm audit` 无已知漏洞。准确边界见 [TESTING.md](TESTING.md)，产物路径与 SHA-256 见 [交付报告](artifacts/standalone-102-20260918.md)。
+最终 `npm test` 通过：后端 82/82、模块 30/30、真实本机 Vim 7/7、无头 UI 24/24、工作台 4/4、真实 Electron、工作区、浏览器和 CLI 集成均通过。`npm run package` 生成 Windows x64 展开目录，直接启动打包 EXE 的同一集成场景也 1/1 通过。包内 15 个核心文件及 3 个许可证与源码一致，`npm audit` 无已知漏洞。准确边界见 [TESTING.md](TESTING.md)，产物路径与 SHA-256 见 [交付报告](artifacts/standalone-110-20260919.md)。
 
 本轮没有用户服务器凭据，没有外部 SSH 实机验收。回环夹具确实交换 SSH/SFTP 协议包并读写隔离的本地临时数据，但服务端仍是 ssh2.Server 受控夹具；它不等同 OpenSSH/PAM/MFA、真实服务器 TUI 或长期网络环境。
 
-后续修改运行 npm test、npm run package，并通过 `REMOTE_DESKTOP_TEST_EXE` 指向展开目录中的 EXE 重跑隔离 Electron 测试。当前 Electron 为 44.4.2，应用入口 `artifacts/electron-1.0.2/win-unpacked/Remote Desktop.exe`；保留完整目录。产物未签名、未发布；历史交接中的中间测试数字不作为最终验收。
+后续修改运行 npm test、npm run package，并通过 `REMOTE_DESKTOP_TEST_EXE` 指向展开目录中的 EXE 重跑隔离 Electron 测试。当前 Electron 为 44.4.2，应用入口 `artifacts/electron-1.1.0/win-unpacked/Remote Desktop.exe`；保留完整目录。产物未签名、未发布；历史交接中的中间测试数字不作为最终验收。
 
 外部 SSH 后续复测使用用户授权的独立测试目录：首次指纹/私钥/口令认证，真实 `$HOME` 与桌面配置、Vim/htop 交互、大小文件/递归目录下载、取消/断网清理及系统 Downloads 重定向。不得为了测试清理或覆盖用户已有远程桌面、已知主机或下载文件。
 
-## 1.0.2 补充交接
+## 1.1.0 补充交接
 
 - `lib/desktop-preferences.cjs` 规范化桌面路径，以主机、端口、账号和已验证主机指纹隔离位置偏好；主进程保存在 userData/settings.json，不含凭据。
 - `api.setDesktop(path)` 返回完整 ready state，由渲染器应用，不额外广播重复状态。切换与配置写入串行；15 秒截止覆盖排队和远程验证，进入本地保存阶段后等待实际提交结果。验证失败不改变原桌面。断连中断提交时主进程尝试恢复原本地偏好。

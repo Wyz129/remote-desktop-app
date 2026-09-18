@@ -7,10 +7,19 @@ const { StringDecoder } = require('node:string_decoder');
 const { SshBackend, DEFAULT_THRESHOLD, normalizeRemote } = require('./lib/ssh-backend.cjs');
 const { TerminalGuard } = require('./lib/terminal-guard.cjs');
 const { desktopIdentity, desktopLocations } = require('./lib/desktop-preferences.cjs');
+const crypto = require('node:crypto');
+const { UploadService } = require('./lib/upload-service.cjs');
+const { InstanceBridge, executeRemote } = require('./lib/instance-bridge.cjs');
+const { TransferCenter } = require('./lib/transfer-center.cjs');
+const { createWorkbenchManager } = require('./lib/workbench-manager.cjs');
+const { createBrowserManager } = require('./lib/browser-manager.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
 let windowRef, backend, desktopService, connecting = false;
+let uploader, instanceBridge, workbench, browserManager;
+const transferCenter = new TransferCenter(value => send('download:progress', value));
+const selectedLocalPaths = new Set(), selectedDownloadDirectories = new Set();
 let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'vim', knownHosts: {}, desktopLocations: {} };
 let settingsQueue = Promise.resolve();
 const selectedKeys = new Set();
@@ -18,6 +27,7 @@ const completedDownloads = new Set();
 const terminalStarts = new Map();
 const desktopPreferenceWrites = new Map();
 let sessionTransition = false, allowWindowClose = false, closingApplication = false;
+let connectionCleanup = Promise.resolve();
 const terminalGuard = new TerminalGuard({ getBackend: () => backend,
   ask: options => dialog.showMessageBox(windowRef, options), report: options => dialog.showMessageBox(windowRef, options),
   closed: id => { terminalStarts.delete(id); post({ type: 'terminalClosed', id }); } });
@@ -32,7 +42,7 @@ function currentSession(source) { return Boolean(source && source === backend &&
 function accessDenied(error) { return [3, 'EACCES', 'EPERM'].includes(error?.code); }
 function accessMessage(error, remotePath) { return `${accessDenied(error) ? '无访问权限：' : ''}${remotePath ? `${remotePath} — ` : ''}${error.message}${error.code !== undefined ? ` (${error.code})` : ''}`; }
 async function loadSettings() {
-  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'desktopLocations'].includes(key))) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
+  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'desktopLocations', 'privateKeyPath'].includes(key))) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
   settings.scriptEditor = 'vim';
@@ -69,10 +79,41 @@ async function quitSafely() {
   if (closingApplication || sessionTransition) return;
   closingApplication = true; sessionTransition = true;
   try {
-    if (!await terminalGuard.all()) return;
-    terminalStarts.clear(); await backend?.disconnect(); allowWindowClose = true; app.quit();
+    if (!await workbench?.confirmAll() || !await terminalGuard.all()) return;
+    await closeConnectionResources();
+    terminalStarts.clear(); await backend?.disconnect(); await instanceBridge?.close(); allowWindowClose = true; app.quit();
   } catch (error) { post({ type: 'desktopError', error: `关闭应用未完成：${error.message}` });
   } finally { closingApplication = false; sessionTransition = false; }
+}
+function closeConnectionResources() {
+  const previousUploader = uploader;
+  uploader = null; selectedLocalPaths.clear();
+  const cleanup = connectionCleanup.then(async () => {
+    const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close()]);
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  });
+  connectionCleanup = cleanup.catch(() => {});
+  return cleanup;
+}
+async function upload(localPath, remoteDirectory, { id = crypto.randomUUID(), signal, onProgress } = {}) {
+  requireBackend(); const source = uploader;
+  if (!source || sessionTransition) throw new Error('连接正在切换，请稍后传输。');
+  const abort = () => source.cancel(id); signal?.addEventListener('abort', abort, { once: true });
+  try {
+    if (signal?.aborted) throw new Error('上传已取消。');
+    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory }, progress => source.upload(localPath, remoteDirectory, { id, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+  } finally { signal?.removeEventListener('abort', abort); }
+}
+async function download(remotePath, { id = crypto.randomUUID(), destination, signal, onProgress } = {}) {
+  const source = requireBackend();
+  if (sessionTransition) throw new Error('连接正在切换，请稍后传输。');
+  const abort = () => source.cancelDownload(id); signal?.addEventListener('abort', abort, { once: true });
+  try {
+    if (signal?.aborted) throw new Error('下载已取消。');
+    const result = await transferCenter.run({ id, source: remotePath, direction: 'download', destination }, progress => source.download(remotePath, { id, destination, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+    completedDownloads.add(result.path); return result;
+  } finally { signal?.removeEventListener('abort', abort); }
 }
 async function inspect(create = false) {
   const source = requireBackend();
@@ -133,7 +174,11 @@ async function handleDesktopMessage(message) {
   if (type === 'createDesktop') { await inspect(true); return; }
   if (type === 'readDirectory') {
     const source = backend, service = desktopService;
-    try { const entries = await service.entries(message.path); if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, entries }); }
+    try {
+      const resolvedPath = normalizeRemote(await service.call('realpath', message.path));
+      const entries = await service.entries(resolvedPath);
+      if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, resolvedPath, requestId: message.requestId, entries });
+    }
     catch (error) { if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, error: accessMessage(error, message.path), accessDenied: accessDenied(error) }); }
   } else if (type === 'refreshRemote') {
     await inspect(); for (const remotePath of [...new Set(message.paths || [])]) await handleDesktopMessage({ type: 'readDirectory', path: remotePath });
@@ -186,6 +231,42 @@ async function handleDesktopMessage(message) {
   else if (type === 'terminalClose') { await terminalGuard.request(message.id); }
   else throw new Error('该功能未在独立应用中提供。');
 }
+async function connectSsh(input, trustedLocal = false) {
+    if (connecting || sessionTransition) throw new Error('已有连接正在建立或关闭。'); connecting = true; sessionTransition = true;
+    try {
+      if (!await workbench?.confirmAll() || !await terminalGuard.all()) return { cancelled: true };
+      await closeConnectionResources();
+      terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
+      post({ type: 'remoteState', status: 'disconnected', message: '正在建立新的 SSH 连接。' });
+      const host = String(input.host || '').trim(), port = Number(input.port) || 22, username = String(input.username || '').trim();
+      const hostKey = `${host.toLowerCase()}:${port}`, known = settings.knownHosts[hostKey];
+      if (known && input.hostKeyFingerprint && input.hostKeyFingerprint.replace(/=+$/, '') !== known) throw new Error('输入指纹与本机保存的指纹不同。连接已拒绝。');
+      let privateKey;
+      if (input.privateKeyPath) {
+        const savedKey = settings.privateKeyPath === input.privateKeyPath && settings.host === host && settings.port === port && settings.username === username;
+        if (!trustedLocal && !selectedKeys.has(input.privateKeyPath) && !savedKey) throw new Error('请使用“选择私钥”按钮选择本地文件。');
+        const stats = await fsp.stat(input.privateKeyPath);
+        if (!stats.isFile() || stats.size > 1024 * 1024) throw new Error('私钥必须是小于 1 MiB 的普通文件。');
+        privateKey = await fsp.readFile(input.privateKeyPath);
+      }
+      const nextBackend = new SshBackend({ threshold: settings.downloadThreshold, downloadsPath: app.getPath('downloads'),
+        verifyHost: async info => {
+          const answer = await dialog.showMessageBox(windowRef, { type: 'warning', title: '首次连接：核验 SSH 主机', message: `信任 ${info.host}:${info.port} 的主机密钥？`, detail: `SHA-256 指纹：\n${info.fingerprint}\n\n请与服务器管理员提供的指纹核对。确认后保存到本应用的已知主机记录。`, buttons: ['取消', '指纹无误，信任并连接'], defaultId: 0, cancelId: 0, noLink: true });
+          return answer.response === 1;
+        }, onDisconnect: () => { if (backend !== nextBackend) return; desktopService = null; terminalStarts.clear(); void closeConnectionResources().catch(error => post({ type: 'desktopError', error: `断线清理未完成：${error.message}` })); post({ type: 'remoteState', status: 'disconnected', message: 'SSH 连接已断开，请重新连接。' }); } });
+      backend = nextBackend;
+      let result;
+      try { result = await backend.connect({ host, port, username, password: input.password, privateKey, passphrase: input.passphrase, hostKeyFingerprint: known || input.hostKeyFingerprint }); }
+      finally { privateKey?.fill(0); }
+      desktopService = backend.desktopService();
+      uploader = new UploadService(backend);
+      backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
+      await saveSettings({ host, port, username, privateKeyPath: input.privateKeyPath || null, hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...settings.knownHosts, [hostKey]: result.hostFingerprint } });
+      try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
+      await serverInfo(); return result;
+    } finally { connecting = false; sessionTransition = false; }
+}
+
 function registerIpc() {
   const handle = (channel, action) => ipcMain.handle(channel, (event, ...args) => { requireSender(event); return action(...args); });
   handle('app:get-settings', () => publicSettings());
@@ -201,41 +282,12 @@ function registerIpc() {
     const result = await dialog.showOpenDialog(windowRef, { properties: ['openFile'], title: '选择 SSH 私钥' });
     if (result.canceled) return null; const selected = result.filePaths[0]; selectedKeys.add(selected); return selected;
   });
-  handle('ssh:connect', async input => {
-    if (connecting || sessionTransition) throw new Error('已有连接正在建立或关闭。'); connecting = true; sessionTransition = true;
-    try {
-      if (!await terminalGuard.all()) return { cancelled: true };
-      terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
-      post({ type: 'remoteState', status: 'disconnected', message: '正在建立新的 SSH 连接。' });
-      const host = String(input.host || '').trim(), port = Number(input.port) || 22, username = String(input.username || '').trim();
-      const hostKey = `${host.toLowerCase()}:${port}`, known = settings.knownHosts[hostKey];
-      if (known && input.hostKeyFingerprint && input.hostKeyFingerprint.replace(/=+$/, '') !== known) throw new Error('输入指纹与本机保存的指纹不同。连接已拒绝。');
-      let privateKey;
-      if (input.privateKeyPath) {
-        if (!selectedKeys.has(input.privateKeyPath)) throw new Error('请使用“选择私钥”按钮选择本地文件。');
-        const stats = await fsp.stat(input.privateKeyPath);
-        if (!stats.isFile() || stats.size > 1024 * 1024) throw new Error('私钥必须是小于 1 MiB 的普通文件。');
-        privateKey = await fsp.readFile(input.privateKeyPath);
-      }
-      backend = new SshBackend({ threshold: settings.downloadThreshold, downloadsPath: app.getPath('downloads'),
-        verifyHost: async info => {
-          const answer = await dialog.showMessageBox(windowRef, { type: 'warning', title: '首次连接：核验 SSH 主机', message: `信任 ${info.host}:${info.port} 的主机密钥？`, detail: `SHA-256 指纹：\n${info.fingerprint}\n\n请与服务器管理员提供的指纹核对。确认后保存到本应用的已知主机记录。`, buttons: ['取消', '指纹无误，信任并连接'], defaultId: 0, cancelId: 0, noLink: true });
-          return answer.response === 1;
-        }, onDisconnect: () => { desktopService = null; post({ type: 'remoteState', status: 'disconnected', message: 'SSH 连接已断开，请重新连接。' }); } });
-      let result;
-      try { result = await backend.connect({ host, port, username, password: input.password, privateKey, passphrase: input.passphrase, hostKeyFingerprint: known || input.hostKeyFingerprint }); }
-      finally { privateKey?.fill(0); }
-      desktopService = backend.desktopService();
-      backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
-      await saveSettings({ host, port, username, hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...settings.knownHosts, [hostKey]: result.hostFingerprint } });
-      try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
-      await serverInfo(); return result;
-    } finally { connecting = false; sessionTransition = false; }
-  });
+  handle('ssh:connect', input => connectSsh(input));
   handle('ssh:disconnect', async () => {
     if (sessionTransition) return false; sessionTransition = true;
     try {
-      if (!await terminalGuard.all()) return false;
+      if (!await workbench?.confirmAll() || !await terminalGuard.all()) return false;
+      await closeConnectionResources();
       terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
       post({ type: 'remoteState', status: 'disconnected', message: 'SSH 已断开。' }); return true;
     } finally { sessionTransition = false; }
@@ -260,16 +312,47 @@ function registerIpc() {
     try { return await requireBackend().readImage(remotePath); }
     catch (error) { throw new Error(accessMessage(error, remotePath)); }
   });
-  handle('ssh:download', async (remotePath, id) => {
-    const sourceBackend = requireBackend();
-    const result = await sourceBackend.download(remotePath, { id, onProgress: value => send('download:progress', value) });
-    completedDownloads.add(result.path); return result;
+  handle('ssh:download', (remotePath, id, destination) => {
+    if (destination && !selectedDownloadDirectories.has(destination)) throw new Error('请先选择本地下载目录。');
+    return download(remotePath, { id, destination });
   });
-  handle('ssh:cancel-download', id => { backend?.cancelDownload(id); return true; });
+  handle('transfer:choose-local', async kind => {
+    const result = await dialog.showOpenDialog(windowRef, { title: kind === 'directory' ? '选择上传文件夹' : '选择上传文件', properties: kind === 'directory' ? ['openDirectory'] : ['openFile', 'multiSelections'] });
+    if (result.canceled) return [];
+    result.filePaths.forEach(value => selectedLocalPaths.add(value)); return result.filePaths;
+  });
+  handle('transfer:choose-download-directory', async () => {
+    const result = await dialog.showOpenDialog(windowRef, { title: '选择本地保存目录', properties: ['openDirectory', 'createDirectory'] });
+    if (result.canceled) return null; selectedDownloadDirectories.add(result.filePaths[0]); return result.filePaths[0];
+  });
+  handle('transfer:upload', (localPath, remoteDirectory, id) => {
+    if (!selectedLocalPaths.has(localPath)) throw new Error('请使用选择按钮选择本地项目。');
+    return upload(localPath, remoteDirectory, { id });
+  });
+  handle('transfer:list', () => transferCenter.publicList());
+  handle('ssh:cancel-download', id => { return browserManager?.cancel(id) || transferCenter.cancel(id) || backend?.cancelDownload(id) || false; });
+  handle('workbench:open', (remotePath, options) => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return workbench.open(remotePath, { readOnly: Boolean(options?.readOnly) }); });
+  handle('browser:open', url => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return browserManager.open(url); });
   handle('ssh:open-local', filePath => { if (!completedDownloads.has(filePath)) throw new Error('只能定位当前应用完成下载的文件。'); shell.showItemInFolder(filePath); });
   ipcMain.on('desktop:send', (event, message) => { try { requireSender(event); handleDesktopMessage(message).catch(error => post({ type: 'desktopError', error: error.message })); } catch {} });
 }
-app.whenReady().then(async () => { await loadSettings(); registerIpc(); createWindow(); });
+app.whenReady().then(async () => {
+  await loadSettings();
+  workbench = createWorkbenchManager({ getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
+  browserManager = createBrowserManager({ getBackend: requireBackend, getParent: () => windowRef, onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
+    uploadFile: ({ localPath, remoteDirectory, id, signal, onProgress }) => { requireBackend(); if (!uploader || sessionTransition) throw new Error('SSH 连接正在切换。'); return uploader.upload(localPath, remoteDirectory, { id, signal, onProgress }); } });
+  registerIpc(); createWindow();
+  instanceBridge = new InstanceBridge({ userDataDir: app.getPath('userData'), metadata: { pid: process.pid, executable: process.execPath }, callbacks: {
+    status: async () => ({ connected: Boolean(backend?.connected), host: settings.host, port: settings.port, username: settings.username, privateKeyPath: settings.privateKeyPath, desktop: backend?.desktop, home: backend?.home }),
+    focus: async () => { windowRef.show(); windowRef.focus(); return { ok: true }; },
+    connect: input => connectSsh(input, true),
+    exec: (input, context) => { if (sessionTransition) throw new Error('SSH 连接正在切换。'); return executeRemote(requireBackend(), input, context); },
+    upload: (input, context) => upload(input.localPath, input.remoteDirectory, { id: input.id, ...context }),
+    download: (input, context) => download(input.remotePath, { id: input.id, destination: input.destination, ...context }),
+    cancel: async input => browserManager.cancel(input.id) || transferCenter.cancel(input.id)
+  } });
+  try { await instanceBridge.start(); } catch(error) { post({type:'desktopError',error:`本地命令行接口启动失败：${error.message}`}); }
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', event => {
   if (allowWindowClose) return;

@@ -12,7 +12,7 @@
   <header class="toolbar">
     <div class="brand"><strong id="accountName">未连接 SSH</strong></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
-    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="下载任务" title="下载任务"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
+    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="browserButton" class="toolbar-icon" aria-label="服务器网页浏览器" title="通过服务器网络浏览网页"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
@@ -126,12 +126,23 @@
 <dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>确认后将在真实主目录中创建 rdesktop 文件夹。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">创建 rdesktop</button></footer></dialog>
 <dialog id="desktopPickerDialog" class="connection-dialog directory-picker" aria-labelledby="desktopPickerTitle"><h2 id="desktopPickerTitle">选择桌面目录</h2><form id="desktopPickerForm" class="directory-picker-address"><button type="button" id="desktopPickerUp" aria-label="上一级目录">↑</button><input id="desktopPickerPath" aria-label="选择目录地址" spellcheck="false" autocomplete="off"><button type="submit" id="desktopPickerGo">打开</button></form><p id="desktopPickerError" role="alert"></p><div id="desktopPickerEntries" class="directory-picker-entries" aria-label="可选目录"></div><footer class="settings-footer"><button type="button" id="desktopPickerCancel">取消</button><button type="button" id="desktopPickerSelect" class="primary">使用此目录</button></footer></dialog>
 <dialog id="fileAccessDialog" class="connection-dialog" aria-labelledby="fileAccessTitle"><h2 id="fileAccessTitle">无访问权限</h2><p id="fileAccessDetail" role="alert"></p><footer class="settings-footer"><button type="button" id="fileAccessCancel">关闭</button><button type="button" id="fileAccessReadOnly" class="primary" hidden>只读打开</button></footer></dialog>
-<aside id="downloadsPanel" class="downloads-panel" aria-label="下载任务" hidden><header><h2>下载任务</h2><button id="closeDownloads" aria-label="关闭下载任务">×</button></header><p id="downloadsEmpty">尚无下载任务</p><div id="downloadItems"></div></aside>
+<aside id="downloadsPanel" class="downloads-panel" aria-label="传输中心" hidden>
+<header><h2>传输中心</h2><button id="closeDownloads" aria-label="关闭传输中心">×</button></header>
+<section class="transfer-controls">
+<label for="transferRemotePath">服务器路径</label><div class="transfer-path"><input id="transferRemotePath" placeholder="下载的项目 / 上传的目标目录" spellcheck="false"><button id="transferBrowse">浏览</button></div>
+<div class="transfer-buttons"><button id="transferDownload">下载到本机</button><button id="transferChooseDestination">本地保存目录</button></div><p id="transferDestination">使用系统下载目录</p>
+<div class="transfer-buttons"><button id="transferUploadFiles">上传文件</button><button id="transferUploadFolder">上传文件夹</button></div>
+<p class="transfer-help">小文件使用 SSH 流，大文件和文件夹使用 SFTP。上传保留已有同名项目并自动编号。</p>
+<p id="transferError" role="alert"></p></section>
+<p id="downloadsEmpty">尚无传输任务</p><div id="downloadItems"></div></aside>
+<dialog id="transferPickerDialog" class="connection-dialog directory-picker" aria-labelledby="transferPickerTitle"><h2 id="transferPickerTitle">选择服务器项目</h2><form id="transferPickerForm" class="directory-picker-address"><button type="button" id="transferPickerUp">↑</button><input id="transferPickerPath" aria-label="服务器目录地址"><button>打开</button></form><p id="transferPickerError" role="alert"></p><div id="transferPickerEntries" class="directory-picker-entries"></div><footer class="settings-footer"><button id="transferPickerCancel">取消</button><button id="transferPickerSelect" class="primary">使用此目录</button></footer></dialog>
 <template id="imageTemplate"><section class="window image-window" aria-label="图片查看器" tabindex="-1"><header class="titlebar"><span aria-hidden="true">▧</span><strong class="window-title"></strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button class="window-control close" data-window-action="close" aria-label="关闭图片">×</button></div></header><div class="image-controls"><button data-image-action="out" aria-label="缩小图片">−</button><button data-image-action="in" aria-label="放大图片">＋</button><button data-image-action="actual">100%</button><button data-image-action="fit">适应窗口</button><span class="image-scale">加载中…</span><span class="image-help">滚轮局部缩放 · 拖动平移</span></div><div class="image-viewport"><img draggable="false" alt=""></div><footer class="window-footer image-status" role="status">正在载入…</footer></section></template>
   <div id="selectionBox" class="selection-box" hidden></div>
   <div id="dragGhost" class="drag-ghost" hidden></div>
   <div id="context" class="context" role="menu" aria-label="文件操作" hidden>
     <button data-action="open" role="menuitem">打开</button>
+    <button data-action="workbench" role="menuitem">打开方式 · 文档工作台</button>
+    <button data-action="vim" role="menuitem">打开方式 · Vim</button>
     <div class="menu-divider"></div>
     <button data-action="new-file" role="menuitem">新建文件</button>
     <button data-action="new-folder" role="menuitem">新建文件夹</button>
