@@ -178,10 +178,19 @@ async function createSshFixture(options = {}) {
       const session = accept(); session.on('error', () => {});
       session.on('pty', (acceptPty, _reject, info) => { calls.pty.push(info); acceptPty?.(); });
       session.on('window-change', (acceptResize, _reject, info) => { calls.resize.push(info); acceptResize?.(); });
-      const serveShell = stream => {
+      const serveShell = (stream, command = '') => {
         stream.on('error', () => {});
         stream.write('fixture-shell-ready\r\n');
-        stream.on('data', chunk => { const data = chunk.toString('utf8'); calls.shell.push(data); stream.write(`fixture-echo:${data}`); });
+        const vim = command.includes('&& exec vim ');
+        const marker = command.match(/remote-desktop-vim-[a-f0-9]{32}/)?.[0];
+        if (marker && !options.vimNotReady) stream.write(`\x1b]777;${marker}\x07`);
+        stream.on('data', chunk => {
+          const data = chunk.toString('utf8'); calls.shell.push(data); stream.write(`fixture-echo:${data}`);
+          if (vim && /:(wqa|qa!)\r/.test(data)) {
+            if (data.includes(':wqa') && options.vimWriteFailure) { stream.write('\r\nE212: Cannot open file for writing\r\n'); return; }
+            if (!options.vimNeverExits) { stream.exit(options.vimExitCode || 0); stream.end(); }
+          }
+        });
         stream.on('end', () => { stream.exit(0); stream.end(); });
       };
       session.on('shell', acceptShell => serveShell(acceptShell()));
@@ -189,9 +198,13 @@ async function createSshFixture(options = {}) {
       session.on('exec', (acceptExec, _reject, info) => {
         calls.exec.push(info.command); const stream = acceptExec(); stream.on('error', () => {});
         void (async () => {
-          if (info.command.startsWith('cd -- ') && / && exec (?:"\$\{SHELL:-\/bin\/sh\}" -l|vim(?: -- .*)?|htop)$/.test(info.command)) { serveShell(stream); return; }
+          if (info.command.startsWith('cd -- ') && / && exec (?:"\$\{SHELL:-\/bin\/sh\}" -l|vim(?: -.*)?|htop)$/.test(info.command)) { serveShell(stream, info.command); return; }
           if (info.command.includes('$HOME') && info.command.startsWith('printf')) { stream.write(options.homeOutput === undefined ? HOME : options.homeOutput); stream.exit(0); stream.end(); return; }
           if (info.command === 'id -un; hostname; date -u +%s') { stream.write(`${username}\nfixture-host\n${Math.floor(Date.now() / 1000)}\n`); stream.exit(0); stream.end(); return; }
+          if (info.command.startsWith('# remote-desktop-system-info-v1\n')) {
+            const values = { os: 'Ubuntu 24.04 LTS (fixture)', kernel: '6.8.0-fixture', architecture: 'x86_64', cpu: 'Fixture CPU', hostname: 'fixture-host', username, disk: 'Filesystem Size Used Avail Use% Mounted on\nfixture 100G 25G 75G 25% /', memory: 'Mem: 16Gi 4Gi 12Gi', dateTime: '2026-09-18 12:00:00 UTC', timeZone: 'Etc/UTC', locale: 'LANG=C.UTF-8', shell: '/bin/bash', network: '192.0.2.10' };
+            stream.write(Object.entries(values).map(([key, value]) => `${key}\0${value}\0`).join('')); stream.exit(0); stream.end(); return;
+          }
           if (info.command.startsWith('cat -- ')) {
             const remote = unquote(info.command.slice(7));
             if (failReads.has(remote)) throw new Error('Injected fixture read failure');

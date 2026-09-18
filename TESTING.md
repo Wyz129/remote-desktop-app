@@ -1,20 +1,21 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-18。对象为 `remote-desktop-app` 1.0.0，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-18。对象为 `remote-desktop-app` 1.0.1，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
 
 | 检查 | 已观察到的结果 | 覆盖边界 |
 | --- | --- | --- |
 | `npm run check` | 通过 | 主进程、preload、SSH/文件服务、独立渲染器语法 |
-| `npm run test:backend` | 49/49 通过（SSH 29 + 文件/配置服务 20） | ssh2 客户端与本机隔离 ssh2.Server 的 TCP 回环 SSH/SFTP；部分纯名称与恶意元数据测试使用注入替身 |
-| `npm run test:ui` | 7/7 通过 | 真实 HTML/CSS/JS/xterm，Chrome 无头运行，Electron/SSH 边界为注入替身 |
+| `npm run test:backend` | 62/62 通过（SSH 29 + 文件/配置服务 25 + 关闭保护 8） | ssh2 客户端与本机隔离 ssh2.Server 的 TCP 回环 SSH/SFTP；部分纯名称与恶意元数据测试使用注入替身 |
+| `npm run test:ui` | 12/12 通过 | 真实 HTML/CSS/JS/xterm，Chrome 无头运行，Electron/SSH 边界为注入替身 |
+| `npm run test:vim` | 7/7 通过 | 本机 Git 自带真实 Vim 9.1，独立临时文件；实际保存、丢弃、交换文件清理、只读和未命名失败，非远程 SSH Vim |
 | `npm run test:electron` | 1/1 集成场景通过 | 真实 Electron 44.4.2 主进程/preload/渲染器 + 本机 TCP 回环 SSH 服务端 |
-| `npm run package` 与打包后 EXE 测试 | 打包成功；EXE 集成场景 1/1 通过 | Windows x64 展开目录；包内 12 个核心文件与源码字节一致 |
+| `npm run package` 与打包后 EXE 测试 | 打包成功；EXE 集成场景 1/1 通过 | Windows x64 展开目录；包内 13 个核心文件与源码字节一致 |
 | `npm audit` | 0 vulnerabilities | 全部已安装生产/开发依赖，执行日期 2026-09-18 |
 | 用户真实远程服务器 | 未执行 | 本轮未提供实机凭据，未操作现有 VS Code/SSH 窗口 |
 
-UI 结果保存在 `artifacts/standalone-ui-results.json`，已检查 `standalone-connect.png`、`standalone-desktop.png`、`standalone-image.png`。这些截图来自替身 SSH API 的无头 UI，不是用户服务器截图。真实 Electron 和打包 EXE 的结果分别为 `artifacts/electron-results.json`、`artifacts/packaged-electron-results.json`。最终交付、修复及哈希见 [交付报告](artifacts/standalone-100-20260918.md)；早期后端交接报告的 28 项结果已经被本轮最终结果取代。
+UI 结果保存在 `artifacts/standalone-ui-results.json`，已检查 `standalone-connect.png`、`standalone-desktop.png`、`standalone-image.png`。这些截图来自替身 SSH API 的无头 UI，不是用户服务器截图。真实 Electron 和打包 EXE 的结果分别为 `artifacts/electron-results.json`、`artifacts/packaged-electron-results.json`。最终交付、修复及哈希见 [交付报告](artifacts/standalone-101-20260918.md)；早期后端交接报告的 28 项结果已经被本轮最终结果取代。
 
 ## 复现命令
 
@@ -27,7 +28,7 @@ npm.cmd run test:ui
 npm.cmd run test:electron
 ```
 
-也可运行 `npm.cmd test`，按 check → backend → ui → electron 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。
+也可运行 `npm.cmd test`，按 check → backend → vim → ui → electron 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。本次七项均实际执行，无跳过。
 
 后端与 Electron 测试使用系统临时目录及隔离的用户数据，不需要管理员权限、用户服务器密码或远程安装软件。Electron 通过 `--smoke-test` 隐藏测试窗口并配置独立 `--user-data-dir`，不覆盖用户日常应用设置。
 
@@ -35,7 +36,7 @@ npm.cmd run test:electron
 
 ```powershell
 npm.cmd run package
-$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron\win-unpacked\Remote Desktop.exe').Path
+$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.0.1\win-unpacked\Remote Desktop.exe').Path
 npm.cmd run test:electron
 Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 ```
@@ -53,13 +54,17 @@ Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 - 图片真实远程字节与格式/大小限制、配置优先级和未知字段保留。
 - Windows 名称清洗、目录项路径注入和递归符号链接限制；相关不易由标准 SFTP 夹具自然产生的元数据通过明确的注入测试覆盖。
 
-`test/desktop-service.test.cjs` 的 20 项覆盖 SFTP 创建、重命名、递归复制/移动、冲突、删除取消/确认、符号链接及断链、路径及链接目标边界、四级配置优先级、原子替换、外部修改保留、配置损坏拒绝、串行保存、稳定固定程序 ID 与重连恢复、服务器信息、真实 SSH PTY 数据/尺寸/关闭、读取后立即断连。`lib/sftp-stream.cjs` 等待远程 CLOSE 确认后才完成读取，修复了 EOF 后立刻断连导致异步未处理错误的问题。
+`test/desktop-service.test.cjs` 的 25 项覆盖 SFTP 创建、重命名、递归复制/移动、冲突、删除取消/确认、符号链接及断链、路径及链接目标边界、四级配置优先级、原子替换、外部修改保留、配置损坏拒绝、串行保存、稳定固定程序 ID 与重连恢复、服务器信息、真实 SSH PTY 数据/尺寸/关闭、读取后立即断连。`lib/sftp-stream.cjs` 等待远程 CLOSE 确认后才完成读取，修复了 EOF 后立刻断连导致异步未处理错误的问题。
 
 服务端夹具可精确制造异常。其 POSIX rename 能力通过替换 SFTP VERSION 协商包公告，后续 EXTENDED 请求真实跨 SSH 传输；符号链接映射到临时树，PTY 使用受控回显，不执行任意系统命令。不能由此声称已验证外部 OpenSSH 的所有实现差异、网络设备、PAM/MFA 或真实 Linux TUI 行为。
 
+新增系统信息测试覆盖固定命令、真实 home、缺命令降级、32 KiB 输出上限、格式校验和超时中止。`test/terminal-close.test.cjs` 覆盖保存/丢弃/取消、E325 启动保护、保存失败保留、异常退出、重复点击合并，以及 Shell 的保守关闭提示。
+
+`test/real-vim.test.cjs` 使用真实 Vim 的标准输入输出与独立文件，不连接 SSH。验证 Insert/Visual/Command-line 模式的保存退出、丢弃后原文件保持、正常退出后 swap 删除、只读和未命名缓冲区失败后仍可编辑，以及生产启动钩子输出的 marker 字节。另曾在独立 PTY 验证 `VimEnter` 向 `/dev/tty` 写入标记；这些结果不等同用户 Ubuntu 实机验收。
+
 ## 无头 UI 验证内容
 
-`test/standalone-ui.test.cjs` 载入真正 `app/index.html`、`desktop.js`、`desktop.css` 和 vendored 库，但 `window.remoteDesktop` 为替身。当前七个场景覆盖：
+`test/standalone-ui.test.cjs` 载入真正 `app/index.html`、`desktop.js`、`desktop.css` 和 vendored 库，但 `window.remoteDesktop` 为替身。当前十二个场景覆盖：
 
 1. 连接失败时桌面为空，密码字段清空；连接成功显示真实协议提供的条目；旧 VS Code 快捷方式跳过；断连关闭窗口并拒绝迟到目录回复。
 2. 目录地址导航、后退、窗口拖动、八向缩放入口、最大化/还原、最小化/恢复、多窗口关闭与任务栏状态。
@@ -68,6 +73,11 @@ Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 5. 文件/目录右键下载、任务 ID、SFTP 进度、取消和最终完成状态。
 6. 私钥选择只提交 privateKeyPath、禁止 renderer fetch 读取本地文件；应用阈值保存、系统下载目录展示、全屏快捷键。
 7. 缺失桌面明确显示，用户点击确认前不发送 createDesktop。
+8. 终端取消、等待保存和保存失败时窗口/xterm 保留，确认后清理。
+9. 桌面刷新失败、目录缺失或根目录变化时保留正在运行的编辑器。
+10. 默认 Home/设置入口在无固定程序和断连时仍存在，Home 恢复已有窗口。
+11. 没有 Desktop 时仍能浏览真实 Home，不创建或伪造桌面。
+12. 系统页读取、刷新失败、断连清空、迟到回复丢弃及文本注入防护。
 
 UI 替身测试只证明渲染器行为与协议输出，不证明 SSH 后端或系统全屏已经实际执行。图片指针坐标因 Chromium 鼠标整数坐标舍入使用小于一个源图像素的容差。
 
@@ -81,6 +91,7 @@ UI 替身测试只证明渲染器行为与协议输出，不证明 SSH 后端或
 - 固定 Shell/Vim、取消固定、退出全屏、断开清空、重连后配置持久化。
 - Ctrl+Alt+T 通过真实 IPC 启动 SSH PTY；中文输入/输出、尺寸调整、关闭，以及普通文件 Vim 的真实 exec 请求参数。Vim 的服务端为受控回显，不计作服务器 Vim 编辑保存验收。
 - 本地 settings.json 没有密码、私钥或口令字段，renderer 没有脚本错误。
+- Home 的真实主目录和系统信息的实际 IPC；Vim 关闭的保存/取消/丢弃/失败保留，以及断开、重连、原生窗口红叉取消和最终正常退出。原生对话框响应仅在隔离测试主进程中用脚本选择并检查文案；不自动操作用户窗口。
 
 测试开始时预置夹具已知主机指纹，以免自动化点击信任用户服务器。首次原生信任对话框的完整人工体验、系统菜单视觉和操作系统快捷键冲突不由本项覆盖。进程断言通过不等于用户实机远程验收。若设置 `REMOTE_DESKTOP_TEST_EXE`，同一测试改为启动打包目录中的 EXE。
 

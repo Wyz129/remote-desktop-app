@@ -12,11 +12,15 @@
   <header class="toolbar">
     <div class="brand"><strong id="accountName">未连接 SSH</strong></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
-    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="下载任务" title="下载任务"></button><button id="desktopSettings" class="toolbar-icon" aria-label="桌面设置" title="桌面设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
+    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="下载任务" title="下载任务"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
       <button id="newWindow" class="dock-action" title="新建资源管理器窗口" aria-label="新建资源管理器窗口">＋</button>
+      <div id="builtinApps" class="builtin-apps" aria-label="系统快捷方式">
+        <button id="homeShortcut" class="pinned-app" title="Home · 远程主目录" aria-label="Home · 远程主目录"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">Home</span></button>
+        <button id="settingsShortcut" class="pinned-app" title="设置 · 控制面板" aria-label="设置 · 控制面板"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">设置</span></button>
+      </div>
       <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
       <div id="windowTabs" class="window-tabs"></div>
     </aside>
@@ -25,8 +29,13 @@
       <div id="icons" class="icons" aria-label="桌面文件"></div>
       <div id="windows"></div>
       <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+        <header class="settings-heading"><h2 id="settingsTitle">设置 · 控制面板</h2><button type="button" id="closeSettings" aria-label="关闭设置" title="关闭">×</button></header>
+        <nav class="settings-tabs" role="tablist" aria-label="控制面板分类">
+          <button type="button" id="desktopSettingsTab" role="tab" aria-selected="true" aria-controls="desktopSettingsPanel" data-settings-tab="desktop">虚拟桌面与应用</button>
+          <button type="button" id="systemSettingsTab" role="tab" aria-selected="false" aria-controls="systemSettingsPanel" data-settings-tab="system" tabindex="-1">远程系统</button>
+        </nav>
+        <section id="desktopSettingsPanel" role="tabpanel" aria-labelledby="desktopSettingsTab">
         <form id="settingsForm">
-          <header class="settings-heading"><h2 id="settingsTitle">桌面设置</h2><button type="button" id="closeSettings" aria-label="关闭桌面设置" title="关闭">×</button></header>
           <div class="settings-fields">
             <h3 class="settings-section-title">桌面外观</h3>
             <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
@@ -44,6 +53,27 @@
 <p class="settings-description" id="migrationNotice">原 VS Code 命令快捷方式会被跳过；文件符号链接和固定终端继续可用。</p>
 <p id="extensionSettingsStatus" role="status" aria-live="polite"></p><p id="extensionSettingsError" role="alert"></p></div>
 <footer class="settings-footer"><button type="button" id="reloadExtensionSettings">重新读取</button><button type="submit" id="saveExtensionSettings" class="primary">保存应用设置</button></footer></form>
+        </section>
+        <section id="systemSettingsPanel" class="system-settings-panel" role="tabpanel" aria-labelledby="systemSettingsTab" hidden>
+          <div class="system-actions"><button type="button" id="refreshSystemInfo">刷新系统信息</button><button type="button" id="settingsConnection">SSH 连接管理</button></div>
+          <p id="systemInfoStatus" class="settings-description" role="status" aria-live="polite">连接 SSH 后查看远程系统信息。</p>
+          <p id="systemInfoError" role="alert"></p>
+          <dl id="systemInfoFields" class="system-info" hidden>
+            <dt>用户 / 主机</dt><dd><span data-system-info="username"></span><span aria-hidden="true"> @ </span><span data-system-info="hostname"></span></dd>
+            <dt>主目录</dt><dd data-system-info="home"></dd>
+            <dt>操作系统</dt><dd data-system-info="os"></dd>
+            <dt>内核 / 架构</dt><dd><span data-system-info="kernel"></span><span aria-hidden="true"> · </span><span data-system-info="architecture"></span></dd>
+            <dt>CPU</dt><dd data-system-info="cpu"></dd>
+            <dt>内存</dt><dd data-system-info="memory"></dd>
+            <dt>主目录磁盘</dt><dd data-system-info="disk"></dd>
+            <dt>日期与时间</dt><dd data-system-info="dateTime"></dd>
+            <dt>时区</dt><dd data-system-info="timeZone"></dd>
+            <dt>语言与区域</dt><dd data-system-info="locale"></dd>
+            <dt>登录 Shell</dt><dd data-system-info="shell"></dd>
+            <dt>网络地址</dt><dd data-system-info="network"></dd>
+          </dl>
+          <p class="settings-description system-settings-note">这里通过 SSH 读取 Ubuntu / Linux 的常用系统信息。时间、语言、网络等系统设置的修改需要相应权限，请在远程终端或服务器管理工具中操作。Ubuntu 桌面会话的显示、声音等图形设置不会通过本应用的 SSH 连接生效。</p>
+        </section>
       </dialog>
       <footer class="statusbar"><span class="operation-display" title="文件操作通过 SSH 完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
     </main>

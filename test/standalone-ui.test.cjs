@@ -41,7 +41,8 @@ async function scenario(name, fn) {
     window.messages = []; window.calls = []; window.downloadPending = new Map();
     window.fetch = (...args) => { throw new Error('Renderer must not fetch local files: ' + String(args[0])); };
     window.settings = { downloadThreshold: 50 * 1024 * 1024, scriptEditor: 'vim', downloadsPath: 'D:\\Downloads' };
-    window.directories = { [root]: [entry('projects', 'folder'), entry('results', 'folder'), entry('notes.txt'), entry('picture.png'), entry('archive.zip')], [`${root}/projects`]: [entry('nested','folder',`${root}/projects`), entry('source.txt','file',`${root}/projects`)], [`${root}/projects/nested`]: [], [`${root}/results`]: [] };
+    window.directories = { '/home/tester': [entry('Documents', 'folder', '/home/tester'), entry('profile.txt', 'file', '/home/tester')], [root]: [entry('projects', 'folder'), entry('results', 'folder'), entry('notes.txt'), entry('picture.png'), entry('archive.zip')], [`${root}/projects`]: [entry('nested','folder',`${root}/projects`), entry('source.txt','file',`${root}/projects`)], [`${root}/projects/nested`]: [], [`${root}/results`]: [] };
+    window.systemInfo = { username:'tester',hostname:'remote-server',home:'/home/tester',os:'Ubuntu 24.04 LTS',kernel:'Linux 6.8',architecture:'x86_64',cpu:'4 CPUs',memory:'16 GiB',disk:'40% used',dateTime:'2026-09-18 13:00:00 CST',timeZone:'Asia/Shanghai',locale:'LANG=zh_CN.UTF-8',shell:'/bin/bash',network:'192.0.2.12' };
     window.connectedState = () => window.receive({ type:'remoteState', status:'ready', rootPath:root, homePath:'/home/tester', entries:window.directories[root], config:{viewMode:'details', shortcuts:[{command:'workbench.action.showCommands',label:'Legacy'}]} });
     window.remoteDesktop = {
       onMessage(callback) { window.receive = callback; },
@@ -63,8 +64,15 @@ async function scenario(name, fn) {
       },
       async disconnect() { window.receive({type:'remoteState',status:'disconnected'}); },
       async getSettings() { return window.settings; },
+      async getSystemInfo() { window.calls.push({type:'getSystemInfo'}); if (window.failSystemInfo) throw new Error('SSH connection closed'); if (window.deferSystemInfo) return new Promise(resolve=>{window.resolveSystemInfo=resolve;}); return {...window.systemInfo}; },
       async saveSettings(patch) { Object.assign(window.settings,patch); return window.settings; },
       async choosePrivateKey() { return 'D:\\keys\\id_ed25519'; },
+      async closeTerminal(id) {
+        window.messages.push({type:'terminalClose',id}); window.calls.push({type:'closeTerminal',id});
+        if (window.failTerminalClose) throw new Error('保存失败，请检查文件权限');
+        if (window.deferTerminalClose) return new Promise(resolve=>{window.resolveTerminalClose=resolve;});
+        return window.cancelTerminalClose !== true;
+      },
       async image(file) { window.calls.push({type:'image',path:file}); const canvas = document.createElement('canvas'); canvas.width = 1600; canvas.height = 1200; const context = canvas.getContext('2d'); context.fillStyle = '#70b294'; context.fillRect(0,0,1600,1200); context.fillStyle = '#fff'; context.beginPath(); context.arc(400,400,180,0,Math.PI*2); context.fill(); return {name:'picture.png',mime:'image/png',data:canvas.toDataURL('image/png').split(',')[1]}; },
       download(file,id) { window.calls.push({type:'download',path:file,id}); return new Promise((resolve,reject) => window.downloadPending.set(id,{resolve,reject})); },
       async cancelDownload(id) { window.calls.push({type:'cancelDownload',id}); const error=new Error('操作已取消');error.code='ABORT_ERR';window.downloadPending.get(id)?.reject(error); },
@@ -197,4 +205,112 @@ test('missing_desktop_requires_explicit_creation', () => scenario('missing-deskt
   await page.locator('#missingDesktopDialog[open]').waitFor();
   assert.equal(await page.locator('#icons .icon').count(),0);assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop')),false);
   await page.locator('#createDesktop').click();assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop')));
+}));
+
+test('terminal_close_cancel_pending_and_save_failure_preserve_editor', () => scenario('terminal-save-close', async page => {
+  await connect(page); await icon(page,'notes.txt').dblclick();
+  const win=page.locator('.terminal-window'); await win.waitFor();
+  const id=await win.getAttribute('data-window-id');
+  const close=win.locator('[data-window-action="close"]');
+  await page.evaluate(()=>{window.cancelTerminalClose=true;}); await close.click();
+  await page.waitForFunction(()=>window.calls.some(c=>c.type==='closeTerminal'));
+  assert.equal(await win.isVisible(),true); assert.equal(await close.isEnabled(),true);
+  await page.evaluate(()=>{window.cancelTerminalClose=false;window.failTerminalClose=true;}); await close.click();
+  await page.waitForFunction(()=>document.getElementById('notice').textContent.includes('保存失败'));
+  assert.equal(await win.isVisible(),true); assert.equal(await close.isEnabled(),true);
+  await page.evaluate(()=>{window.failTerminalClose=false;window.deferTerminalClose=true;}); await close.click();
+  await page.waitForFunction(()=>typeof window.resolveTerminalClose==='function');
+  assert.equal(await win.isVisible(),true); assert.equal(await close.isDisabled(),true);
+  await page.evaluate(id=>window.receive({type:'terminalData',id,data:'still editing'}),id);
+  assert.equal(await win.locator('.xterm').count(),1);
+  await page.evaluate(()=>window.resolveTerminalClose(false));
+  await page.waitForFunction(()=>!document.querySelector('.terminal-window [data-window-action="close"]').disabled);
+  assert.equal(await win.isVisible(),true);
+  await page.evaluate(()=>{window.resolveTerminalClose=null;}); await close.click();
+  await page.waitForFunction(()=>typeof window.resolveTerminalClose==='function');
+  await page.evaluate(id=>{window.receive({type:'terminalClosed',id});window.resolveTerminalClose(true);},id);
+  await win.waitFor({state:'detached'});
+  assert.equal(await page.locator('#windowTabs .window-tab').count(),0);
+}));
+
+test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => scenario('editor-refresh', async page => {
+  await connect(page); await icon(page,'notes.txt').dblclick();
+  const id = await page.locator('.terminal-window').getAttribute('data-window-id');
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'error',message:'temporary read failure'}));
+  assert.equal(await page.locator('.terminal-window').getAttribute('data-window-id'),id);
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'missing',homePath:'/home/tester'}));
+  await page.locator('#skipDesktop').click();
+  assert.equal(await page.locator('.terminal-window').getAttribute('data-window-id'),id);
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'ready',rootPath:'/home/tester/desktop',homePath:'/home/tester',entries:[],config:{}}));
+  assert.equal(await page.locator('.terminal-window').getAttribute('data-window-id'),id);
+  assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='closeTerminal')),false);
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
+  assert.equal(await page.locator('.terminal-window').count(),0);
+}));
+
+test('builtin_home_and_settings_remain_available_without_connection_or_pins', () => scenario('builtin-shortcuts', async page => {
+  await page.locator('#closeConnection').click();
+  assert.equal(await page.locator('#builtinApps button').count(),2);
+  await page.locator('#settingsShortcut').click();
+  await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
+  assert.equal(await page.locator('#applySettings').isDisabled(),true);
+  await page.locator('#settingsDownloadThreshold').fill('70'); await page.locator('#saveExtensionSettings').click();
+  await page.waitForFunction(()=>window.settings.downloadThreshold===70*1024*1024);
+  await page.locator('#systemSettingsTab').click();
+  assert.match(await page.locator('#systemInfoStatus').textContent(),/连接 SSH/);
+  assert.equal(await page.locator('#refreshSystemInfo').isDisabled(),true);
+  assert.equal(await page.evaluate(()=>window.calls.some(c=>c.type==='getSystemInfo')),false);
+  await page.locator('#closeSettings').click();
+  await page.locator('#homeShortcut').click(); await page.locator('#connectionDialog[open]').waitFor();
+  await connect(page); await page.locator('#homeShortcut').click();
+  const win=page.locator('.window'); await win.getByText('profile.txt',{exact:true}).waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(),'/home/tester');
+  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='readDirectory'&&m.path==='/home/tester')));
+  await win.locator('[data-window-action="minimize"]').click(); await page.locator('#homeShortcut').click();
+  assert.equal(await page.locator('.window').count(),1); assert.equal(await win.isVisible(),true);
+  await page.evaluate(()=>window.receive({type:'configUpdated',config:{pinnedApps:[]}}));
+  assert.equal(await page.locator('#builtinApps button').count(),2);
+  await page.locator('#homeShortcut').click({button:'right'});
+  assert.equal(await page.locator('#appContext').isVisible(),false);
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
+  assert.equal(await page.locator('#builtinApps button').count(),2);
+  await page.locator('#settingsShortcut').click(); await page.locator('#settingsDialog[open]').waitFor();
+}));
+
+test('home_without_desktop_browses_real_home_without_creating_or_faking_desktop', () => scenario('home-without-desktop', async page => {
+  await page.evaluate(()=>{window.missingDesktop=true;}); await connect(page);
+  await page.locator('#skipDesktop').click(); await page.locator('#homeShortcut').click();
+  const win=page.locator('.window'); await win.getByText('profile.txt',{exact:true}).waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(),'/home/tester');
+  assert.equal(await page.locator('#icons .icon').count(),0);
+  await win.locator('[data-window-action="refresh"]').click();
+  await win.getByText('profile.txt',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop'||m.type==='saveDesktopConfig'||m.type==='refreshRemote')),false);
+  await page.locator('#settingsShortcut').click();
+  assert.equal(await page.locator('#applySettings').isDisabled(),true);
+  await page.locator('#systemSettingsTab').click();
+  await page.locator('[data-system-info="os"]').getByText('Ubuntu 24.04 LTS',{exact:true}).waitFor();
+}));
+
+test('control_panel_system_info_refresh_failure_and_disconnect_rejects_stale_data', () => scenario('system-control-panel', async page => {
+  await connect(page); await page.locator('#settingsShortcut').click(); await page.locator('#systemSettingsTab').click();
+  await page.locator('#systemInfoFields').waitFor();
+  assert.equal(await page.locator('[data-system-info="home"]').textContent(),'/home/tester');
+  assert.equal(await page.locator('[data-system-info="timeZone"]').textContent(),'Asia/Shanghai');
+  assert.match(await page.locator('.system-settings-note').textContent(),/图形设置不会/);
+  await page.screenshot({path:path.join(root,'artifacts','standalone-control-panel.png')});
+  await page.evaluate(()=>{window.systemInfo.network='<img src=x onerror=alert(1)>';});
+  await page.locator('#refreshSystemInfo').click();
+  await page.waitForFunction(()=>document.querySelector('[data-system-info="network"]').textContent.startsWith('<img'));
+  assert.equal(await page.locator('[data-system-info="network"] img').count(),0);
+  await page.evaluate(()=>{window.failSystemInfo=true;}); await page.locator('#refreshSystemInfo').click();
+  await page.waitForFunction(()=>document.getElementById('systemInfoError').textContent.includes('SSH connection closed'));
+  assert.equal(await page.locator('#systemInfoFields').isVisible(),false);
+  await page.evaluate(()=>{window.failSystemInfo=false;window.deferSystemInfo=true;}); await page.locator('#refreshSystemInfo').click();
+  await page.waitForFunction(()=>typeof window.resolveSystemInfo==='function');
+  await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveSystemInfo({...window.systemInfo,hostname:'stale-host'});});
+  await page.waitForFunction(()=>document.getElementById('refreshSystemInfo').disabled);
+  assert.equal(await page.locator('#systemInfoFields').isVisible(),false);
+  assert.equal(await page.locator('[data-system-info="hostname"]').textContent(),'');
+  await page.locator('#settingsConnection').click(); await page.locator('#connectionDialog[open]').waitFor();
 }));

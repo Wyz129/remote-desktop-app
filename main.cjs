@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
 const { StringDecoder } = require('node:string_decoder');
 const { SshBackend, DEFAULT_THRESHOLD } = require('./lib/ssh-backend.cjs');
+const { TerminalGuard } = require('./lib/terminal-guard.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
@@ -14,6 +15,10 @@ let settingsQueue = Promise.resolve();
 const selectedKeys = new Set();
 const completedDownloads = new Set();
 const terminalStarts = new Map();
+let sessionTransition = false, allowWindowClose = false, closingApplication = false;
+const terminalGuard = new TerminalGuard({ getBackend: () => backend,
+  ask: options => dialog.showMessageBox(windowRef, options), report: options => dialog.showMessageBox(windowRef, options),
+  closed: id => { terminalStarts.delete(id); post({ type: 'terminalClosed', id }); } });
 const entryPath = path.join(__dirname, 'app', 'index.html');
 const entryUrl = pathToFileURL(entryPath).href;
 function requireSender(event) {
@@ -51,7 +56,17 @@ function createWindow() {
     else if (input.key === 'Escape' && windowRef.isFullScreen()) windowRef.setFullScreen(false);
   });
   windowRef.loadFile(entryPath);
+  windowRef.on('close', event => { if (!allowWindowClose) { event.preventDefault(); void quitSafely(); } });
   windowRef.on('closed', () => { windowRef = null; backend?.disconnect(); });
+}
+async function quitSafely() {
+  if (closingApplication || sessionTransition) return;
+  closingApplication = true; sessionTransition = true;
+  try {
+    if (!await terminalGuard.all()) return;
+    terminalStarts.clear(); await backend?.disconnect(); allowWindowClose = true; app.quit();
+  } catch (error) { post({ type: 'desktopError', error: `关闭应用未完成：${error.message}` });
+  } finally { closingApplication = false; sessionTransition = false; }
 }
 async function inspect(create = false) {
   requireBackend(); const remote = await desktopService.inspect(create); post(remote);
@@ -89,6 +104,7 @@ async function handleDesktopMessage(message) {
       post({ type: 'operationCommand', command: `# SFTP ${message.operation}`, status: result.cancelled ? 'cancelled' : 'success' });
     } catch (error) { post({ type: 'operationResult', requestId: message.requestId, success: false, error: error.message }); }
   } else if (type === 'openTerminal') {
+    if (sessionTransition) throw new Error('正在关闭或切换连接，请稍后打开终端。');
     const token = {}, terminalBackend = backend, service = desktopService;
     if (terminalStarts.has(message.id)) throw new Error('终端 ID 已存在。');
     terminalStarts.set(message.id, token);
@@ -97,13 +113,13 @@ async function handleDesktopMessage(message) {
       if (!['shell', 'vim', 'htop'].includes(program)) throw new Error('不支持的终端程序。');
       const filePath = message.filePath ? await service.checked(message.filePath) : undefined;
       if (filePath && !(await terminalBackend.stat(filePath)).isFile()) throw new Error('Vim 只能打开普通文件。');
-      if (terminalStarts.get(message.id) !== token || backend !== terminalBackend || !terminalBackend.connected) return;
+      if (sessionTransition || terminalStarts.get(message.id) !== token || backend !== terminalBackend || !terminalBackend.connected) return;
       const decoder = new StringDecoder('utf8');
       backend.openShell(message.id, cwd, data => post({ type: 'terminalData', id: message.id, data: decoder.write(data) }), error => { terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: 0 }); }, { program, filePath, cols: message.cols, rows: message.rows, onReady: () => post({ type: 'terminalOpened', id: message.id }) });
     } catch (error) { if (terminalStarts.get(message.id) === token) { terminalStarts.delete(message.id); post({ type: 'terminalError', id: message.id, error: error.message }); } }
   } else if (type === 'terminalInput') backend.writeShell(message.id, message.data);
   else if (type === 'terminalResize') backend.resizeShell(message.id, message.cols, message.rows);
-  else if (type === 'terminalClose') { terminalStarts.delete(message.id); backend.closeShell(message.id); }
+  else if (type === 'terminalClose') { await terminalGuard.request(message.id); }
   else throw new Error('该功能未在独立应用中提供。');
 }
 function registerIpc() {
@@ -116,14 +132,17 @@ function registerIpc() {
     return saveSettings({ downloadThreshold: threshold, scriptEditor: 'vim' });
   });
   handle('app:quit-fullscreen', () => { windowRef.setFullScreen(false); return true; });
+  handle('terminal:close', id => terminalGuard.request(id));
   handle('app:choose-private-key', async () => {
     const result = await dialog.showOpenDialog(windowRef, { properties: ['openFile'], title: '选择 SSH 私钥' });
     if (result.canceled) return null; const selected = result.filePaths[0]; selectedKeys.add(selected); return selected;
   });
   handle('ssh:connect', async input => {
-    if (connecting) throw new Error('已有连接正在建立。'); connecting = true;
+    if (connecting || sessionTransition) throw new Error('已有连接正在建立或关闭。'); connecting = true; sessionTransition = true;
     try {
+      if (!await terminalGuard.all()) return { cancelled: true };
       terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
+      post({ type: 'remoteState', status: 'disconnected', message: '正在建立新的 SSH 连接。' });
       const host = String(input.host || '').trim(), port = Number(input.port) || 22, username = String(input.username || '').trim();
       const hostKey = `${host.toLowerCase()}:${port}`, known = settings.knownHosts[hostKey];
       if (known && input.hostKeyFingerprint && input.hostKeyFingerprint.replace(/=+$/, '') !== known) throw new Error('输入指纹与本机保存的指纹不同。连接已拒绝。');
@@ -146,11 +165,19 @@ function registerIpc() {
       await saveSettings({ host, port, username, hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...settings.knownHosts, [hostKey]: result.hostFingerprint } });
       try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', message: error.message }); }
       await serverInfo(); return result;
-    } finally { connecting = false; }
+    } finally { connecting = false; sessionTransition = false; }
   });
-  handle('ssh:disconnect', async () => { terminalStarts.clear(); await backend?.disconnect(); desktopService = null; post({ type: 'remoteState', status: 'disconnected', message: 'SSH 已断开。' }); return true; });
+  handle('ssh:disconnect', async () => {
+    if (sessionTransition) return false; sessionTransition = true;
+    try {
+      if (!await terminalGuard.all()) return false;
+      terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
+      post({ type: 'remoteState', status: 'disconnected', message: 'SSH 已断开。' }); return true;
+    } finally { sessionTransition = false; }
+  });
   handle('ssh:discover-desktop', create => inspect(Boolean(create)));
   handle('ssh:list', remotePath => { requireBackend(); return desktopService.entries(remotePath); });
+  handle('ssh:system-info', () => { requireBackend(); return desktopService.systemInfo(); });
   handle('ssh:image', remotePath => requireBackend().readImage(remotePath));
   handle('ssh:download', async (remotePath, id) => {
     const sourceBackend = requireBackend();
@@ -163,9 +190,7 @@ function registerIpc() {
 }
 app.whenReady().then(async () => { await loadSettings(); registerIpc(); createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-let quitting = false;
 app.on('before-quit', event => {
-  if (quitting || !backend) return;
-  event.preventDefault(); quitting = true;
-  backend.disconnect().finally(() => app.quit());
+  if (allowWindowClose) return;
+  event.preventDefault(); void quitSafely();
 });

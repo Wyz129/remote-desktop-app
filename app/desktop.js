@@ -20,6 +20,7 @@ const state = {
 let rootPath = EMPTY_ROOT;
 let homePath = EMPTY_ROOT;
 let remoteMode = false;
+let desktopAvailable = false;
 let initialized = false;
 let directories = Object.create(null);
 const items = new Map();
@@ -55,6 +56,8 @@ let extensionSettingsHasWorkspace = false;
 let extensionSettingsReopenRequired = false;
 let fullscreenTimer;
 let dragPayload = null;
+let systemInfoRequest = 0;
+let systemInfoLoading = false;
 
 function isCommandShortcut(value) { return value && typeof value.command === 'string' && value.command.trim(); }
 function toolIcon(name) {
@@ -163,7 +166,7 @@ function rebuildItems() {
 }
 function persistConfig(patch) {
   save();
-  if (!remoteMode) return;
+  if (!desktopAvailable) return;
   Object.assign(pendingConfig, patch);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -200,7 +203,7 @@ function applyConfig(config, initial = false) {
 }
 function visibleEntry(item) { return state.showHiddenFiles || item.kind === 'command' || !item.name.startsWith('.'); }
 function settingsBusy(busy) {
-  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy || Boolean(extensionSettingsRequest);
+  for (const control of $('settingsForm').querySelectorAll('button, select, input')) control.disabled = busy || Boolean(extensionSettingsRequest) || (control.id !== 'cancelSettings' && !desktopAvailable);
   $('applySettings').textContent = busy ? '正在保存…' : '应用';
   extensionSettingsBusy();
 }
@@ -216,9 +219,58 @@ function openSettings() {
   $('settingsWallpaper').value = state.wallpaper;
   $('settingsHidden').checked = state.showHiddenFiles;
   $('settingsError').textContent = '';
-  $('settingsLocation').textContent = remoteMode ? '应用后保存到服务器桌面配置，并更新已打开的资源管理器。' : '连接 SSH 后可保存桌面外观。';
-  settingsBusy(false); $('settingsDialog').showModal();
+  $('settingsLocation').textContent = desktopAvailable ? '应用后保存到服务器桌面配置，并更新已打开的资源管理器。' : '连接 SSH 并打开远程桌面后可保存桌面外观；应用设置始终可用。';
+  settingsBusy(false); setSettingsTab('desktop'); $('settingsDialog').showModal();
   loadExtensionSettings();
+}
+function setSettingsTab(name) {
+  for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')) {
+    const selected = button.dataset.settingsTab === name;
+    button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+    $(button.getAttribute('aria-controls')).hidden = !selected;
+  }
+  if (name === 'system') loadSystemInfo();
+}
+function resetSystemInfo() {
+  systemInfoRequest++; systemInfoLoading = false;
+  $('systemInfoFields').hidden = true;
+  for (const field of $('systemInfoFields').querySelectorAll('[data-system-info]')) field.textContent = '';
+  $('systemInfoError').textContent = '';
+  $('systemInfoStatus').textContent = '连接 SSH 后查看远程系统信息。';
+  $('refreshSystemInfo').disabled = !remoteMode;
+}
+async function loadSystemInfo() {
+  if (!remoteMode) { resetSystemInfo(); return; }
+  if (systemInfoLoading) return;
+  const request = ++systemInfoRequest;
+  systemInfoLoading = true; $('refreshSystemInfo').disabled = true;
+  $('systemInfoError').textContent = ''; $('systemInfoStatus').textContent = '正在读取远程系统信息…';
+  try {
+    const info = await api.getSystemInfo();
+    if (request !== systemInfoRequest || !remoteMode) return;
+    for (const field of $('systemInfoFields').querySelectorAll('[data-system-info]')) {
+      const value = info?.[field.dataset.systemInfo];
+      field.textContent = typeof value === 'string' && value.trim() ? value : '当前服务器未提供';
+    }
+    $('systemInfoFields').hidden = false;
+    $('systemInfoStatus').textContent = '远程系统信息（只读快照，点击刷新以更新）。';
+  } catch (error) {
+    if (request !== systemInfoRequest || !remoteMode) return;
+    $('systemInfoFields').hidden = true; $('systemInfoStatus').textContent = '系统信息读取失败，可重试。';
+    $('systemInfoError').textContent = error.message || String(error);
+  } finally {
+    if (request === systemInfoRequest) { systemInfoLoading = false; $('refreshSystemInfo').disabled = !remoteMode; }
+  }
+}
+function openHome() {
+  if (!remoteMode || !homePath) { notify('请先连接 SSH，再打开服务器主目录。'); if (!$('connectionDialog').open) $('connectionDialog').showModal(); return; }
+  const existing = state.windows.find(win => !win.kind && win.folder === homePath);
+  if (existing) { focusWindow(existing.id); return; }
+  openFolder(homePath);
+}
+function updateBuiltinShortcuts() {
+  $('homeShortcut').title = remoteMode && homePath ? `Home · ${homePath}` : 'Home · 连接 SSH 后打开远程主目录';
+  $('refreshSystemInfo').disabled = !remoteMode || systemInfoLoading;
 }
 function extensionSettingsBusy() {
   const busy = Boolean(extensionSettingsRequest || extensionSettingsRead || settingsRequest);
@@ -260,7 +312,7 @@ function applyDesktopSettings(config) {
 function submitSettings(event) {
   event.preventDefault(); if (settingsRequest || extensionSettingsRequest) return;
   const config = { viewMode: $('settingsViewMode').value, wallpaper: $('settingsWallpaper').value, showHiddenFiles: $('settingsHidden').checked };
-  if (!remoteMode) { $('settingsError').textContent = '请先连接 SSH 并打开远程桌面。'; return; }
+  if (!desktopAvailable) { $('settingsError').textContent = '请先连接 SSH 并打开远程桌面。'; return; }
   clearTimeout(saveTimer);
   const requestId = `settings-${nextRequest++}`;
   settingsRequest = { requestId, config, pendingPatch: pendingConfig };
@@ -388,7 +440,7 @@ function renderIcons() {
   if (editor?.scope === 'desktop') { editor.needsRefresh = true; return; }
   const scroll = $('icons').scrollTop;
   $('icons').replaceChildren();
-  const entries = [...(directories[rootPath] || []), ...state.shortcuts.map(commandItem)].filter(visibleEntry);
+  const entries = desktopAvailable ? [...(directories[rootPath] || []), ...state.shortcuts.map(commandItem)].filter(visibleEntry) : [];
   const occupied = new Set();
   entries.forEach((item, index) => {
     const element = makeDesktopIcon(item);
@@ -609,14 +661,14 @@ function openTerminal(path, program = 'shell', filePath) {
   host.postMessage({ type: 'openTerminal', id: win.id, path, program, ...(filePath ? { filePath } : {}), cols: terminal.cols, rows: terminal.rows });
   terminal.focus(); save();
 }
-function disposeTerminal(id, tellHost = true) {
+function disposeTerminal(id) {
   const record = terminals.get(id); if (!record) return;
   record.active = false; record.observer.disconnect(); record.terminal.dispose(); terminals.delete(id);
-  if (tellHost) host.postMessage({ type: 'terminalClose', id });
 }
 function handleTerminalMessage(message) {
   const win = getWindow(message.id), record = terminals.get(message.id), element = windowElements.get(message.id);
   if (!win || !record || !element) return;
+  if (message.type === 'terminalClosed') { windowAction('close-confirmed', win); return; }
   if (message.type === 'terminalOpened') {
     record.opened = true; element.querySelector('.terminal-status').textContent = `${PROGRAM_LABELS[win.program]} · 运行中`;
     fitTerminal(win);
@@ -831,8 +883,19 @@ function renderWindow(win) {
   }
   listing.scrollTop = scroll; element.hidden = win.minimized; syncSelection();
 }
-function windowAction(action, win) {
-  if (action === 'close') {
+async function windowAction(action, win) {
+  if (action === 'close' && win.kind === 'terminal') {
+    if (win.closing) return;
+    win.closing = true;
+    const element = windowElements.get(win.id), button = element?.querySelector('[data-window-action="close"]');
+    if (button) button.disabled = true;
+    try {
+      if (!await api.closeTerminal(win.id)) return;
+      if (!getWindow(win.id)) return;
+    } catch (error) { notify(error.message || '终端未关闭，请重试。'); return; }
+    finally { win.closing = false; if (button) button.disabled = false; }
+  }
+  if (action === 'close' || action === 'close-confirmed') {
     if (win.kind === 'terminal') disposeTerminal(win.id);
     if (win.kind === 'image') { images.get(win.id)?.observer?.disconnect(); images.delete(win.id); }
     if (editor?.scope === win.id) editor.cancel();
@@ -872,13 +935,14 @@ function requestDirectory(path, options = {}) {
 function refreshAll() {
   if (remoteMode) {
     const paths = [...new Set([rootPath, ...state.windows.filter(win => win.kind !== 'terminal').map(win => win.folder)])];
-    host.postMessage({ type: 'refreshRemote', paths, intent: 'refresh' }); notify('正在刷新…');
-    paths.filter(path => path !== rootPath).forEach(path => requestDirectory(path));
+    if (desktopAvailable) host.postMessage({ type: 'refreshRemote', paths, intent: 'refresh' });
+    notify('正在刷新…');
+    paths.filter(path => !desktopAvailable || path !== rootPath).forEach(path => requestDirectory(path));
   } else { renderIcons(); state.windows.forEach(renderWindow); notify('已刷新本地示例'); showOperationCommand(`ls -la -- ${shellQuote(rootPath)} # 本地示例`); }
 }
 function refreshDirectory(path) {
   if (remoteMode) {
-    if (path === rootPath) host.postMessage({ type: 'refreshRemote', paths: [rootPath], intent: 'refresh' });
+    if (desktopAvailable && path === rootPath) host.postMessage({ type: 'refreshRemote', paths: [rootPath], intent: 'refresh' });
     else requestDirectory(path, { intent: 'refresh' });
     notify(`正在刷新 ${path}…`);
   } else { renderIcons(); state.windows.forEach(renderWindow); notify('已刷新本地示例'); showOperationCommand(`ls -la -- ${shellQuote(path)} # 本地示例`); }
@@ -1045,7 +1109,7 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
     if (typeof message.command === 'string') showOperationCommand(message.command, message.status, typeof message.detail === 'string' ? message.detail : '');
     return;
   }
-  if (['terminalOpened', 'terminalData', 'terminalExit', 'terminalError'].includes(message.type)) { handleTerminalMessage(message); return; }
+  if (['terminalOpened', 'terminalData', 'terminalExit', 'terminalError', 'terminalClosed'].includes(message.type)) { handleTerminalMessage(message); return; }
   if (message.type === 'remoteState') {
     if (message.status === 'local') return;
     if (message.status === 'ready' && Array.isArray(message.entries)) {
@@ -1055,19 +1119,27 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
       if (initial) {
         clearTimeout(settingsTimer); settingsRequest = null; settingsBusy(false); $('settingsDialog').close();
         if (editor) editor.cancel();
-        for (const id of [...terminals.keys()]) disposeTerminal(id);
-        directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear(); state.windows = []; windowElements.clear(); $('windows').replaceChildren();
+        clearWindowViews(true);
+        directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear();
         state.activeWindow = null; selection = { scope: 'desktop', keys: new Set() }; state.clipboard = null;
       }
-      remoteMode = true; initialized = true; rootPath = path;
+      remoteMode = true; desktopAvailable = true; initialized = true; rootPath = path;
       homePath = typeof message.homePath === 'string' && message.homePath.startsWith('/') ? message.homePath : null;
+      updateBuiltinShortcuts();
       setDirectory(rootPath, message.entries); applyConfig(message.config, initial);
       connectionStatus = 'SSH · 已连接'; renderServerInfo(); $('desktopPath').textContent = rootPath;
       if (initial) restoreWindows();
       renderIcons(); state.windows.forEach(renderWindow); renderDock(); save(); notify(`已刷新 ${rootPath}`);
     } else if (['missing', 'error', 'disconnected'].includes(message.status)) {
-      clearRemoteDesktop();
-      if (message.status === 'missing') { homePath = message.homePath || message.home; $('missingDesktopText').textContent = '主目录：' + (homePath || '未知'); if (!$('missingDesktopDialog').open) $('missingDesktopDialog').showModal(); }
+      clearRemoteDesktop(message.status !== 'disconnected');
+      if (message.status === 'missing') {
+        const remoteHome = message.homePath || message.home;
+        homePath = typeof remoteHome === 'string' && remoteHome.startsWith('/') ? remoteHome : null;
+        if (homePath) { remoteMode = true; initialized = true; rootPath = homePath; rebuildItems(); }
+        updateBuiltinShortcuts();
+        $('missingDesktopText').textContent = '主目录：' + (homePath || '未知') + '。暂不创建时仍可通过任务栏 Home 浏览主目录。';
+        if (!$('missingDesktopDialog').open) $('missingDesktopDialog').showModal();
+      }
       connectionStatus = message.status === 'missing' ? 'SSH · 尚未创建桌面' : message.status === 'disconnected' ? 'SSH · 已断开' : 'SSH · 读取失败'; renderServerInfo();
       notify(message.message || (message.status === 'missing' ? '远程桌面尚未创建' : 'SSH 连接不可用，请重新连接。'));
     }
@@ -1162,6 +1234,22 @@ document.addEventListener('keydown', event => {
 });
 $('newWindow').addEventListener('click', () => openFolder(rootPath));
 $('desktopSettings').addEventListener('click', openSettings);
+$('homeShortcut').querySelector('.builtin-icon').append(toolIcon('House'));
+$('settingsShortcut').querySelector('.builtin-icon').append(toolIcon('Settings'));
+$('homeShortcut').addEventListener('click', openHome);
+$('settingsShortcut').addEventListener('click', openSettings);
+$('builtinApps').addEventListener('contextmenu', event => { event.preventDefault(); $('appContext').hidden = true; $('context').hidden = true; });
+for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')) {
+  button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab));
+  button.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? $('desktopSettingsTab') : event.key === 'End' ? $('systemSettingsTab') : button.id === 'desktopSettingsTab' ? $('systemSettingsTab') : $('desktopSettingsTab');
+    setSettingsTab(next.dataset.settingsTab); next.focus();
+  });
+}
+$('refreshSystemInfo').addEventListener('click', loadSystemInfo);
+$('settingsConnection').addEventListener('click', () => { closeSettings(); if (!$('settingsDialog').open && !$('connectionDialog').open) $('connectionDialog').showModal(); });
 $('settingsForm').addEventListener('submit', submitSettings);
 $('extensionSettingsForm').addEventListener('submit', submitExtensionSettings);
 $('reloadExtensionSettings').addEventListener('click', loadExtensionSettings);
@@ -1191,15 +1279,24 @@ setInterval(() => host.postMessage({ type: 'getServerInfo' }), 30000);
 const images = new Map();
 const downloadTasks = new Map();
 let connecting = false;
-function clearRemoteDesktop() {
+function clearWindowViews(preserveTerminals = false) {
+  if (!preserveTerminals) for (const id of [...terminals.keys()]) disposeTerminal(id);
+  for (const record of images.values()) record.observer?.disconnect(); images.clear();
+  for (const win of state.windows) {
+    if (preserveTerminals && win.kind === 'terminal') continue;
+    windowElements.get(win.id)?.remove(); windowElements.delete(win.id);
+  }
+  state.windows = preserveTerminals ? state.windows.filter(win => win.kind === 'terminal') : [];
+}
+function clearRemoteDesktop(preserveTerminals = false) {
   clearTimeout(saveTimer); clearTimeout(settingsTimer); pendingConfig = {}; settingsRequest = null;
   if (editor) editor.cancel();
-  for (const id of [...terminals.keys()]) disposeTerminal(id);
-  for (const record of images.values()) record.observer?.disconnect(); images.clear();
+  clearWindowViews(preserveTerminals);
   directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear(); pendingOperations.clear();
-  state.windows = []; state.shortcuts = []; state.pinnedApps = []; state.positions = {}; state.activeWindow = null; state.clipboard = null;
-  windowElements.clear(); $('windows').replaceChildren(); selection = { scope: 'desktop', keys: new Set() };
-  remoteMode = false; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null;
+  state.shortcuts = []; state.pinnedApps = []; state.positions = {}; state.activeWindow = null; state.clipboard = null;
+  selection = { scope: 'desktop', keys: new Set() };
+  remoteMode = false; desktopAvailable = false; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null;
+  resetSystemInfo(); updateBuiltinShortcuts(); settingsBusy(false);
   connectionStatus = 'SSH · 未连接'; $('desktopPath').textContent = '连接 SSH 后打开远程桌面';
   rebuildItems(); renderIcons(); renderDock(); renderPinnedApps(); renderServerInfo();
   $('context').hidden = true; $('appContext').hidden = true;
@@ -1216,14 +1313,16 @@ async function initializeConnection() {
     if ($('sshPassword').value) input.password = $('sshPassword').value;
     if ($('sshPrivateKey').value) input.privateKeyPath = $('sshPrivateKey').value;
     if ($('sshPassphrase').value) input.passphrase = $('sshPassphrase').value;
-    clearRemoteDesktop(); connectionStatus = 'SSH · 正在连接'; renderServerInfo();
-    try { const result = await api.connect(input); $('connectionDialog').close(); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
-    catch(error) { clearRemoteDesktop(); $('connectionError').textContent = error.message || String(error); notify('连接失败：' + (error.message || error)); }
+    try { const result = await api.connect(input); if (result?.cancelled) { $('connectionError').textContent = '已取消切换连接，当前终端已保留。'; return; } $('connectionDialog').close(); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
+    catch(error) { $('connectionError').textContent = error.message || String(error); notify('连接失败：' + (error.message || error)); }
     finally { $('sshPassword').value = ''; $('sshPassphrase').value = ''; connecting = false; $('connectSubmit').disabled = false; $('connectSubmit').textContent = '连接'; }
   });
   $('chooseKey').addEventListener('click', async () => { try { const value = await api.choosePrivateKey(); if (value) $('sshPrivateKey').value = value; } catch(error) { $('connectionError').textContent = error.message; } });
   $('clearKey').addEventListener('click', () => { $('sshPrivateKey').value = ''; $('sshPassphrase').value = ''; });
-  $('disconnectButton').addEventListener('click', async () => { try { await api.disconnect(); } catch(error) { $('connectionError').textContent = error.message; } clearRemoteDesktop(); notify('已断开 SSH'); });
+  $('disconnectButton').addEventListener('click', async () => {
+    try { if (await api.disconnect() === false) { $('connectionError').textContent = '已取消断开，当前终端已保留。'; return; } clearRemoteDesktop(); notify('已断开 SSH'); }
+    catch(error) { $('connectionError').textContent = error.message; }
+  });
   $('skipDesktop').addEventListener('click', () => $('missingDesktopDialog').close());
   $('createDesktop').addEventListener('click', () => { $('missingDesktopDialog').close(); host.postMessage({ type: 'createDesktop' }); });
   $('downloadsButton').addEventListener('click', () => { $('downloadsPanel').hidden = !$('downloadsPanel').hidden; });

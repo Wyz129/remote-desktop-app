@@ -4,7 +4,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fsp = require('node:fs').promises;
 const path = require('node:path');
+const { Readable, PassThrough } = require('node:stream');
 const { SshBackend } = require('../lib/ssh-backend.cjs');
+const { DesktopService } = require('../lib/desktop-service.cjs');
 const { createSshFixture } = require('./helpers/ssh-fixture.cjs');
 
 const options = { timeout: 20000 };
@@ -228,6 +230,67 @@ test('server information is returned by the authenticated SSH command channel', 
   assert.equal(info.remote, true); assert.equal(info.username, fixture.username); assert.equal(info.hostname, 'fixture-host');
   assert.equal(info.timeZone, 'UTC'); assert.ok(Math.abs(info.epochMs - Date.now()) < 5000);
   assert.ok(fixture.calls.exec.includes('id -un; hostname; date -u +%s'));
+});
+
+test('system settings information uses the authenticated SSH channel and real login home', options, async t => {
+  const { fixture, service } = await setup(t);
+  const info = await service.systemInfo();
+  assert.equal(info.home, fixture.home); assert.equal(info.username, fixture.username);
+  assert.equal(info.os, 'Ubuntu 24.04 LTS (fixture)'); assert.equal(info.timeZone, 'Etc/UTC');
+  assert.equal(info.architecture, 'x86_64'); assert.equal(info.cpu, 'Fixture CPU'); assert.equal(info.shell, '/bin/bash');
+  assert.match(info.disk, /100G 25G 75G/); assert.match(info.memory, /16Gi/); assert.match(info.network, /192\.0\.2\.10/);
+  assert.equal(Object.values(info).every(value => typeof value === 'string'), true);
+  assert.equal(fixture.calls.exec.filter(command => command.startsWith('# remote-desktop-system-info-v1\n')).length, 1);
+  assert.equal((await service.serverInfo()).hostname, 'fixture-host');
+});
+
+const systemFields = ['os', 'kernel', 'architecture', 'cpu', 'hostname', 'username', 'disk', 'memory', 'dateTime', 'timeZone', 'locale', 'shell', 'network'];
+const systemReply = values => systemFields.map(key => `${key}\0${values[key] || ''}\0`).join('');
+
+test('system settings queries never include caller text and unavailable fields degrade individually', async () => {
+  const calls = [];
+  const home = '/home/quoted-user; echo injected';
+  const service = new DesktopService({ home, async _execStream(command) {
+    calls.push(command);
+    return { stream: Readable.from([Buffer.from(systemReply({ os: 'Ubuntu\n', disk: 'line 1\nline 2', locale: 'LANG=C.UTF-8' }))]), completion: Promise.resolve() };
+  } });
+  const info = await service.systemInfo({ command: 'touch /tmp/unauthorized' });
+  assert.equal(info.home, home); assert.equal(info.os, 'Ubuntu'); assert.equal(info.disk, 'line 1\nline 2'); assert.equal(info.cpu, '未提供');
+  assert.equal(calls.length, 1); assert.equal(calls[0].includes('injected'), false); assert.equal(calls[0].includes('unauthorized'), false);
+  assert.match(calls[0], /df -h -- "\$HOME"/);
+  assert.doesNotMatch(calls[0], /\b(?:sudo|apt|apt-get|systemctl|eval)\b|(?:^|;)\s*\.\s+\/etc\/os-release/);
+});
+
+test('system settings rejects excessive or malformed output and aborts only its command', async () => {
+  for (const bytes of [Buffer.alloc(32769), Buffer.from('unexpected\0value\0')]) {
+    let commandSignal;
+    const service = new DesktopService({ home: '/home/test', async _execStream(_command, signal) {
+      commandSignal = signal;
+      return { stream: Readable.from([bytes]), completion: Promise.resolve() };
+    } });
+    await assert.rejects(service.systemInfo(), /32 KiB|格式无效/);
+    assert.equal(commandSignal.aborted, true);
+  }
+});
+
+test('system settings timeout cancels its SSH command and never blocks indefinitely', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stream = new PassThrough(); let commandSignal;
+  const service = new DesktopService({ home: '/home/test', async _execStream(_command, signal) {
+    commandSignal = signal;
+    const completion = new Promise((_, reject) => signal.addEventListener('abort', () => { stream.destroy(); reject(new Error('aborted')); }, { once: true }));
+    return { stream, completion };
+  } });
+  const rejection = assert.rejects(service.systemInfo(), /超时/);
+  await Promise.resolve();
+  t.mock.timers.tick(8000);
+  await rejection;
+  assert.equal(commandSignal.aborted, true); assert.equal(stream.destroyed, true);
+});
+
+test('system settings requires an active login home before opening a command channel', async () => {
+  const service = new DesktopService({ home: null, _execStream() { throw new Error('must not execute'); } });
+  await assert.rejects(service.systemInfo(), /尚未连接 SSH/);
 });
 
 test('SSH PTY shell carries real channel input, echo, resize and close', options, async t => {

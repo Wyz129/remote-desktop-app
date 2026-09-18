@@ -3,14 +3,29 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fsp = require('node:fs/promises');
+const { spawnSync } = require('node:child_process');
 const { _electron: electron } = require('playwright');
 const { createSshFixture } = require('./helpers/ssh-fixture.cjs');
 const project = path.resolve(__dirname, '..');
 
 test('real isolated Electron process, preload IPC, SSH desktop, image, download and reconnect', { timeout: 180000 }, async t => {
-  const fixture = await createSshFixture();
+  const fixtureOptions = {};
+  const fixture = await createSshFixture(fixtureOptions);
   let application;
-  t.after(async () => { await application?.close(); await fixture.close(); });
+  t.after(async () => {
+    // This isolated test process must not leave a cancelled native close prompt
+    // running if an assertion fails. Never targets a user's application.
+    if (application && application.process().exitCode === null) {
+      // Kill only the process tree created by this test if native-close/debugger
+      // teardown stalls. No existing desktop process is selected by name.
+      const timer = setTimeout(() => {
+        if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(application.process().pid), '/T', '/F'], { windowsHide: true });
+        else application.process().kill('SIGKILL');
+      }, 5000);
+      try { await application.close(); } finally { clearTimeout(timer); }
+    }
+    await fixture.close();
+  });
   const userData = path.join(fixture.root, 'electron-user-data');
   await fsp.mkdir(userData);
   await fixture.put('Desktop/notes.txt', 'Real Electron -> IPC -> SSH fixture\n');
@@ -21,6 +36,14 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   const executablePath = process.env.REMOTE_DESKTOP_TEST_EXE;
   application = await electron.launch({ ...(executablePath ? { executablePath } : {}), args: [...(executablePath ? [] : [project]), '--smoke-test', `--user-data-dir=${userData}`], env });
   const page = await application.firstWindow();
+  await application.evaluate(({ dialog }) => {
+    globalThis.dialogLog = []; globalThis.dialogAnswers = [];
+    dialog.showMessageBox = async (_window, options) => {
+      globalThis.dialogLog.push(options);
+      return { response: globalThis.dialogAnswers.shift() ?? options.cancelId ?? 0 };
+    };
+  });
+  const answer = response => application.evaluate((_electron, value) => globalThis.dialogAnswers.push(value), response);
   page.setDefaultTimeout(12000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.locator('#connectionDialog[open]').waitFor();
@@ -37,6 +60,16 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).waitFor();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
   assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/Desktop`);
+  assert.equal(await page.locator('#builtinApps button').count(), 2);
+  await page.locator('#homeShortcut').click();
+  await page.locator('.window .entry').filter({ hasText: 'Desktop' }).waitFor();
+  assert.equal(await page.locator('.window-path').inputValue(), fixture.home);
+  await page.locator('.window [data-window-action="close"]').click();
+  await page.locator('#settingsShortcut').click(); await page.locator('#systemSettingsTab').click();
+  await page.locator('[data-system-info="os"]').getByText('Ubuntu 24.04 LTS (fixture)', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-system-info="home"]').textContent(), fixture.home);
+  await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-control-panel.png' : 'electron-control-panel.png') });
+  await page.locator('#closeSettings').click();
   await page.locator(`#icons [data-path="${fixture.home}/Desktop/projects"]`).dblclick();
   await page.locator('.window .entry').filter({ hasText: 'example.txt' }).waitFor();
   await page.locator('.window [data-window-action="close"]').click();
@@ -66,11 +99,33 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.evaluate(id => window.remoteDesktop.send({ type: 'terminalResize', id, cols: 99, rows: 33 }), terminalId);
   await page.waitForTimeout(100);
   assert.ok(fixture.calls.resize.some(size => size.cols === 99 && size.rows === 33));
-  await page.locator('.terminal-window [data-window-action="close"]').click();
+  await answer(1); await page.locator('.terminal-window [data-window-action="close"]').click();
+  await page.locator('.terminal-window').waitFor({ state: 'hidden' });
   await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).dblclick();
   await page.waitForFunction(() => window.ipcEvents.filter(message => message.type === 'terminalOpened').length === 2);
-  assert.ok(fixture.calls.exec.some(command => command.includes(`exec vim -- '${fixture.home}/Desktop/notes.txt'`)));
-  await page.locator('.terminal-window [data-window-action="close"]').click();
+  assert.ok(fixture.calls.exec.some(command => command.includes('exec vim -c ') && command.endsWith(`-- '${fixture.home}/Desktop/notes.txt'`)));
+  await answer(2); await page.locator('.terminal-window [data-window-action="close"]').click();
+  await page.waitForFunction(() => !document.querySelector('.terminal-window [data-window-action="close"]').disabled);
+  assert.equal(await page.locator('.terminal-window').count(), 1);
+  assert.equal(await page.evaluate(() => window.remoteDesktop.disconnect()), false, 'disconnect cancellation keeps session');
+  assert.deepEqual(await page.evaluate(config => window.remoteDesktop.connect(config), fixture.config), { cancelled: true }, 'reconnect cancellation keeps session');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('.terminal-window').count(), 1, 'native red cross respects cancel');
+  fixtureOptions.vimWriteFailure = true;
+  await answer(0); await page.locator('.terminal-window [data-window-action="close"]').click();
+  await page.waitForFunction(() => !document.querySelector('.terminal-window [data-window-action="close"]').disabled);
+  assert.equal(await page.locator('.terminal-window').count(), 1, 'failed save retains terminal');
+  assert.ok(await application.evaluate(() => globalThis.dialogLog.some(value => value.title === '终端未关闭')));
+  fixtureOptions.vimWriteFailure = false;
+  await answer(0); await page.locator('.terminal-window [data-window-action="close"]').click();
+  await page.locator('.terminal-window').waitFor({ state: 'hidden' });
+  assert.ok(fixture.calls.shell.includes('\x1c\x0e:wqa\r'));
+  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).dblclick();
+  await page.waitForFunction(() => window.ipcEvents.filter(message => message.type === 'terminalOpened').length === 3);
+  await answer(1); await page.locator('.terminal-window [data-window-action="close"]').click();
+  await page.locator('.terminal-window').waitFor({ state: 'hidden' });
+  assert.ok(fixture.calls.shell.includes('\x1c\x0e:qa!\r'));
   await page.locator('#fullscreen').click();
   await page.waitForTimeout(150);
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen()), false);
@@ -88,4 +143,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await fsp.mkdir(path.join(project, 'artifacts'), { recursive: true });
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-electron.png' : 'electron-smoke.png') });
   await fsp.writeFile(path.join(project, 'artifacts', executablePath ? 'packaged-electron-results.json' : 'electron-results.json'), JSON.stringify({ passed: true, electron: await application.evaluate(() => process.versions.electron), systemDownloads, boundary: 'Actual Electron main/preload/renderer and TCP SSH/SFTP loopback fixture; not user server', execRequests: fixture.calls.exec.length }, null, 2));
+  const exited = page.waitForEvent('close', { timeout: 10000 });
+  await application.evaluate(({ BrowserWindow }) => { setImmediate(() => BrowserWindow.getAllWindows()[0].close()); return true; });
+  await exited;
 });

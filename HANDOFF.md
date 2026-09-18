@@ -1,6 +1,6 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-18。独立应用版本：1.0.0。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-18。独立应用版本：1.0.1。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
 
 ## 1. 仓库与工作边界
 
@@ -23,6 +23,7 @@
 | `main.cjs` | Electron 生命周期、全屏、安全窗口、IPC 入口、主机信任原生对话框、私钥读取、应用设置、DesktopService/SSH 会话组合 |
 | `preload.cjs` | `contextBridge` 暴露固定的 `window.remoteDesktop` API；不暴露 Node、任意文件读取或任意 IPC |
 | `lib/ssh-backend.cjs` | ssh2 连接、主机密钥验证、真实 `$HOME`、SFTP、图片字节、下载计划与流、取消/清理、SSH PTY |
+| `lib/terminal-guard.cjs` | Vim 保存/丢弃/取消确认、重复关闭去重，以及所有主动断开和应用退出的统一保护 |
 | `lib/desktop-service.cjs` | 登录主目录边界、目录项适配、统一远程配置与串行保存、文件 CRUD/复制/符号链接、固定程序、服务器信息 |
 | `lib/sftp-stream.cjs` | 等待 ssh2 的远程 CLOSE 确认，保证 EOF/finish 后立即断连不会遗留读写流错误 |
 | `scripts/start-app.cjs` | 源码启动器；仅清除子进程的 ELECTRON_RUN_AS_NODE |
@@ -67,6 +68,8 @@ SSH 登录成功后执行 `printf '%s' "$HOME"` 获取主目录；无效、相�
 | `terminalInput` / `terminalResize` / `terminalClose` | 对应 SSH PTY 写入、尺寸和关闭 |
 | `toggleFullscreen` | `fullscreenResult` |
 | `getSettings()` / `saveSettings(patch)` | 应用 downloadThreshold/scriptEditor 及系统 downloadsPath |
+| `getSystemInfo()` | 固定只读查询的系统/磁盘/内存/网络/时间/语言信息，32 KiB 上限、8 秒超时 |
+| `closeTerminal(id)` | 原生确认，成功后 `terminalClosed`；取消或失败返回 false 并保留窗口 |
 | `image(path)` | `{mime,data,name}`，data 为 base64；不返回本地任意文件路径 |
 | `download(path,id)` | 完成时 `{id,path,method,total}`；`onDownloadProgress` 提供 `{id,done,total,method,path,source}` |
 | `cancelDownload(id)` | 取消对应任务；Promise 最终拒绝后显示取消状态 |
@@ -85,6 +88,10 @@ DesktopService 将操作限制在登录主目录内，并对读取目标或写�
 
 xterm 连接 SSH PTY，白名单仅 shell/vim/htop；普通文件通过 Vim 编辑，不自动运行脚本。路径使用 POSIX 引用，最大 8 个会话、单次输入 64 KiB。关闭窗口要取消 pending 启动并结束会话；最小化不结束；重连/重开不自动启动。服务器未装 Vim/htop 时不自动安装。
 
+1.0.1 的 Vim 关闭先由 TerminalGuard 询问保存/丢弃/取消，再使用 Ctrl-\\ Ctrl-N 与 `:wqa` / `:qa!`，等待真实退出码 0，超时不销毁会话。启动通过 `-c` 在用户 vimrc 后注册 VimEnter 的 `/dev/tty` 标记（Vim BEL 转义必须为 `\\x07`，不可用 `\\a`）；未收到标记时不向 E325 提示发送退出按键。旧 swap 不自动删除。Shell 中手动启动的 Vim 仅提供保守提示，用户在终端正常退出。此保护覆盖虚拟红叉、断开/重连、原生窗口红叉和 app.quit；断网与系统强杀无法保存。
+
+任务栏 Home/设置为常驻内建入口，与 pinnedApps 无关。Home 使用 homePath，缺 Desktop 时仍可浏览；desktopAvailable 控制远程桌面配置保存。系统页仅展示可刷新的只读信息，SSH 连接管理与桌面/下载设置可操作。桌面刷新错误或路径变化不再销毁活跃编辑器。
+
 图片以 base64 栅格字节传入 `<img>`，支持 PNG/JPEG/GIF/WebP/BMP/AVIF，最大 25 MiB。SVG 不支持。初始 contain（不放大小图）、滚轮锚点缩放、拖动平移和 fit/100%/加减按钮均在虚拟窗口中完成。图片迟到回包必须检查窗口仍存在。
 
 ## 6. 下载行为与约束
@@ -99,10 +106,10 @@ xterm 连接 SSH PTY，白名单仅 shell/vim/htop；普通文件通过 Vim 编�
 
 ## 7. 验证状态与后续实机边界
 
-最终 `npm test` 通过：后端 49/49（SSH 29、文件/配置服务 20）、无头 UI 7/7、真实 Electron 进程集成 1/1。`npm run package` 生成 Windows x64 展开目录，直接启动打包 EXE 的同一集成场景也 1/1 通过。包内 12 个核心文件与源码一致，`npm audit` 无已知漏洞。准确边界见 [TESTING.md](TESTING.md)，产物路径与 SHA-256 见 [交付报告](artifacts/standalone-100-20260918.md)。
+最终 `npm test` 通过：后端 62/62（SSH 29、文件/配置服务 25、关闭保护 8）、真实本机 Vim 7/7、无头 UI 12/12、真实 Electron 进程集成 1/1。`npm run package` 生成 Windows x64 展开目录，直接启动打包 EXE 的同一集成场景也 1/1 通过。包内 13 个核心文件与源码一致，`npm audit` 无已知漏洞。准确边界见 [TESTING.md](TESTING.md)，产物路径与 SHA-256 见 [交付报告](artifacts/standalone-101-20260918.md)。
 
 本轮没有用户服务器凭据，没有外部 SSH 实机验收。回环夹具确实交换 SSH/SFTP 协议包并读写隔离的本地临时数据，但服务端仍是 ssh2.Server 受控夹具；它不等同 OpenSSH/PAM/MFA、真实服务器 TUI 或长期网络环境。
 
-后续修改运行 npm test、npm run package，并通过 `REMOTE_DESKTOP_TEST_EXE` 指向展开目录中的 EXE 重跑隔离 Electron 测试。当前 Electron 为 44.4.2，应用入口 `artifacts/electron/win-unpacked/Remote Desktop.exe`；保留完整目录。产物未签名、未发布；历史交接中的中间测试数字不作为最终验收。
+后续修改运行 npm test、npm run package，并通过 `REMOTE_DESKTOP_TEST_EXE` 指向展开目录中的 EXE 重跑隔离 Electron 测试。当前 Electron 为 44.4.2，应用入口 `artifacts/electron-1.0.1/win-unpacked/Remote Desktop.exe`；保留完整目录。产物未签名、未发布；历史交接中的中间测试数字不作为最终验收。
 
 外部 SSH 后续复测使用用户授权的独立测试目录：首次指纹/私钥/口令认证，真实 `$HOME` 与桌面配置、Vim/htop 交互、大小文件/递归目录下载、取消/断网清理及系统 Downloads 重定向。不得为了测试清理或覆盖用户已有远程桌面、已知主机或下载文件。

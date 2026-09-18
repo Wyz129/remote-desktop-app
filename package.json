@@ -2,7 +2,7 @@
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
   "description": "独立 Remote Desktop 应用：通过 SSH 浏览远程桌面并下载文件。",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -10,11 +10,12 @@
   "scripts": {
     "start": "node scripts/start-app.cjs",
     "dev": "node scripts/start-app.cjs --enable-logging",
-    "check": "node --check main.cjs && node --check preload.cjs && node --check lib/ssh-backend.cjs && node --check lib/desktop-service.cjs && node --check app/desktop.js",
-    "test:backend": "node --test test/standalone-backend.test.cjs test/desktop-service.test.cjs",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check lib/ssh-backend.cjs && node --check lib/desktop-service.cjs && node --check lib/terminal-guard.cjs && node --check app/desktop.js",
+    "test:backend": "node --test test/standalone-backend.test.cjs test/desktop-service.test.cjs test/terminal-close.test.cjs",
     "test:ui": "node --test test/standalone-ui.test.cjs",
+    "test:vim": "node --test test/real-vim.test.cjs",
     "test:electron": "node --test test/electron.test.cjs",
-    "test": "npm run check && npm run test:backend && npm run test:ui && npm run test:electron",
+    "test": "npm run check && npm run test:backend && npm run test:vim && npm run test:ui && npm run test:electron",
     "package": "electron-builder --dir"
   },
   "devDependencies": {
@@ -29,7 +30,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron"
+      "output": "artifacts/electron-1.0.1"
     },
     "files": [
       "main.cjs",
