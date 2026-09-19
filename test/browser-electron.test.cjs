@@ -124,7 +124,7 @@ test('embedded browser uses desktop child views, opens popup links and POST in f
   await waitFor(application, () => [...browserManager.windows.values()][0].tabs.size === 2 && [...browserManager.windows.values()][0].view.webContents.getURL().endsWith('/popup-link'));
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
   assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].activeTabId !== firstBrowserTab), true);
-  assert.equal(await application.evaluate(() => browserFixture.windowEvents.at(-1).type), 'focus');
+  assert.equal(await application.evaluate(() => browserFixture.windowEvents.findLast(value => value.type === 'focus')?.type), 'focus');
   const popupSecurity = JSON.parse(await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('JSON.stringify({node:typeof require,desktop:typeof window.remoteDesktop,browser:typeof window.serverBrowser})')));
   assert.deepEqual(popupSecurity, { node: 'undefined', desktop: 'undefined', browser: 'undefined' });
   assert.deepEqual(await application.evaluate(() => { const state = [...browserManager.windows.values()][0], prefs = state.view.webContents.getLastWebPreferences(); return { node: prefs.nodeIntegration, sandbox: prefs.sandbox, isolation: prefs.contextIsolation, session: state.view.webContents.session === state.context.partition, preload: Boolean(prefs.preload) }; }), { node: false, sandbox: true, isolation: true, session: true, preload: false });
@@ -140,11 +140,34 @@ test('embedded browser uses desktop child views, opens popup links and POST in f
   assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].tabs.size), 3);
   const visibility = await application.evaluate(() => { const [id, state] = [...browserManager.windows][0]; browserManager.setLayout(id, null, true); const hidden = [...state.tabs.values()].every(tab => !tab.view.getVisible()) && !state.toolbar.getVisible(); browserManager.setLayout(id, null, false); return { hidden, active: state.view.getVisible(), visibleTabs: [...state.tabs.values()].filter(tab => tab.view.getVisible()).length }; });
   assert.deepEqual(visibility, { hidden: true, active: true, visibleTabs: 1 });
+  await application.evaluate(async () => {
+    const [id, state] = [...browserManager.windows][0];
+    await state.view.webContents.executeJavaScript('document.body.style.cssText="margin:0;min-height:100vh;background:rgb(224,16,32)";document.body.textContent=""');
+    globalThis.snapshotStart = Date.now(); browserManager.setLayout(id, null, true, true);
+  });
+  await waitFor(application, ({ nativeImage }) => {
+    const snapshot = browserFixture.windowEvents.findLast(value => value.type === 'snapshot' && value.capturedAt >= snapshotStart);
+    if (!snapshot) return false; const pixel = nativeImage.createFromDataURL(snapshot.page).resize({ width: 1, height: 1 }).toBitmap(); return pixel[2] > 180 && pixel[1] < 60;
+  });
+  const firstSnapshot = await application.evaluate(({ nativeImage }) => {
+    const state = [...browserManager.windows.values()][0], snapshot = browserFixture.windowEvents.findLast(value => value.type === 'snapshot');
+    const pixel = nativeImage.createFromDataURL(snapshot.page).resize({ width: 1, height: 1 }).toBitmap();
+    return { pixel: [...pixel], toolbarHeight: snapshot.toolbarHeight, width: snapshot.width, height: snapshot.height, toolbar: snapshot.toolbar.startsWith('data:image/png;base64,'), nativeVisible: state.view.getVisible(), timer: Boolean(state.captureTimer) };
+  });
+  assert.ok(firstSnapshot.pixel[2] > 180 && firstSnapshot.pixel[1] < 60, `Expected red background: ${firstSnapshot.pixel}`);
+  assert.deepEqual({ ...firstSnapshot, pixel: undefined }, { pixel: undefined, toolbarHeight: 148, width: 600, height: 450, toolbar: true, nativeVisible: false, timer: true });
+  await application.evaluate(async () => { const state = [...browserManager.windows.values()][0]; await state.view.webContents.executeJavaScript('document.body.style.background="rgb(16,192,48)"'); globalThis.snapshotGreenStart = Date.now(); });
+  await waitFor(application, ({ nativeImage }) => {
+    const snapshot = browserFixture.windowEvents.findLast(value => value.type === 'snapshot' && value.capturedAt > snapshotGreenStart);
+    if (!snapshot) return false; const pixel = nativeImage.createFromDataURL(snapshot.page).resize({ width: 1, height: 1 }).toBitmap(); return pixel[1] > 150 && pixel[2] < 60;
+  });
+  assert.equal(await application.evaluate(() => { const [id, state] = [...browserManager.windows][0]; browserManager.setLayout(id, null, false); return state.captureTimer === null && state.view.getVisible(); }), true);
   const toolbarState = await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript('JSON.stringify({tabs:document.querySelectorAll(".browser-tab").length,active:document.querySelectorAll(".browser-tab.active").length})'));
   assert.deepEqual(JSON.parse(toolbarState), { tabs: 3, active: 1 });
   await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript('document.querySelector(".browser-tab.active .tab-close").click()'));
   await waitFor(application, () => [...browserManager.windows.values()][0].tabs.size === 2);
-  const closed = await application.evaluate(({ BrowserWindow }) => { const [id, state] = [...browserManager.windows][0]; const parent = state.window; browserManager.close(id); return { parentDestroyed: parent.isDestroyed(), count: BrowserWindow.getAllWindows().length, children: parent.contentView.children.length, browsers: browserManager.windows.size, event: browserFixture.windowEvents.at(-1) }; });
+  const closed = await application.evaluate(({ BrowserWindow }) => { const [id, state] = [...browserManager.windows][0]; const parent = state.window; browserManager.setLayout(id, null, true, true); browserManager.close(id); return { parentDestroyed: parent.isDestroyed(), timer: state.captureTimer, count: BrowserWindow.getAllWindows().length, children: parent.contentView.children.length, browsers: browserManager.windows.size, event: browserFixture.windowEvents.at(-1) }; });
+  assert.equal(closed.timer, null);
   assert.equal(closed.parentDestroyed, false); assert.equal(closed.count, 1); assert.equal(closed.children, 0); assert.equal(closed.browsers, 0); assert.equal(closed.event.type, 'closed');
   await application.evaluate(() => browserManager.open('http://remote-only.invalid:8765/'));
   await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return browserManager.action(state, 'closeTab', { id: state.activeTabId }); });

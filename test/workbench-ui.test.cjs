@@ -7,7 +7,7 @@ const http = require('node:http');
 const { chromium } = require('playwright');
 const root=path.resolve(__dirname,'..');let server,browser,origin;
 before(async()=>{
-  server=http.createServer((req,res)=>{const relative=decodeURIComponent(req.url.split('?')[0]);const file=path.resolve(root,'.'+relative);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile())return res.writeHead(404).end();res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css':file.endsWith('.ttf')?'font/ttf':'application/javascript');res.end(fs.readFileSync(file));});
+  server=http.createServer((req,res)=>{const relative=decodeURIComponent(req.url.split('?')[0]);if(relative==='/test/workbench-host.html'){res.setHeader('Content-Type','text/html');return res.end('<!doctype html><html><body><iframe id="editorFrame" style="width:1100px;height:740px"></iframe><script src="/app/workbench-frame.js"></script></body></html>');}if(relative==='/test/workbench-attack.html'){res.setHeader('Content-Type','text/html');return res.end('<!doctype html><html><body>isolated remote preview</body></html>');}const file=path.resolve(root,'.'+relative);if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile())return res.writeHead(404).end();res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css':file.endsWith('.ttf')?'font/ttf':'application/javascript');res.end(fs.readFileSync(file));});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${server.address().port}`;browser=await chromium.launch({channel:'chrome',headless:true});
 });
 after(async()=>{await browser?.close();await new Promise(resolve=>server.close(resolve));});
@@ -105,7 +105,7 @@ test('opening another file does not rewrite an unchanged compact Notebook or mar
   assert.equal(await page.locator('#dirty').textContent(), '');
 });
 
-function managerHarness() {
+function managerHarness(options = {}) {
   const { EventEmitter } = require('node:events'), { createRequire } = require('node:module');
   const filename = path.join(root, 'lib/workbench-manager.cjs'), nativeRequire = createRequire(filename);
   const prompts = [], answers = [], events = [], backend = { connected: true, home: '/home/test', desktop: '/home/test/rdesktop' };
@@ -123,7 +123,7 @@ function managerHarness() {
   const module = { exports: {} };
   const load = new Function('require', 'module', 'exports', '__dirname', '__filename', fs.readFileSync(filename, 'utf8'));
   load(id => id === 'electron' ? electron : id === './document-service.cjs' ? { DocumentService: Service } : nativeRequire(id), module, module.exports, path.dirname(filename), filename);
-  const manager = new module.exports.WorkbenchManager({ getBackend: () => backend, getConnectionId: () => 'test-connection', getParent: () => null });
+  const manager = new module.exports.WorkbenchManager({ getBackend: () => backend, getConnectionId: () => 'test-connection', getParent: () => null, ...options });
   return { manager, backend, prompts, answers, events };
 }
 test('manager keeps untitled close confirmation, save-as title and conflict protections', async () => {
@@ -157,4 +157,80 @@ test('manager preserves current document and services when remote open fails or 
   const opened = await manager.action(state, 'open', { path: '/shared/next.py' });
   assert.equal(opened.readOnly, true); assert.equal(state.dirty, false); assert.equal(clientClosed, 1); assert.equal(previewClosed, 1);
   assert.equal(state.window.title, 'next.py — Monaco Editor');
+});
+
+test('embedded manager creates virtual descriptors, protects dirty close and retains drafts across disconnect', async t => {
+  const emitted = [], { manager, answers } = managerHarness({ embedded: true, onEvent: event => emitted.push(event) });
+  t.after(() => manager.dispose());
+  const descriptor = await manager.open('/shared/current.py');
+  assert.match(descriptor.id, /^[a-f0-9-]{36}$/); assert.equal(descriptor.title, 'current.py — Monaco Editor');
+  const state = manager.windows.get(descriptor.id); assert.equal(state.embedded, true); assert.equal(state.window, null);
+  assert.equal(emitted[0].type, 'open');
+  assert.deepEqual(await manager.open('/shared/current.py'), descriptor); assert.equal(emitted.at(-1).type, 'focus');
+  await manager.call(descriptor.id, 'update', { text: 'my unsaved draft' });
+  assert.equal(emitted.at(-1).dirty, true);
+  answers.push(2); assert.deepEqual(await manager.call(descriptor.id, 'close'), { ok: true, value: false });
+  assert.equal(manager.list().length, 1);
+  manager.disconnect(); assert.equal(emitted.at(-1).event.type, 'disconnected');
+  const loaded = (await manager.call(descriptor.id, 'load')).value;
+  assert.equal(loaded.document.text, 'source\n'); assert.equal(loaded.draftText, 'my unsaved draft'); assert.equal(loaded.dirty, true); assert.equal(loaded.connected, false);
+  assert.equal((await manager.call(descriptor.id, 'save', { text: 'my unsaved draft' })).ok, false);
+  assert.equal((await manager.call('wrong-document-id', 'load')).ok, false);
+  assert.equal((await manager.call(descriptor.id, 'exec', { command: 'unauthorized' })).ok, false);
+  answers.push(1); assert.deepEqual(await manager.call(descriptor.id, 'close'), { ok: true, value: true });
+  assert.equal(manager.list().length, 0); assert.deepEqual(emitted.at(-1), { type: 'closed', id: descriptor.id });
+  assert.equal((await manager.call(descriptor.id, 'load')).ok, false);
+});
+
+test('embedded Monaco loads in an opaque iframe, saves through its bridge and rejects preview impersonation', async t => {
+  const page = await browser.newPage(); page.setDefaultTimeout(12000); t.after(() => page.close());
+  await page.goto(origin + '/test/workbench-host.html');
+  await page.evaluate(() => {
+    window.secretDesktopApi = { credentials: 'unreachable-from-document' };
+    window.calls = []; window.focusCount = 0;
+    window.currentDocument = { name: 'embedded.py', path: '/shared/embedded.py', text: 'print("embedded")\n', readOnly: false };
+    window.frameHost = RemoteWorkbenchFrame.mount({ iframe: document.querySelector('#editorFrame'), id: '11111111-1111-1111-1111-111111111111', onFocus: () => window.focusCount++, call: async (action, payload) => {
+      window.calls.push({ action, payload });
+      if (action === 'load') return { ok: true, value: { document: window.currentDocument, connected: true } };
+      if (action === 'save') { window.currentDocument = { ...window.currentDocument, text: payload.text }; return { ok: true, value: window.currentDocument }; }
+      return { ok: true, value: {} };
+    } });
+  });
+  const embedded = page.frameLocator('#editorFrame'); await embedded.locator('#status').filter({ hasText: '已打开服务器文件' }).waitFor();
+  const frame = page.frames().find(item => item.url().includes('/app/workbench.html#'));
+  assert.equal(await page.locator('#editorFrame').getAttribute('sandbox'), 'allow-scripts allow-forms');
+  assert.equal(await frame.evaluate(() => { try { return Boolean(parent.secretDesktopApi); } catch { return false; } }), false);
+  await frame.evaluate(() => monaco.editor.getModels()[0].setValue('print("updated")\n'));
+  await embedded.locator('#save').click(); await page.waitForFunction(() => window.calls.some(item => item.action === 'save'));
+  assert.equal(await page.evaluate(() => window.currentDocument.text), 'print("updated")\n'); assert.ok(await page.evaluate(() => window.focusCount > 0));
+  await frame.evaluate(url => { document.querySelector('#preview').src = url; }, origin + '/test/workbench-attack.html');
+  await page.waitForFunction(() => window.calls.some(item => item.action === 'load'));
+  const preview = await frame.waitForSelector('#preview', { state: 'attached' });
+  const previewFrame = await preview.contentFrame(); await previewFrame.waitForURL('**/test/workbench-attack.html');
+  await previewFrame.evaluate(() => top.postMessage({ channel: 'remote-desktop-workbench-v1', id: '11111111-1111-1111-1111-111111111111', type: 'request', requestId: 999, action: 'save', payload: { text: 'INJECTED' } }, '*'));
+  await frame.evaluate(() => parent.postMessage({ channel: 'remote-desktop-workbench-v1', id: '22222222-2222-2222-2222-222222222222', type: 'request', requestId: 1000, action: 'save', payload: { text: 'INJECTED' } }, '*'));
+  await embedded.locator('#save').click(); await page.waitForFunction(() => window.calls.filter(item => item.action === 'save').length === 2);
+  assert.equal(await page.evaluate(() => window.calls.some(item => item.payload?.text === 'INJECTED')), false);
+  await page.evaluate(() => window.frameHost.send({ type: 'disconnected' }));
+  await embedded.locator('#status').filter({ hasText: 'SSH 已断开' }).waitFor(); assert.equal(await embedded.locator('#save').isDisabled(), true);
+  assert.equal(await frame.evaluate(() => monaco.editor.getModels()[0].getValue()), 'print("updated")\n');
+  await page.evaluate(() => window.frameHost.destroy()); assert.equal(await page.locator('#editorFrame').getAttribute('src'), null);
+});
+
+test('embedded static asset origin serves bundled editor resources only and rejects mutation or traversal', async t => {
+  const { createWorkbenchAssets } = require('../lib/workbench-assets.cjs');
+  const assets = await createWorkbenchAssets(); t.after(() => assets.close());
+  const page = await fetch(assets.url); assert.equal(page.status, 200); assert.match(await page.text(), /HTML 隔离预览/);
+  assert.equal(page.headers.get('access-control-allow-origin'), 'null');
+  const scriptUrl = new URL('workbench-frame.js', assets.url);
+  const script = await fetch(scriptUrl); assert.equal(script.status, 200); assert.match(await script.text(), /remote-desktop-workbench-v1/);
+  const head = await fetch(scriptUrl, { method: 'HEAD' }); assert.equal(head.status, 200); assert.ok(Number(head.headers.get('content-length')) > 0); assert.equal(await head.text(), '');
+  assert.equal((await fetch(scriptUrl, { method: 'POST', body: 'write denied' })).status, 405);
+  assert.equal((await fetch(new URL('../main.cjs', assets.url))).status, 404);
+  assert.equal((await fetch(new URL('../app/desktop.js', assets.url))).status, 404);
+  assert.equal((await fetch(new URL('/app/workbench.html', assets.url))).status, 404);
+  const prefix = assets.url.slice(0, -'app/workbench.html'.length);
+  assert.equal((await fetch(prefix + 'media/workbench/%2e%2e%2f%2e%2e%2fmain.cjs')).status, 403);
+  const wrongHostStatus = await new Promise((resolve, reject) => { const request = http.get(scriptUrl, { headers: { Host: 'attacker.invalid' } }, response => { response.resume(); resolve(response.statusCode); }); request.on('error', reject); });
+  assert.equal(wrongHostStatus, 403);
 });

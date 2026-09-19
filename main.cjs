@@ -45,7 +45,7 @@ const terminalGuard = new TerminalGuard({ getBackend: () => backend,
 const entryPath = path.join(__dirname, 'app', 'index.html');
 const entryUrl = pathToFileURL(entryPath).href;
 function requireSender(event) {
-  if (!windowRef || event.sender !== windowRef.webContents || event.senderFrame?.url !== entryUrl) throw new Error('拒绝非应用窗口的请求。');
+  if (!windowRef || event.sender !== windowRef.webContents || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== entryUrl) throw new Error('拒绝非应用窗口的请求。');
 }
 function requireBackend() { if (!backend?.connected || !desktopService) throw new Error('尚未连接 SSH。'); return backend; }
 function publicSettings() { const { knownHosts, desktopLocations, ...visible } = settings; return { ...visible, downloadsPath: app.getPath('downloads') }; }
@@ -111,7 +111,7 @@ async function quitSafely() {
   try {
     if (!await workbench?.confirmAll() || !await terminalGuard.all()) return;
     await closeConnectionResources();
-    terminalStarts.clear(); await backend?.disconnect(); await instanceBridge?.close(); await transferCenter.flush(); allowWindowClose = true; app.quit();
+    terminalStarts.clear(); await backend?.disconnect(); await instanceBridge?.close(); await workbench?.dispose(); await transferCenter.flush(); allowWindowClose = true; app.quit();
   } catch (error) { post({ type: 'desktopError', error: `关闭应用未完成：${error.message}` });
   } finally { closingApplication = false; sessionTransition = false; }
 }
@@ -210,7 +210,7 @@ function compatibilitySettings(requestId) { return { type: 'extensionSettings', 
 async function handleDesktopMessage(message) {
   if (!message || typeof message.type !== 'string') throw new Error('无效的桌面请求。');
   const type = message.type;
-  if (type === 'ready' || type === 'getExtensionSettings') { post(compatibilitySettings(message.requestId)); if (type === 'ready' && backend?.connected) { await inspect(); await serverInfo(); } return; }
+  if (type === 'ready' || type === 'getExtensionSettings') { post(compatibilitySettings(message.requestId)); if (type === 'ready' && backend?.connected) { post({ type: 'connectionInfo', profile: backend.connectionProfile }); await inspect(); await serverInfo(); } return; }
   if (type === 'toggleFullscreen') { windowRef.setFullScreen(!windowRef.isFullScreen()); post({ type: 'fullscreenResult', ok: true, message: '已切换全屏；Esc 退出全屏，F11 切换。' }); return; }
   if (type === 'getServerInfo') return serverInfo();
   requireBackend();
@@ -330,6 +330,8 @@ async function connectSsh(input, trustedLocal = false) {
       await saveSettings(current => ({ host, port, username, alias, privateKeyPath: input.privateKeyPath || null, ...upsertProfile(current.serverProfiles, profile), hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...current.knownHosts, [hostKey]: result.hostFingerprint } }));
       result = { ...result, alias, port, address: backend.client?._sock?.remoteAddress || host };
       windowRef.setTitle(connectionTitle(profile, result.address));
+      backend.connectionProfile = { ...profile, address: result.address };
+      post({ type: 'connectionInfo', profile: backend.connectionProfile });
       try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
       if (!trustedLocal) activityLog.system({ type: 'ssh-connected', host, port, username, home: backend.home, desktop: backend.desktop });
       await serverInfo(); return result;
@@ -437,8 +439,10 @@ function registerIpc() {
   handle('transfer:open-target', id => openTransferTarget(transferCenter.get(id), { getBackend: requireBackend, shell }));
   handle('ssh:cancel-download', id => { return browserManager?.cancel(id) || transferCenter.cancel(id) || backend?.cancelDownload(id) || false; });
   handle('workbench:open', (remotePath, options) => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return workbench.open(remotePath, { readOnly: Boolean(options?.readOnly) }); });
+  handle('workbench:embedded-call', (id, action, payload) => workbench.call(id, action, payload));
+  handle('workbench:list', () => workbench.list());
   handle('browser:open', url => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return browserManager.open(url); });
-  handle('browser:layout', (id, bounds, hidden) => browserManager.setLayout(id, bounds, Boolean(hidden)));
+  handle('browser:layout', (id, bounds, hidden, snapshot) => browserManager.setLayout(id, bounds, Boolean(hidden), Boolean(snapshot)));
   handle('browser:close', id => browserManager.close(id));
   handle('ssh:open-local', filePath => { if (!completedDownloads.has(filePath)) throw new Error('只能定位当前应用完成下载的文件。'); shell.showItemInFolder(filePath); });
   ipcMain.on('desktop:send', (event, message) => { try { requireSender(event); handleDesktopMessage(message).catch(error => post({ type: 'desktopError', error: error.message })); } catch {} });
@@ -449,7 +453,7 @@ app.whenReady().then(async () => {
   try { await transferCenter.load(path.join(app.getPath('userData'), 'transfer-history.json')); } catch (error) { historyWarning = `无法读取传输历史：${error.message}`; }
   localPicker = new LocalPicker({ dialog, getParent: () => windowRef });
   const logging = { audit, captureLog: source => (!source || currentSession(source)) ? activityLog.capture() : null, log: (record, context) => activityLog.system(record, context) };
-  workbench = createWorkbenchManager({ ...logging, getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
+  workbench = createWorkbenchManager({ ...logging, embedded: true, onEvent: value => send('workbench:event', value), getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
   browserManager = createBrowserManager({ ...logging, embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
     uploadFile: ({ localPath, remoteDirectory, id, signal, onProgress }) => { requireBackend(); if (!uploader || sessionTransition) throw new Error('SSH 连接正在切换。'); return uploader.upload(localPath, remoteDirectory, { id, signal, onProgress }); } });
   registerIpc(); createWindow();

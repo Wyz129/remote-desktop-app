@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; media-src http://127.0.0.1:*; font-src 'self' data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; media-src http://127.0.0.1:*; font-src 'self' data:; frame-src 'self' http://127.0.0.1:*;">
   <title>Remote Desktop</title>
   <link rel="stylesheet" href="../media/workbench/viewer.css">
   <link rel="stylesheet" href="desktop.css">
@@ -13,9 +13,9 @@
 </head>
 <body>
   <header class="toolbar">
-    <div class="brand"><strong id="accountName">未连接 SSH</strong></div>
+    <div class="brand" aria-hidden="true"></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
-    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听" title="实时监听"></button><button id="browserButton" class="toolbar-icon" aria-label="浏览器" title="浏览器"></button><button id="homeShortcut" class="toolbar-icon" title="Home" aria-label="Home"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置" title="设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏" title="全屏"></button></div>
+    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="切换账号" title="切换账号"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听" title="实时监听"></button><button id="browserButton" class="toolbar-icon" aria-label="浏览器" title="浏览器"></button><button id="homeShortcut" class="toolbar-icon" title="Home" aria-label="Home"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置" title="设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏" title="全屏"></button></div>
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
@@ -50,7 +50,7 @@
             <label for="settingsDesktopPath">桌面位置</label><div class="desktop-path-picker"><input type="text" id="settingsDesktopPath" spellcheck="false" autocomplete="off" placeholder="例如 /home/用户名/.rdesktop/desktop"><button type="button" id="browseDesktopPath">浏览…</button></div>
             <p class="settings-description">可选择服务器上任意有访问权限的目录作为桌面，名称不限；位置会为当前服务器账号保存。</p>
             <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
-            <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">青绿</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
+            <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">Ubuntu</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
             <label class="settings-check"><input type="checkbox" id="settingsHidden">显示隐藏文件和文件夹</label>
             <p class="settings-description" id="settingsLocation"></p><p id="settingsError" role="alert"></p>
           </div>
@@ -118,12 +118,6 @@
   <template id="terminalTemplate">
     <section class="window terminal-window" aria-label="终端窗口" tabindex="-1">
       <header class="titlebar"><span class="terminal-app-icon" aria-hidden="true">&gt;_</span><strong class="window-title">终端</strong><div class="window-controls" aria-label="窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化" title="最大化">□</button><button type="button" class="window-control close" data-window-action="close" aria-label="关闭终端窗口" title="关闭终端及其进程">×</button></div></header>
-      <div class="terminal-commandbar">
-        <span class="terminal-launch-label">新终端</span>
-        <button data-terminal-program="shell" title="在新窗口启动 Shell">Shell</button>
-        <button data-terminal-program="vim" title="在新窗口启动 Vim">Vim</button>
-        <button data-terminal-program="htop" title="在新窗口启动 htop">htop</button>
-      </div>
       <div class="terminal-location"></div>
       <div class="terminal-surface" aria-label="终端内容"></div>
       <footer class="window-footer terminal-status" role="status">正在启动终端…</footer>
@@ -134,8 +128,9 @@
 <header class="login-heading"><h2 id="connectionTitle">SSH 登录</h2><button type="button" id="closeConnection" aria-label="关闭连接窗口">×</button></header>
 <div class="login-avatar" aria-hidden="true">⌘</div>
 <h3 id="serverDisplayName">添加服务器</h3><p id="serverDisplayAddress">配置服务器后登录</p>
-<div class="server-switcher"><select id="serverProfile" aria-label="已保存服务器"><option value="">选择服务器</option></select><button type="button" id="newServer" title="添加服务器">＋</button></div>
-<div class="login-credentials"><label for="sshUsername">用户名</label><input id="sshUsername" autocomplete="username" required placeholder="用户名"><label for="sshPassword">密码</label><input id="sshPassword" type="password" autocomplete="current-password" placeholder="输入密码"></div>
+<div id="serverSwitcher" class="server-switcher"><select id="serverProfile" aria-label="已保存服务器"><option value="">选择服务器</option></select><button type="button" id="newServer" title="添加服务器">＋</button></div>
+<div id="loginCredentials" class="login-credentials"><label for="sshUsername">用户名</label><input id="sshUsername" autocomplete="username" required placeholder="用户名"><label for="sshPassword">密码</label><input id="sshPassword" type="password" autocomplete="current-password" placeholder="输入密码"></div>
+<div id="connectedAccount" class="connected-account" hidden><span>已登录账号</span><strong id="connectedUsername"></strong><span id="connectedAddress"></span></div>
 <details id="connectionAdvanced" open><summary>高级选项</summary><div class="connection-fields">
 <label for="sshHost">服务器地址</label><input id="sshHost" autocomplete="off" required placeholder="服务器 IP 或主机名">
 <label for="sshPort">端口</label><input id="sshPort" type="number" min="1" max="65535" value="22" required>
@@ -143,8 +138,9 @@
 <label for="sshPrivateKey">私钥文件</label><div class="key-picker"><input id="sshPrivateKey" readonly placeholder="可选"><button type="button" id="chooseKey">选择</button><button type="button" id="clearKey">清除</button></div>
 <label for="sshPassphrase">私钥口令</label><input id="sshPassphrase" type="password" autocomplete="off"></div>
 <p class="settings-description">配置使用上方的用户名。密码与私钥口令仅用于本次登录，不保存；切换服务器后请重新输入。</p><button type="button" id="saveServer">保存服务器配置</button></details>
+<div id="reconnectKeyCredentials" class="login-credentials" hidden><label for="reconnectPassphrase">私钥口令</label><input id="reconnectPassphrase" type="password" autocomplete="off"></div>
 <p id="connectionError" role="alert"></p><p id="connectionHint" role="status">首次连接需要核验 SSH 主机指纹。</p>
-<footer class="settings-footer"><button type="button" id="disconnectButton">断开</button><button type="submit" id="connectSubmit" class="primary">登录</button></footer>
+<footer class="settings-footer"><button type="button" id="disconnectButton" hidden>断开</button><button type="button" id="reconnectButton" hidden>重新连接</button><button type="button" id="switchAccountButton" hidden>切换账号</button><button type="submit" id="connectSubmit" class="primary">登录</button></footer>
 </form></dialog>
 <dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>将在真实主目录中初始化 .rdesktop/desktop、log 和 download。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">重新初始化</button></footer></dialog>
 <dialog id="desktopPickerDialog" class="connection-dialog directory-picker" aria-labelledby="desktopPickerTitle"><h2 id="desktopPickerTitle">选择桌面目录</h2><form id="desktopPickerForm" class="directory-picker-address"><button type="button" id="desktopPickerUp" aria-label="上一级目录">↑</button><input id="desktopPickerPath" aria-label="选择目录地址" spellcheck="false" autocomplete="off"><button type="submit" id="desktopPickerGo">打开</button></form><p id="desktopPickerError" role="alert"></p><div id="desktopPickerEntries" class="directory-picker-entries" aria-label="可选目录"></div><footer class="settings-footer"><button type="button" id="desktopPickerCancel">取消</button><button type="button" id="desktopPickerSelect" class="primary">使用此目录</button></footer></dialog>
@@ -189,6 +185,7 @@
   <script src="../media/workbench/video-zh-CN.js"></script>
   <script src="video-player.js"></script>
   <script src="connection-profiles.js"></script>
+  <script src="workbench-frame.js"></script>
   <script src="desktop.js"></script>
 </body>
 </html>

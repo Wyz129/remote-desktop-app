@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-20。独立应用版本：1.1.7。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-20。独立应用版本：1.1.8。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.8：Monaco 改为虚拟桌面内的 opaque iframe，通过固定 IPC 桥接保存与关闭，断连保留草稿。lib/workbench-assets.cjs 为仅静态本地资源服务，iframe 允许脚本/表单但无同源权限，远程预览仍只有 allow-scripts。浏览器无遮挡时保持实时原生页面，遮挡时每 750ms 捕获背景图像，最小化停止；不能把该预览称为全帧率后台视频。已连接账号面板显示账号文本及断开/重连/切换账号，重连重新认证，不存密码。顶栏身份右移、传输双向图标、删除终端启动栏、Ubuntu 配色统一。回退分支 checkpoint/pre-embedded-workbench-1.1.7；本地提交与打包，仍不推送 GitHub。实际测试见 docs/RELEASE-1.1.8.md。
 
 1.1.7：完成 Video.js 视频播放器与七项工具箱、Ubuntu 风格服务器登录和多配置切换、动态连接标题、统一窗口按钮及顶栏模块提示。首次连接自动建立 ~/.rdesktop/{desktop,log,download}；storageVersion=2 忽略旧桌面偏好，新版再次设置的位置仍恢复，不移动旧远程内容。密码和私钥口令不持久化。实时监听显示系统/终端及 CLI 的原始命令与回复；CLI 原文仍只写独立日志，系统仅保留连接引用。回退分支 checkpoint/pre-toolbox-login-1.1.6；本地提交、打包，不推送。详见 docs/RELEASE-1.1.7.md、docs/VIDEO.md 和 docs/ACTIVITY_LOG.md。下方旧版行为均作为历史快照，新版源码及本段优先。
 

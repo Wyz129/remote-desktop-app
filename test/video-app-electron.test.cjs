@@ -66,7 +66,7 @@ test('desktop Video.js opens through the remote picker and double-click, plays, 
   assert.deepEqual(await style('#settingsDialog [data-window-action=minimize]'), await style('.video-window [data-window-action=minimize]'));
   await page.locator('#closeSettings').click(); await page.locator('#downloadsButton').click();
   assert.equal(await page.locator('#closeDownloads').evaluate(button => getComputedStyle(button).backgroundColor), 'rgba(0, 0, 0, 0)');
-  for (const [id, label] of Object.entries({ connectButton: 'SSH 连接', downloadsButton: '传输中心', activityButton: '实时监听', browserButton: '浏览器', homeShortcut: 'Home', desktopSettings: '设置', fullscreen: '全屏' })) assert.equal(await page.locator(`#${id}`).getAttribute('title'), label);
+  for (const [id, label] of Object.entries({ connectButton: '切换账号', downloadsButton: '传输中心', activityButton: '实时监听', browserButton: '浏览器', homeShortcut: 'Home', desktopSettings: '设置', fullscreen: '全屏' })) assert.equal(await page.locator(`#${id}`).getAttribute('title'), label);
   await page.evaluate(() => window.remoteDesktop.disconnect());
   await page.locator('.video-window').waitFor({ state: 'detached' });
   await assert.rejects(fetch(reopenedUrl));

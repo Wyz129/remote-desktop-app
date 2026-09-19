@@ -36,6 +36,8 @@ let serverInfo = null;
 let serverClockAnchor = null;
 let lastServerResponseAt = null;
 let connectionStatus = '正在连接…';
+let authenticatedProfile = null, connectionProfiles = null, connectionPanelMode = 'login';
+const workbenchFrames = new Map();
 let appContextId = null;
 let appContextWindowId = null;
 let selection = { scope: 'desktop', keys: new Set() };
@@ -100,8 +102,6 @@ function showOperationCommand(command, status = 'success', detail = '') {
 function showInterfaceAction(text) { showOperationCommand(`# ${text}（界面操作，无 Linux 指令）`); }
 function shellQuote(value) { return `'${String(value).replace(/'/g, `'"'"'`)}'`; }
 function renderServerInfo() {
-  $('accountName').textContent = serverInfo?.username || (initialized ? '账号不可用' : '未连接 SSH');
-  $('accountName').title = serverInfo?.hostname ? `${serverInfo.username || ''}@${serverInfo.hostname}` : '';
   $('connection').textContent = connectionStatus;
   if (serverInfo?.error) $('connection').title = serverInfo.error;
   else $('connection').title = serverInfo?.hostname || '';
@@ -111,7 +111,8 @@ function updateClock() {
   const clock = $('serverClock');
   const remote = serverInfo ? serverInfo.remote !== false : remoteMode;
   const stale = lastServerResponseAt !== null && performance.now() - lastServerResponseAt > 90000;
-  $('connection').textContent = remote && stale && connectionStatus.includes('已连接') ? 'SSH · 等待服务器响应' : connectionStatus;
+  const username = authenticatedProfile?.username || serverInfo?.username;
+  $('connection').textContent = remote && stale && connectionStatus.includes('已连接') ? `${username || 'SSH'}·等待响应` : (authenticatedProfile || remoteMode) && username ? `${username}·已连接` : connectionStatus;
   if (!serverClockAnchor || performance.now() - serverClockAnchor.receivedAt > 90000) {
     clock.textContent = `${remote ? '服务器' : '本地'}时间 —`;
     clock.removeAttribute('datetime');
@@ -320,7 +321,7 @@ async function loadSystemInfo() {
   }
 }
 function openHome() {
-  if (!remoteMode || !homePath) { notify('请先连接 SSH，再打开服务器主目录。'); if (!$('connectionDialog').open) $('connectionDialog').showModal(); return; }
+  if (!remoteMode || !homePath) { notify('请先连接 SSH，再打开服务器主目录。'); showConnectionPanel(); return; }
   const existing = state.windows.find(win => !win.kind && win.folder === homePath);
   if (existing) { focusWindow(existing.id); return; }
   openFolder(homePath);
@@ -865,12 +866,20 @@ function scheduleBrowserLayout() {
       const surface = windowElements.get(win.id)?.querySelector('.browser-surface');
       if (!surface) continue;
       const rect = surface.getBoundingClientRect();
-      const hidden = obscured || win.minimized || state.activeWindow !== win.id || rect.width < 1 || rect.height < 1;
+      const overlaps = state.windows.some(other => {
+        if (other.id === win.id || other.minimized || other.z <= win.z) return false;
+        const front = windowElements.get(other.id)?.getBoundingClientRect();
+        return front && front.right > rect.left && front.left < rect.right && front.bottom > rect.top && front.top < rect.bottom;
+      });
+      const inactive = document.hidden || win.minimized || rect.width < 1 || rect.height < 1;
+      const hidden = inactive || obscured || overlaps;
+      const snapshot = hidden && !inactive;
+      surface.classList.toggle('browser-background', snapshot);
       const bounds = { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) };
-      const key = JSON.stringify([bounds, hidden]);
+      const key = JSON.stringify([bounds, hidden, snapshot]);
       if (win.browserLayout === key) continue;
       win.browserLayout = key;
-      void api.layoutBrowser?.(win.browserId, bounds, hidden).catch(error => { win.browserLayout = null; notify(error.message); });
+      void api.layoutBrowser?.(win.browserId, bounds, hidden, snapshot).catch(error => { win.browserLayout = null; notify(error.message); });
     }
   });
 }
@@ -898,7 +907,8 @@ async function openServerBrowser() {
       element.querySelector('.window-title').textContent = '浏览器';
       element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭浏览器窗口');
       const surface = document.createElement('div'); surface.className = 'browser-surface';
-      const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = '点击继续浏览'; resume.addEventListener('click', () => focusWindow(win.id)); surface.append(resume); element.append(surface);
+      for (const part of ['toolbar', 'page']) { const image = document.createElement('img'); image.className = `browser-snapshot browser-snapshot-${part}`; image.alt = ''; image.draggable = false; surface.append(image); }
+      const resume = document.createElement('button'); resume.type = 'button'; resume.className = 'browser-resume'; resume.textContent = '点击继续浏览'; resume.title = '背景页面约每 0.75 秒刷新；点击恢复交互'; resume.addEventListener('click', () => focusWindow(win.id)); surface.append(resume); element.append(surface);
       renderToolIcons(element); state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
       element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
       element.addEventListener('click', event => { const action = event.target.closest('[data-window-action]')?.dataset.windowAction; if (action) void windowAction(action, win); });
@@ -913,6 +923,39 @@ api.onBrowserEvent?.(event => {
   if (!win) return;
   if (event.type === 'closed') void windowAction('close-confirmed', win);
   else if (event.type === 'focus') focusWindow(win.id);
+  else if (event.type === 'snapshot') {
+    const surface = windowElements.get(win.id)?.querySelector('.browser-surface');
+    if (!surface) return;
+    for (const part of ['toolbar', 'page']) { const image = surface.querySelector(`.browser-snapshot-${part}`); if (typeof event[part] === 'string' && /^data:image\/(png|jpeg);base64,/.test(event[part])) image.src = event[part]; }
+    surface.style.setProperty('--browser-toolbar-height', `${event.toolbarHeight || 148}px`);
+    surface.classList.add('has-snapshot');
+  }
+});
+function mountWorkbench(descriptor) {
+  let win = state.windows.find(current => current.kind === 'workbench' && current.documentId === descriptor.id);
+  if (win) { focusWindow(win.id); return win; }
+  win = { id: `workbench-${descriptor.id}`, documentId: descriptor.id, kind: 'workbench', documentTitle: descriptor.title, minimized: false, maximized: false, position: { x: 72, y: 40 }, size: { width: 1080, height: 720 }, z: ++nextLayer };
+  const element = $('windowTemplate').content.firstElementChild.cloneNode(true);
+  element.classList.add('workbench-window'); element.dataset.windowId = win.id; element.setAttribute('aria-label', 'Monaco Editor');
+  for (const child of [...element.children]) if (!child.classList.contains('titlebar')) child.remove();
+  const icon = element.querySelector('.window-app-icon'); icon.className = 'window-app-icon'; icon.replaceChildren(toolIcon('FileCode'));
+  element.querySelector('.window-title').textContent = descriptor.title;
+  element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭 Monaco Editor');
+  const iframe = document.createElement('iframe'); iframe.className = 'workbench-frame'; iframe.title = 'Monaco Editor 文档'; element.append(iframe);
+  renderToolIcons(element); state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
+  const bridge = RemoteWorkbenchFrame.mount({ iframe, id: descriptor.id, url: descriptor.url, call: (action, payload) => api.workbenchCall(descriptor.id, action, payload), onFocus: () => focusWindow(win.id), onError: error => notify(error.message) });
+  workbenchFrames.set(descriptor.id, bridge);
+  element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
+  element.addEventListener('click', event => { const action = event.target.closest('[data-window-action]')?.dataset.windowAction; if (action) void windowAction(action, win); });
+  bindWindowDrag(win, element); bindWindowResize(win, element); focusWindow(win.id); return win;
+}
+api.onWorkbenchEvent?.(event => {
+  if (event.type === 'open' || event.type === 'focus') { mountWorkbench(event); return; }
+  const win = state.windows.find(current => current.documentId === event.id);
+  if (!win) return;
+  if (event.type === 'message') workbenchFrames.get(event.id)?.send(event.event);
+  else if (event.type === 'closed') void windowAction('close-confirmed', win);
+  else if (event.type === 'title') { win.documentTitle = event.title; windowElements.get(win.id).querySelector('.window-title').textContent = event.title; renderDock(); }
 });
 function activityText(value) {
   const text = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
@@ -1051,12 +1094,12 @@ function renderDock() {
   for (const win of state.windows) {
     const tab = document.createElement('button');
     tab.className = `window-tab${win.id === state.activeWindow && !win.minimized ? ' active' : ''}${win.minimized ? ' minimized' : ''}`;
-    const appTitle = { browser: '浏览器', settings: '设置', activity: '实时监听', video: win.videoName || '视频播放器' }[win.kind];
+    const appTitle = { browser: '浏览器', workbench: win.documentTitle || 'Monaco Editor', settings: '设置', activity: '实时监听', video: win.videoName || '视频播放器' }[win.kind];
     const title = appTitle || (win.kind === 'terminal' ? `${PROGRAM_LABELS[win.program]} · ${win.folder}` : win.kind === 'image' ? win.imageName : win.folder);
     tab.dataset.windowId = win.id; tab.title = `${title}${win.minimized ? '（已最小化）' : ''}`;
     tab.setAttribute('aria-label', `${win.minimized ? '恢复' : '切换到'} ${title}`);
     const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = appTitle || (win.kind === 'terminal' ? PROGRAM_LABELS[win.program] : win.kind === 'image' ? win.imageName : basename(win.folder));
-    const appIcon = { browser: 'Globe', settings: 'Settings', activity: 'Activity', image: 'Image', video: 'Film', terminal: 'Terminal' }[win.kind];
+    const appIcon = { browser: 'Globe', workbench: 'FileCode', settings: 'Settings', activity: 'Activity', image: 'Image', video: 'Film', terminal: 'Terminal' }[win.kind];
     tab.append(appIcon ? toolIcon(appIcon) : glyph({ type: 'folder', name: '' }), label);
     tab.addEventListener('click', () => { win.minimized = false; focusWindow(win.id); save(); });
     if (win.kind === 'terminal') tab.addEventListener('contextmenu', event => showAppMenu(event, null, win));
@@ -1119,7 +1162,7 @@ function openTerminal(path, program = 'shell', filePath, readOnly = false) {
   if (typeof Terminal !== 'function' || typeof FitAddon === 'undefined' || typeof FitAddon.FitAddon !== 'function') {
     element.querySelector('.terminal-status').textContent = '终端组件未载入，请重新打开桌面'; return;
   }
-  const terminal = new Terminal({ cursorBlink: true, fontFamily: 'Consolas, "DejaVu Sans Mono", monospace', fontSize: 13, scrollback: 5000, theme: { background: '#18221f', foreground: '#e8efea', cursor: '#a8ddbd', selectionBackground: '#557b68' } });
+  const terminal = new Terminal({ cursorBlink: true, fontFamily: 'Consolas, "DejaVu Sans Mono", monospace', fontSize: 13, scrollback: 5000, theme: { background: '#2c1b2e', foreground: '#f6f5f4', cursor: '#ffffff', selectionBackground: '#714565' } });
   const fit = new FitAddon.FitAddon(); terminal.loadAddon(fit);
   const record = { terminal, fit, opened: false, active: true };
   terminals.set(win.id, record);
@@ -1371,6 +1414,13 @@ function renderWindow(win) {
   listing.scrollTop = scroll; element.hidden = win.minimized; syncSelection();
 }
 async function windowAction(action, win) {
+  if (win.kind === 'workbench' && action === 'close') {
+    if (win.closing) return;
+    win.closing = true;
+    try { const result = await api.workbenchCall(win.documentId, 'close', {}); if (!result.ok) throw new Error(result.error); if (!result.value || !getWindow(win.id)) return; }
+    catch (error) { notify(error.message); return; }
+    finally { win.closing = false; }
+  }
   if (win.kind === 'settings' && ['close', 'close-confirmed'].includes(action)) { closeSettings(); return; }
   if (win.kind === 'browser' && action === 'close') {
     try { await api.closeBrowser(win.browserId); } catch (error) { notify(error.message); return; }
@@ -1394,6 +1444,7 @@ async function windowAction(action, win) {
     finally { win.closing = false; if (button) button.disabled = false; }
   }
   if (action === 'close' || action === 'close-confirmed') {
+    if (win.kind === 'workbench') { workbenchFrames.get(win.documentId)?.destroy(); workbenchFrames.delete(win.documentId); }
     if (win.kind === 'terminal') disposeTerminal(win.id);
     if (win.kind === 'image') { images.get(win.id)?.viewer?.destroy(); images.delete(win.id); }
     if (win.kind === 'video') disposeVideo(win.id);
@@ -1590,6 +1641,7 @@ function restoreWindows() {
   if (active) focusWindow(active.id);
 }
 function receiveHostMessage(message) { if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'connectionInfo') { authenticatedProfile = message.profile || null; renderServerInfo(); if (authenticatedProfile && !connecting && $('connectionDialog').open) $('connectionDialog').close(); return; }
   if (message.type === 'fullscreenResult') {
     clearTimeout(fullscreenTimer); $('fullscreen').disabled = false;
     notify(message.message || (message.ok ? '已切换全屏视图；F11 或顶栏图标退出' : '全屏请求失败'));
@@ -1638,7 +1690,9 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
       if (initial) restoreWindows();
       renderIcons(); state.windows.forEach(renderWindow); renderDock(); save(); notify(`已刷新 ${rootPath}`);
     } else if (['missing', 'error', 'disconnected'].includes(message.status)) {
+      const activeProfile = authenticatedProfile;
       clearRemoteDesktop(message.status !== 'disconnected');
+      if (message.status !== 'disconnected') authenticatedProfile = activeProfile;
       if (message.status !== 'disconnected') {
         const remoteHome = message.homePath || message.home;
         homePath = typeof remoteHome === 'string' && remoteHome.startsWith('/') ? remoteHome : null;
@@ -1767,7 +1821,7 @@ for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')
   });
 }
 $('refreshSystemInfo').addEventListener('click', loadSystemInfo);
-$('settingsConnection').addEventListener('click', () => { closeSettings(); if (!$('settingsDialog').open && !$('connectionDialog').open) $('connectionDialog').showModal(); });
+$('settingsConnection').addEventListener('click', () => { closeSettings(); showConnectionPanel(); });
 $('settingsForm').addEventListener('submit', submitSettings);
 $('browseDesktopPath').addEventListener('click', openDirectoryPicker);
 $('desktopPickerForm').addEventListener('submit', event => {
@@ -1822,12 +1876,12 @@ function clearWindowViews(preserveTerminals = false) {
   for (const record of images.values()) record.viewer?.destroy(); images.clear();
   for (const id of videos.keys()) disposeVideo(id);
   for (const win of state.windows) {
-    if (win.kind === 'settings' || win.kind === 'activity') continue;
+    if (win.kind === 'settings' || win.kind === 'activity' || win.kind === 'workbench') continue;
     if (preserveTerminals && win.kind === 'terminal') continue;
     if (win.kind === 'browser') void api.closeBrowser?.(win.browserId).catch(error => notify(error.message));
     windowElements.get(win.id)?.remove(); windowElements.delete(win.id);
   }
-  state.windows = state.windows.filter(win => win.kind === 'settings' || win.kind === 'activity' || (preserveTerminals && win.kind === 'terminal'));
+  state.windows = state.windows.filter(win => win.kind === 'settings' || win.kind === 'activity' || win.kind === 'workbench' || (preserveTerminals && win.kind === 'terminal'));
 }
 function clearRemoteDesktop(preserveTerminals = false) {
   closeApplications();
@@ -1841,31 +1895,70 @@ function clearRemoteDesktop(preserveTerminals = false) {
   directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear(); pendingOperations.clear();
   state.shortcuts = []; state.pinnedApps = []; state.positions = {}; state.activeWindow = null; state.clipboard = null;
   selection = { scope: 'desktop', keys: new Set() };
-  remoteMode = false; desktopAvailable = false; desktopAccessError = ''; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null;
+  remoteMode = false; desktopAvailable = false; desktopAccessError = ''; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null; authenticatedProfile = null;
+  if (connectionProfiles && !connecting) setConnectionPanelMode('login');
   resetSystemInfo(); updateBuiltinShortcuts(); settingsBusy(false);
   connectionStatus = 'SSH · 未连接'; $('desktopPath').textContent = '连接 SSH 后打开远程桌面';
   rebuildItems(); renderIcons(); renderDock(); renderPinnedApps(); renderServerInfo();
   $('context').hidden = true; $('appContext').hidden = true;
 }
+function setConnectionPanelMode(mode) {
+  connectionPanelMode = mode;
+  const connected = mode === 'connected' && Boolean(authenticatedProfile);
+  $('connectionDialog').dataset.mode = connected ? 'connected' : mode;
+  $('connectionTitle').textContent = connected ? 'SSH 已连接' : mode === 'reconnect' ? '重新连接 SSH' : 'SSH 登录';
+  $('serverSwitcher').hidden = connected || mode === 'reconnect';
+  $('loginCredentials').hidden = connected;
+  $('connectedAccount').hidden = !connected;
+  $('connectionAdvanced').hidden = connected || mode === 'reconnect';
+  $('connectSubmit').hidden = connected;
+  for (const id of ['disconnectButton', 'reconnectButton', 'switchAccountButton']) $(id).hidden = !connected;
+  $('connectionError').textContent = '';
+  if (connected) {
+    connectionProfiles?.clearSecrets();
+    $('serverDisplayName').textContent = authenticatedProfile.alias || authenticatedProfile.host;
+    $('serverDisplayAddress').textContent = authenticatedProfile.host + ':' + authenticatedProfile.port;
+    $('connectedUsername').textContent = authenticatedProfile.username;
+    $('connectedAddress').textContent = authenticatedProfile.username + '@' + (authenticatedProfile.address || authenticatedProfile.host) + ':' + authenticatedProfile.port;
+    $('connectionHint').textContent = '当前 SSH 会话已连接。';
+  } else {
+    $('connectSubmit').textContent = mode === 'reconnect' ? '重新连接' : '登录';
+    $('sshUsername').readOnly = mode === 'reconnect';
+    $('connectionHint').textContent = mode === 'reconnect' ? '请重新输入密码；使用私钥时可填写口令。密码与口令仅用于本次登录。' : '首次连接需要核验 SSH 主机指纹。';
+    // Reconnection still permits a private-key passphrase without exposing profile editing.
+    $('reconnectKeyCredentials').hidden = mode !== 'reconnect' || !$('sshPrivateKey').value;
+  }
+  if (connected) $('reconnectKeyCredentials').hidden = true;
+}
+function showConnectionPanel() {
+  if (connecting) return;
+  if (authenticatedProfile) setConnectionPanelMode('connected');
+  else setConnectionPanelMode('login');
+  if (!$('connectionDialog').open) $('connectionDialog').showModal();
+}
 async function initializeConnection() {
-  const profiles = RemoteConnectionProfiles.mount(api);
+  const profiles = connectionProfiles = RemoteConnectionProfiles.mount(api);
   document.querySelector('.login-avatar').replaceChildren(toolIcon('Server'));
-  $('connectButton').replaceChildren(toolIcon('Plug'));
-  $('downloadsButton').replaceChildren(toolIcon('Download'));
+  $('connectButton').replaceChildren(toolIcon('Users'));
+  $('downloadsButton').replaceChildren(toolIcon('ArrowUpDown'));
   $('browserButton').replaceChildren(toolIcon('Globe'));
   $('browserButton').addEventListener('click', openServerBrowser);
-  $('connectButton').addEventListener('click', () => { if (!$('connectionDialog').open) $('connectionDialog').showModal(); });
+  $('connectButton').addEventListener('click', showConnectionPanel);
+  $('switchAccountButton').addEventListener('click', () => { profiles.fill(authenticatedProfile || {}); setConnectionPanelMode('login'); $('sshPassword').focus(); });
+  $('reconnectButton').addEventListener('click', () => { profiles.fill(authenticatedProfile || {}); setConnectionPanelMode('reconnect'); $('sshPassword').focus(); });
   $('closeConnection').addEventListener('click', () => $('connectionDialog').close());
+  $('connectionDialog').addEventListener('close', () => { $('reconnectPassphrase').value = ''; });
   $('connectionForm').addEventListener('submit', async event => {
-    event.preventDefault(); if (connecting) return;
+    event.preventDefault(); if (connecting || connectionPanelMode === 'connected') return;
     connecting = true; $('connectSubmit').disabled = true; $('connectSubmit').textContent = '正在连接…'; $('connectionError').textContent = '';
     const input = profiles.input();
     if ($('sshPassword').value) input.password = $('sshPassword').value;
     if ($('sshPrivateKey').value) input.privateKeyPath = $('sshPrivateKey').value;
-    if ($('sshPassphrase').value) input.passphrase = $('sshPassphrase').value;
-    try { const result = await api.connect(input); if (result?.cancelled) { $('connectionError').textContent = '已取消切换连接，当前终端已保留。'; return; } $('connectionDialog').close(); profiles.refresh(await api.getSettings(), false); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
+    if (connectionPanelMode === 'reconnect' && $('reconnectPassphrase').value) input.passphrase = $('reconnectPassphrase').value;
+    else if ($('sshPassphrase').value) input.passphrase = $('sshPassphrase').value;
+    try { const result = await api.connect(input); if (result?.cancelled) { $('connectionError').textContent = '已取消切换连接，当前会话与编辑内容已保留。'; return; } authenticatedProfile ||= { ...profiles.input(), username: result.username || input.username, address: result.address }; renderServerInfo(); $('connectionDialog').close(); profiles.refresh(await api.getSettings(), false); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
     catch(error) { $('connectionError').textContent = error.message || String(error); notify('连接失败：' + (error.message || error)); }
-    finally { $('sshPassword').value = ''; $('sshPassphrase').value = ''; connecting = false; $('connectSubmit').disabled = false; $('connectSubmit').textContent = '登录'; }
+    finally { profiles.clearSecrets(); $('reconnectPassphrase').value = ''; connecting = false; $('connectSubmit').disabled = false; $('connectSubmit').textContent = connectionPanelMode === 'reconnect' ? '重新连接' : '登录'; }
   });
   $('chooseKey').addEventListener('click', async () => { try { const value = await api.choosePrivateKey(); if (value) $('sshPrivateKey').value = value; } catch(error) { $('connectionError').textContent = error.message; } });
   $('clearKey').addEventListener('click', () => { $('sshPrivateKey').value = ''; $('sshPassphrase').value = ''; });
@@ -1881,9 +1974,11 @@ async function initializeConnection() {
   document.addEventListener('keydown', event => {
     if (event.key === 'F11' || (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'f')) { event.preventDefault(); requestFullscreen(); }
   }, true);
-  clearRemoteDesktop(); $('connectionDialog').showModal();
+  clearRemoteDesktop(); showConnectionPanel();
   try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; profiles.refresh(saved); }
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
+  try { for (const descriptor of await api.listDocuments?.() || []) mountWorkbench(descriptor); }
+  catch (error) { notify('无法恢复 Monaco Editor：' + error.message); }
 }
 function updateDownload(value) {
   if (value?.type === 'history-error') { $('transferError').textContent = value.error || '无法保存传输历史'; notify($('transferError').textContent); return; }

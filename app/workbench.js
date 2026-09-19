@@ -145,7 +145,7 @@
   bind('#shutdownKernel', async () => { if (await call('kernelShutdown')) { kernelReady(false); showKernelInfo(await call('jupyterInfo')); } });
   window.workbench.onEvent(event => {
     if (event.type === 'saved') { documentInfo = event.document; updateFileControls(); if (!loading) changed(); }
-    if (event.type === 'requestSaveAs') { if (fileBusy) pendingSaveAs = true; else saveAs().catch(error => status(error.message, true)); }
+    if (event.type === 'requestSaveAs') { if (fileBusy || !documentInfo) pendingSaveAs = true; else saveAs().catch(error => status(error.message, true)); }
     if (event.type === 'disconnected') { connected = false; kernelReady(false); $('#kernelState').textContent = 'SSH 已断开'; if (documentInfo) updateFileControls(); $('#notebookToolbar').querySelectorAll('button,select').forEach(item => { item.disabled = true; }); $('#notebook').querySelectorAll('button').forEach(item => { item.disabled = true; }); sourceEditor?.updateOptions({ readOnly: true }); notebookEditors.forEach(item => item.editor.updateOptions({ readOnly: true })); status('SSH 已断开，未保存内容仍保留在此窗口，可复制到本机。', true); }
     if (event.type === 'jupyterNotice') { status(event.error || 'Jupyter 状态已变化', true); if (event.error) kernelReady(false); }
     if (event.type === 'jupyterOutput') {
@@ -169,6 +169,18 @@
     monaco.languages.setMonarchTokensProvider('fortran', { ignoreCase: true, keywords: ['program','module','subroutine','function','end','if','then','else','elseif','endif','do','while','enddo','select','case','where','forall','contains','use','implicit','none','integer','real','double','precision','complex','logical','character','type','class','allocate','deallocate','dimension','parameter','intent','in','out','inout','return','call','print','write','read','open','close','stop','cycle','exit','public','private','interface','procedure','result','recursive','pure','elemental'], tokenizer: { root: [[/!.*/, 'comment'], [/^\s*[cC*](?=\s).*/, 'comment'], [/'([^']|'')*'/, 'string'], [/"([^"]|"")*"/, 'string'], [/\b\d+(\.\d*)?([ed][+-]?\d+)?(_\w+)?\b/i, 'number'], [/\.[a-z]+\./i, 'operator'], [/[a-z_]\w*/i, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }], [/[=+*/<>:-]+/, 'operator']] } });
     monaco.languages.setLanguageConfiguration('fortran', { comments: { lineComment: '!' }, brackets: [['(',')'],['[',']']], autoClosingPairs: [{open:'(',close:')'},{open:'[',close:']'},{open:'"',close:'"'},{open:"'",close:"'"}], folding: { offSide: false, markers: { start: /^\s*!\s*#?region\b/i, end: /^\s*!\s*#?endregion\b/i } }, indentationRules: { increaseIndentPattern: /^\s*(?:(?:program|module|subroutine|function|do|select|type|interface)\b(?!\s*\()|if\b.*then\s*$)/i, decreaseIndentPattern: /^\s*(?:end(?:\s|$)|endif\b|enddo\b|else\b)/i } });
     monaco.languages.registerFoldingRangeProvider('fortran', { provideFoldingRanges(model) { const stack = [], ranges = []; for (let line = 1; line <= model.getLineCount(); line++) { const text = model.getLineContent(line).trim(); if (/^(?:end(?:\s|$)|enddo\b|endif\b|endselect\b)/i.test(text)) { const start = stack.pop(); if (start && line > start) ranges.push({ start, end: line }); } else if (/^(?:program|module(?!\s+procedure)|subroutine|(?:\w+\s+)?function|do|select\s+case|interface)\b|^if\b.*\bthen\s*$/i.test(text)) stack.push(line); } return ranges; } });
-    try { const loaded = await call('load'); connected = loaded.connected; defaultDirectory = loaded.defaultDirectory || '/'; loadDocument(loaded.document); status(documentInfo.readOnly ? '无编辑权限，已只读打开。可搜索、复制或另存为。' : documentInfo.untitled ? '已打开未命名文件。Ctrl+S 选择服务器路径并保存。' : '已打开服务器文件。Ctrl+F 搜索，Ctrl+H 替换，Ctrl+S 保存。'); } catch(error) { status(error.message, true); }
+    try {
+      const loaded = await call('load'); connected = loaded.connected; defaultDirectory = loaded.defaultDirectory || '/';
+      const draft = loaded.dirty && typeof loaded.draftText === 'string';
+      loadDocument(draft ? { ...loaded.document, text: loaded.draftText } : loaded.document);
+      if (draft) { documentInfo = loaded.document; changed(); }
+      if (!connected) {
+        $('#kernelState').textContent = 'SSH 已断开';
+        $('#notebookToolbar').querySelectorAll('button,select').forEach(item => { item.disabled = true; });
+        $('#notebook').querySelectorAll('button').forEach(item => { item.disabled = true; });
+        status('SSH 已断开，未保存内容仍保留在此窗口，可复制到本机。', true);
+      } else status(documentInfo.readOnly ? '无编辑权限，已只读打开。可搜索、复制或另存为。' : documentInfo.untitled ? '已打开未命名文件。Ctrl+S 选择服务器路径并保存。' : '已打开服务器文件。Ctrl+F 搜索，Ctrl+H 替换，Ctrl+S 保存。');
+      if (pendingSaveAs && connected) { pendingSaveAs = false; saveAs().catch(error => status(error.message, true)); }
+    } catch(error) { status(error.message, true); }
   }, error => status(`编辑器加载失败：${error.message || error}`, true)), error => status(`编辑器加载失败：${error.message || error}`, true));
 })();

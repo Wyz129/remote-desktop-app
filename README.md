@@ -1,6 +1,6 @@
 # Remote Desktop App
 
-通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.7。应用使用 Electron 44.4.2，提供 Monaco Editor、浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
+通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.8。应用使用 Electron 44.4.2，提供 Monaco Editor、浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
 
 独立应用仓库为私有的 [Wyz129/remote-desktop-app](https://github.com/Wyz129/remote-desktop-app)。它由原扩展 0.0.7 的提交 `8c2e415f41759dca41d632c855347d539180e6ca` 克隆开发，保留迁移历史；插件仓库 `Wyz129/remote-desktop` 独立维护。本地工作目录为 `C:\0_myfiles\new_projects\remote-desktop-app`；旧 `upstream` 推送地址保持禁用，新仓库使用 `origin`。
 
@@ -16,13 +16,15 @@ npm.cmd start
 
 开发环境使用 Node.js 24 和 npm；首次安装/启动需要下载 Electron。启动脚本自动从子进程环境移除 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。`npm.cmd run dev` 启用 Electron 日志，不应将密码或私钥加入日志。
 
-本机可运行程序：`artifacts/electron-1.1.7/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。
+本机可运行程序：`artifacts/electron-1.1.8/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。
 
 启动后显示 Ubuntu 风格的 SSH 登录窗口。顶部选择已保存的服务器，输入用户名和密码即可登录；在“高级选项”设置地址、端口（默认 22）、别名或选择本地私钥，然后点击“保存服务器配置”。可保存多个服务器并快速切换，切换时清空密码和私钥口令。配置只保存地址、端口、用户名、别名和私钥路径，不保存密码或私钥内容。连接成功后窗口标题显示 `Remote Desktop - ssh 用户名@服务器IP:端口 别名`。
 
 首次连接弹出系统原生主机密钥核验窗口，显示 SHA-256 指纹；确认后才继续认证并保存该主机与端口的指纹。以后连接必须匹配已保存的指纹，变化时明确拒绝。请使用从服务器管理员处获得的指纹核对。应用不会自动安装远程软件。
 
-全屏可通过顶栏全屏图标、F11 或 Ctrl+Alt+F 切换；Esc 退出全屏。顶栏插头图标可重新打开连接窗口或断开。关闭应用会结束 SSH 和该应用打开的远程终端。
+全屏可通过顶栏全屏图标、F11 或 Ctrl+Alt+F 切换；Esc 退出全屏。顶栏右侧显示“用户名·已连接”，“切换账号”按钮打开当前连接面板；已连接时显示账号文本及“断开、重新连接、切换账号”。重新连接需重新输入本次认证信息；切换账号返回登录表单，在确认登录前保留现有连接。关闭应用会结束 SSH 和该应用打开的远程终端。
+
+1.1.8 采用与登录界面协调的 Ubuntu 紫橙背景、暖灰窗口和圆角控件；终端内的重复启动工具栏已移除。浏览器未被遮挡时保持原生实时页面，重叠时显示约每 0.75 秒更新的背景预览，聚焦后恢复完整交互。详见 [1.1.8 交付说明](docs/RELEASE-1.1.8.md)。
 
 ## 远程桌面与文件
 
@@ -35,7 +37,7 @@ npm.cmd start
 - 资源管理器可浏览 `/` 起的整个文件系统及外部符号链接，由服务器授予当前账号的权限决定访问与修改能力。目录访问失败保留上一个成功位置、内容和历史，同时显示“无访问权限”、请求路径及具体错误。登录主目录、当前桌面根目录、`/` 及其上级目录不能整体移动、重命名或删除。隐藏文件仍可通过设置显示。
 - F5 刷新，F2 重命名，Delete 请求删除，Ctrl+C/X/V 复制、剪切和粘贴。快捷键作用于应用内当前区域。
 
-普通文本或脚本统一在 Monaco Editor 打开，侧栏底部“工具箱”面板提供启动入口，支持新建未命名文档和打开远程文件。打开前通过当前 SSH 账号检查实际读写权限；无法读取时显示“无访问权限”，可读但不可写时显示“无编辑权限”，可选择只读打开。实际操作仍受服务器权限约束。压缩包、ODB、办公文档等常见二进制文件提示下载后处理。Vim、htop 必须已安装在服务器 PATH 中，缺失时终端明确报错。
+普通文本或脚本统一在虚拟桌面内部的 Monaco Editor 窗口打开，侧栏底部“工具箱”面板提供启动入口，支持新建未命名文档和打开远程文件。打开前通过当前 SSH 账号检查实际读写权限；无法读取时显示“无访问权限”，可读但不可写时显示“无编辑权限”，可选择只读打开。实际操作仍受服务器权限约束。压缩包、ODB、办公文档等常见二进制文件提示下载后处理。Vim、htop 必须已安装在服务器 PATH 中，缺失时终端明确报错。
 
 ## Monaco Editor、Notebook 与 HTML
 
@@ -123,6 +125,6 @@ npm.cmd test
 npm.cmd run package
 ```
 
-`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.7/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Viewer.js、Video.js、Markdown、KaTeX 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
+`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.8/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Viewer.js、Video.js、Markdown、KaTeX 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
 
 结果和实际验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 与 Jupyter 协议夹具不能代表已验收用户服务器；本轮仅使用隔离测试服务，未操作现有服务器会话。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。

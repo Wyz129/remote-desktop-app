@@ -100,6 +100,8 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('#desktopSettings').click();
   for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 0; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal((await browserViews()).visible, 0);
+  await page.waitForFunction(() => document.querySelector('.browser-background.has-snapshot .browser-snapshot-page')?.naturalWidth > 0);
+  await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-browser-background.png' : 'electron-browser-background.png') });
   await page.locator('#closeSettings').click();
   await page.locator('.browser-window [data-window-action="close"]').click();
   await page.locator('.browser-window').waitFor({state:'detached'});
@@ -196,19 +198,14 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
     finally {untrusted.destroy();}
   }, downloadedTask.id);
   assert.match(deniedSender, /不受信任|非应用窗口|未经授权|untrusted|trusted/i);
-  // The preceding security check creates a short-lived about:blank window.
-  // Its Playwright event can arrive after that check has already destroyed it.
-  const documentOpened = application.waitForEvent('window', { predicate: async candidate => {
-    try { await candidate.waitForURL('**/app/workbench.html', { timeout: 12000 }); return true; }
-    catch { return false; }
-  } });
   await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/notes.txt"]`).dblclick();
-  const editor = await documentOpened; editor.setDefaultTimeout(12000);
+  await page.locator('.workbench-frame').waitFor();
+  const editor = await page.locator('.workbench-frame').elementHandle().then(handle => handle.contentFrame());
   await editor.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
   assert.equal(await editor.locator('.brand').textContent(), 'Monaco Editor');
   assert.equal(await editor.evaluate(()=>window.monaco.editor.getModels()[0].getValue()), 'Real Electron -> IPC -> SSH fixture\n');
   assert.equal(await page.locator('.terminal-window').count(), 0);
-  const documentClosed = editor.waitForEvent('close'); await editor.evaluate(() => window.close()); await documentClosed;
+  await page.locator('.workbench-window [data-window-action=close]').click(); await page.locator('.workbench-window').waitFor({state:'detached'});
   await page.evaluate(() => window.remoteDesktop.send({ type: 'pinApp', app: { program: 'shell', label: 'Shell' } }));
   await page.locator('#pinnedApps').getByText('Shell', { exact: true }).waitFor();
   await page.evaluate(() => window.remoteDesktop.send({ type: 'pinApp', app: { program: 'vim', label: 'Vim' } }));
@@ -217,6 +214,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.evaluate(() => window.remoteDesktop.send({ type: 'unpinApp', id: 'pinned-shell' }));
   await page.waitForFunction(() => document.querySelectorAll('#pinnedApps .pinned-app').length === 1);
   await page.keyboard.press('Control+Alt+t');
+  assert.equal(await page.locator('.terminal-commandbar').count(), 0);
   await page.waitForFunction(() => window.ipcEvents.some(message => message.type === 'terminalOpened'));
   const terminalId = await page.evaluate(() => window.ipcEvents.find(message => message.type === 'terminalOpened').id);
   await page.evaluate(id => window.remoteDesktop.send({ type: 'terminalInput', id, data: 'Electron 中文 input\r' }), terminalId);
@@ -279,14 +277,15 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await explorer.locator('.entry').filter({ hasText: 'readonly.txt' }).dblclick();
   await page.locator('#fileAccessReadOnly').waitFor();
   assert.match(await page.locator('#fileAccessTitle').textContent(), /无编辑权限/);
-  const readOnlyOpened = application.waitForEvent('window'); await page.locator('#fileAccessReadOnly').click();
-  const readOnlyEditor = await readOnlyOpened; readOnlyEditor.setDefaultTimeout(12000);
+  await page.locator('#fileAccessReadOnly').click();
+  await page.locator('.workbench-frame').waitFor();
+  const readOnlyEditor = await page.locator('.workbench-frame').elementHandle().then(handle => handle.contentFrame());
   await readOnlyEditor.locator('#readOnly').waitFor({state:'visible'});
   await readOnlyEditor.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
   assert.equal(await readOnlyEditor.locator('#save').isDisabled(),true);
   assert.equal(await readOnlyEditor.evaluate(() => window.monaco.editor.getModels()[0].getValue()),'public readonly file');
   assert.equal(await page.locator('.terminal-window').count(), 0);
-  const readOnlyClosed = readOnlyEditor.waitForEvent('close'); await readOnlyEditor.evaluate(() => window.close()); await readOnlyClosed;
+  await page.locator('.workbench-window [data-window-action=close]').click(); await page.locator('.workbench-window').waitFor({state:'detached'});
   await explorer.locator('[data-window-action="close"]').click();
   await page.locator('#desktopSettings').click();
   await page.locator('#settingsDesktopPath').fill('/outside/blocked'); await page.locator('#applySettings').click();

@@ -50,7 +50,7 @@ async function scenario(name, fn) {
       onActivityEvent(callback) { window.activityEvent = callback; },
       async getActivitySnapshot() { return { sessions: [], entries: [], systemLogPath: '', connected: false, error: null }; },
       async openBrowser() { window.calls.push({type:'openBrowser'}); if (window.deferBrowserOpen) return new Promise(resolve=>{window.resolveBrowserOpen=resolve;}); return {id:41,embedded:true}; },
-      async layoutBrowser(id,bounds,hidden) { window.calls.push({type:'browserLayout',id,bounds,hidden}); },
+      async layoutBrowser(id,bounds,hidden,snapshot) { window.calls.push({type:'browserLayout',id,bounds,hidden,snapshot}); },
       async closeBrowser(id) { window.calls.push({type:'closeBrowser',id}); window.browserEvent({type:'closed',id}); return true; },
       async openDocument(path,options) { window.calls.push({type:'openDocument',path,...options}); },
       async chooseUpload() { window.calls.push({type:'chooseUpload'}); return ['D:\\projects\\code.py']; },
@@ -584,7 +584,7 @@ test('desktop_switch_backend_timeout_keeps_previous_location_and_releases_contro
 test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery', () => scenario('saved-desktop-recovery', async page => {
   await page.evaluate(()=>{window.unavailableDesktop=true;window.directories['/shared/recovered']=[{name:'restored.txt',path:'/shared/recovered/restored.txt',type:'file'}];});
   await connect(page);
-  assert.match(await page.locator('#connection').textContent(),/已连接，桌面不可用/);
+  assert.equal(await page.locator('#connection').textContent(),'tester·已连接');
   assert.match(await page.locator('#notice').textContent(),/无访问权限.*Permission denied/);
   await page.locator('#homeShortcut').click();
   await page.locator('.window').getByText('profile.txt',{exact:true}).waitFor();
@@ -596,7 +596,7 @@ test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery',
   await page.locator('#settingsDesktopPath').fill('/shared/recovered');await page.locator('#applySettings').click();
   await page.locator('#settingsDialog').waitFor({state:'hidden'});
   assert.equal(await page.locator('#desktopPath').textContent(),'/shared/recovered');
-  assert.equal(await page.locator('#connection').textContent(),'SSH · 已连接');
+  assert.equal(await page.locator('#connection').textContent(),'tester·已连接');
   assert.equal(await page.locator('#icons [data-path="/shared/recovered/restored.txt"]').count(),1);
   await page.locator('#desktopSettings').click();assert.equal(await page.locator('#settingsError').textContent(),'');
 }));
@@ -970,4 +970,21 @@ test('transfer_history_can_open_targets_delete_finished_and_keep_active_tasks', 
   assert.equal(await page.locator('.download-item').count(),0);
   await page.evaluate(()=>window.progress({type:'history-error',error:'无法保存传输历史：Permission denied'}));
   assert.match(await page.locator('#transferError').textContent(),/无法保存传输历史/);
+}));
+
+
+test('browser_stays_live_without_overlap_and_previews_when_covered', () => scenario('browser-background', async page => {
+  await connect(page); await page.locator('#browserButton').click(); await page.locator('.browser-window').waitFor();
+  await page.evaluate(() => { const win=state.windows.find(win=>win.kind==='browser'); win.position={x:10,y:10};win.size={width:430,height:300};positionWindow(win); });
+  await page.locator('#homeShortcut').click();
+  await page.evaluate(() => { const win=state.windows.find(win=>!win.kind);win.position={x:700,y:70};win.size={width:550,height:420};positionWindow(win); });
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1)?.hidden===false);
+  await page.evaluate(() => { const win=state.windows.find(win=>!win.kind);win.position={x:80,y:70};positionWindow(win); });
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1)?.snapshot===true);
+  await page.evaluate(() => { const canvas=document.createElement('canvas');canvas.width=10;canvas.height=10;const data=canvas.toDataURL();window.browserEvent({type:'snapshot',id:41,toolbar:data,page:data,toolbarHeight:148}); });
+  await page.waitForFunction(()=>document.querySelector('.browser-background.has-snapshot .browser-snapshot-page')?.naturalWidth===10);
+  await page.locator('#browserButton').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1)?.hidden===false);
+  await page.locator('.browser-window [data-window-action=minimize]').click();
+  await page.waitForFunction(()=>{const last=window.calls.filter(call=>call.type==='browserLayout').at(-1);return last?.hidden&&!last.snapshot;});
 }));

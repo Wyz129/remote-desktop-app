@@ -1,8 +1,10 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-20。对象为 `remote-desktop-app` 1.1.7，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-20。对象为 `remote-desktop-app` 1.1.8，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.8 的内嵌 Monaco、遮挡时浏览器背景更新、账号面板、Ubuntu 样式与打包验证见 [1.1.8 交付记录](docs/RELEASE-1.1.8.md)。测试均使用隔离进程与回环服务，不操作用户现有实例或服务器。
 
 1.1.7 的全量模块与界面回归、首次使用目录初始化、服务器配置不落盘密码、实际 SSH/PTY 指令与回复、Video.js 真实播放/seek，以及源码和打包集成验证见 [1.1.7 交付记录](docs/RELEASE-1.1.7.md)。所有服务器操作使用隔离回环夹具，没有接入用户生产服务器。
 

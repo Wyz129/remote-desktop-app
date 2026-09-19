@@ -85,6 +85,31 @@ test('first connection creates private storage, resets old desktop preference, s
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle()), `Remote Desktop - ssh ${fixture.username}@127.0.0.1:${fixture.config.port} 计算服务器 A`);
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
 
+  assert.equal(await page.locator('#accountName').count(), 0);
+  assert.equal(await page.locator('#connection').textContent(), `${fixture.username}·已连接`);
+  await page.locator('#connectButton').click();
+  assert.equal(await page.locator('#connectedUsername').textContent(), fixture.username);
+  for (const selector of ['#sshUsername', '#sshPassword', '#connectionAdvanced', '#serverSwitcher', '#connectSubmit']) assert.equal(await page.locator(selector).isVisible(), false, selector);
+  for (const selector of ['#disconnectButton', '#reconnectButton', '#switchAccountButton']) assert.equal(await page.locator(selector).isVisible(), true, selector);
+  await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-account.png' : 'electron-account.png') });
+  await page.locator('#switchAccountButton').click();
+  assert.equal(await page.locator('#sshUsername').isEditable(), true);
+  assert.equal(await page.locator('#sshPassword').inputValue(), '');
+  assert.equal(await page.locator('#serverSwitcher').isVisible(), true);
+  await page.locator('#serverProfile').selectOption({ label: (await page.locator('#serverProfile option').allTextContents()).find(label => label.includes('备用服务器 B')) });
+  await page.locator('#closeConnection').click();
+  await page.locator('#connectButton').click();
+  assert.equal(await page.locator('#serverDisplayName').textContent(), '计算服务器 A', 'active account never follows an unsubmitted server selection');
+  await page.locator('#reconnectButton').click();
+  assert.equal(await page.locator('#sshUsername').isEditable(), false);
+  assert.equal(await page.locator('#sshPassword').inputValue(), '');
+  await page.locator('#sshPassword').fill(fixture.password);
+  await page.locator('#connectSubmit').click();
+  await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('#connection').textContent(), `${fixture.username}·已连接`);
+  const afterReconnect = await fs.readFile(path.join(userData, 'settings.json'), 'utf8');
+  assert.ok(!afterReconnect.includes(fixture.password));
+
   await page.locator('#applicationsButton').click();
   assert.equal(await page.locator('#applicationsPanel').getByRole('heading', { name: '工具箱' }).count(), 1);
   assert.equal(await page.locator('#applicationsGrid [data-application]').count(), 7);

@@ -39,6 +39,6 @@ window.RemoteConnectionProfiles = Object.freeze({
     });
     $('connectionForm').addEventListener('invalid', () => { $('connectionAdvanced').open = true; }, true);
     $('connectionDialog').addEventListener('close', clearSecrets);
-    return { refresh, input, clearSecrets };
+    return { refresh, input, clearSecrets, fill };
   }
 });
