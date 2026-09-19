@@ -775,7 +775,15 @@ async function openServerBrowser() {
       const element = $('windowTemplate').content.firstElementChild.cloneNode(true);
       element.classList.add('browser-window'); element.dataset.windowId = win.id; element.setAttribute('aria-label', '服务器浏览器');
       for (const child of [...element.children]) if (!child.classList.contains('titlebar')) child.remove();
+      // The browser is a virtual application window, so keep its titlebar icon
+      // distinct from the folder icon used by the explorer template.
+      const appIcon = element.querySelector('.window-app-icon');
+      if (appIcon) {
+        appIcon.className = 'window-app-icon browser-app-icon';
+        appIcon.replaceChildren(toolIcon('Globe'));
+      }
       element.querySelector('.window-title').textContent = '服务器浏览器';
+      element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭浏览器窗口');
       const surface = document.createElement('div'); surface.className = 'browser-surface';
       const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = '点击继续浏览'; resume.addEventListener('click', () => focusWindow(win.id)); surface.append(resume); element.append(surface);
       renderToolIcons(element); state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);

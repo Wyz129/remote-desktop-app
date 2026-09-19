@@ -1,6 +1,6 @@
 # Remote Desktop App
 
-通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.1。应用使用 Electron 44.4.2，提供文档工作台、服务器网络浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
+通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.2。应用使用 Electron 44.4.2，提供文档工作台、服务器网络浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
 
 独立应用仓库为私有的 [Wyz129/remote-desktop-app](https://github.com/Wyz129/remote-desktop-app)。它由原扩展 0.0.7 的提交 `8c2e415f41759dca41d632c855347d539180e6ca` 克隆开发，保留迁移历史；插件仓库 `Wyz129/remote-desktop` 独立维护。本地工作目录为 `C:\0_myfiles\new_projects\remote-desktop-app`；旧 `upstream` 推送地址保持禁用，新仓库使用 `origin`。
 
@@ -16,7 +16,7 @@ npm.cmd start
 
 开发环境使用 Node.js 24 和 npm；首次安装/启动需要下载 Electron。启动脚本自动从子进程环境移除 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。`npm.cmd run dev` 启用 Electron 日志，不应将密码或私钥加入日志。
 
-本机可运行程序：`artifacts/electron-1.1.1/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。
+本机可运行程序：`artifacts/electron-1.1.2/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。
 
 启动后应用立即全屏，并显示 SSH 连接窗口。填写主机、端口（默认 22）、用户名和密码；也可使用“选择”按钮选取本地私钥，并按需要填写私钥口令。私钥由主进程读取，页面只提交所选路径。密码和私钥口令不写入应用设置。
 
@@ -111,6 +111,6 @@ npm.cmd test
 npm.cmd run package
 ```
 
-`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.1/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Markdown、KaTeX 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
+`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.2/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Markdown、KaTeX 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
 
 结果和实际验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 与 Jupyter 协议夹具不能代表已验收用户服务器；本轮未获得用户服务器凭据，也未操作现有 VS Code/SSH 窗口。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。

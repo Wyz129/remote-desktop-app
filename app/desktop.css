@@ -135,6 +135,8 @@ button:disabled { opacity: .4; cursor: default; }
 .titlebar { height: 39px; flex: none; display: flex; align-items: center; gap: 10px; padding-left: 12px; background: #353c38; border-bottom: 1px solid #ffffff10; user-select: none; touch-action: none; cursor: move; }
 .window-app-icon.glyph.folder { width: 17px; height: 12px; margin: 2px 0 0; border-radius: 2px; }
 .window-app-icon.glyph.folder::before { width: 8px; height: 3px; top: -3px; border-radius: 2px 2px 0 0; }
+.browser-app-icon { width: 19px; height: 19px; display: inline-flex; align-items: center; justify-content: center; color: #b6dfc7; }
+.browser-app-icon .tool-icon { width: 18px; height: 18px; }
 .window-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .window-controls { align-self: stretch; display: flex; }
 .window-control { width: 39px; padding: 0; border: 0; border-radius: 0; font-size: 17px; }

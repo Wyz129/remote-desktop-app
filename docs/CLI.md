@@ -5,7 +5,7 @@
 以下 PowerShell 示例先为启动器路径设置变量：
 
 ```powershell
-$rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1.0\win-unpacked\resources\cli\scripts\rdesktop.cmd'
+$rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1.2\win-unpacked\resources\cli\scripts\rdesktop.cmd'
 & $rdesktop launch
 & $rdesktop list
 & $rdesktop status
@@ -45,6 +45,8 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 默认 30 秒超时，`--timeout` 单位为秒，允许 0.1–300 秒；stdout 与 stderr 合计上限为 4 MiB。超时、超量或 Ctrl+C 会请求终止并关闭该命令通道，不能保证停止已经脱离会话的后台进程。不提供交互 stdin 或 PTY；Vim、密码提示等交互程序应在桌面终端中运行。
 
 此接口允许当前本地用户以已认证的服务器账号执行任意 shell 命令，是明确提供的本地功能。不要向不受信任的脚本转交实例注册目录或其认证令牌。网页浏览器不拥有该接口。
+
+本机 Codex 的调用规范已安装在 `C:\Users\KunYu\.codex\远程桌面命令行操作规范.md`，由同目录的 `AGENTS.md` 按需索引；这两个文件是本机指引，不随 Git 仓库发布。规范包含核对实例身份、显式 `--instance`、读取 JSON 和退出码、断线与超时处理。Codex 执行复杂远程命令时优先使用 `node scripts/cli.cjs`，避免 `.cmd` 包装器增加 cmd.exe 转义层；PowerShell 7 下用单引号或单引号 here-string 保留远程 shell 文本。
 
 ## 上传、下载与取消
 

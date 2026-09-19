@@ -596,6 +596,11 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), ['homeShortcut','browserShortcut','settingsShortcut']);
   await page.locator('#browserShortcut').click();
   const win = page.locator('.browser-window'); await win.waitFor();
+  const browserIcon = win.locator('.browser-app-icon');
+  assert.equal(await browserIcon.count(), 1, 'browser window titlebar uses a dedicated browser icon');
+  assert.equal(await win.locator('.window-app-icon.glyph.folder').count(), 0, 'browser window must not use the explorer folder icon');
+  assert.equal(await browserIcon.locator('svg').count(), 1, 'browser icon is rendered as a Lucide globe');
+  await page.screenshot({path:path.join(root,'artifacts','standalone-browser-window.png')});
   await page.waitForFunction(()=>window.calls.some(call=>call.type==='browserLayout'&&!call.hidden));
   const bounds = await win.locator('.browser-surface').boundingBox();
   const layout = await page.evaluate(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1));
