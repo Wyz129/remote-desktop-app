@@ -48,7 +48,7 @@ let saveTimer;
 let pendingConfig = {};
 let settingsRequest = null;
 let settingsTimer;
-let extensionSettings = { downloadThreshold: 50 * 1024 * 1024, scriptEditor: 'vim' };
+let extensionSettings = { downloadThreshold: 50 * 1024 * 1024, scriptEditor: 'monaco' };
 let extensionSettingsFormBaseline = { ...extensionSettings };
 let extensionSettingsRequest = null;
 let extensionSettingsRead = null;
@@ -66,7 +66,7 @@ let settingsWindow = null;
 let directoryPicker = null;
 let fileAccessChoice = null;
 const fileAccessRequests = new Set();
-let transferDestination = null, transferPicker = null;
+let transferPicker = null, transferWorkflow = null;
 const activity = { sessions: [], entries: [], systemLogPath: '', error: '', connected: false, selected: '', toastSession: '', revision: 0 };
 const ACTIVITY_ENTRY_LIMIT = 600, ACTIVITY_SESSION_LIMIT = 100, ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 let activityFrame = null;
@@ -332,12 +332,13 @@ function updateBuiltinShortcuts() {
 function extensionSettingsBusy() {
   const busy = Boolean(extensionSettingsRequest || extensionSettingsRead || settingsRequest);
   for (const control of $('extensionSettingsForm').querySelectorAll('button, select, input')) control.disabled = busy;
+  $('settingsScriptEditor').disabled = true;
   $('saveExtensionSettings').textContent = extensionSettingsRequest ? '正在保存…' : '保存应用设置';
 }
 function showExtensionSettings(settings) {
   extensionSettingsFormBaseline = { ...settings };
   $('settingsDownloadThreshold').value = String(Math.round((Number(settings.downloadThreshold) || 50 * 1024 * 1024) / 1024 / 1024));
-  $('settingsScriptEditor').value = 'vim';
+  $('settingsScriptEditor').value = 'monaco';
   $('downloadsLocation').textContent = settings.downloadsPath ? '默认下载目录：' + settings.downloadsPath : '默认下载到当前用户的系统 Downloads 文件夹。';
 }
 async function loadExtensionSettings() {
@@ -353,7 +354,7 @@ async function submitExtensionSettings(event) {
   const threshold = Number($('settingsDownloadThreshold').value);
   if (!Number.isInteger(threshold) || threshold < 1 || threshold > 1024) { $('extensionSettingsError').textContent = '阈值须为 1–1024 MiB 的整数。'; return; }
   extensionSettingsRequest = true; extensionSettingsBusy(); $('extensionSettingsError').textContent = '';
-  try { extensionSettings = { ...extensionSettings, ...await api.saveSettings({ downloadThreshold: threshold * 1024 * 1024, scriptEditor: 'vim' }) }; showExtensionSettings(extensionSettings); $('extensionSettingsStatus').textContent = '应用设置已保存。'; }
+  try { extensionSettings = { ...extensionSettings, ...await api.saveSettings({ downloadThreshold: threshold * 1024 * 1024 }) }; showExtensionSettings(extensionSettings); $('extensionSettingsStatus').textContent = '应用设置已保存。'; }
   catch(error) { $('extensionSettingsError').textContent = error.message; }
   finally { extensionSettingsRequest = null; extensionSettingsBusy(); }
 }
@@ -522,7 +523,6 @@ async function openItem(item, scope = 'desktop', mode = 'auto') {
   await openDocument(item, mode, false);
 }
 async function openDocument(item, mode, readOnly) {
-  if (mode === 'vim' || !api.openDocument) { openTerminal(parentOf(item.path), 'vim', item.path, readOnly); return; }
   try { await api.openDocument(item.path, { readOnly }); }
   catch(error) { notify(error.message || String(error)); }
 }
@@ -539,8 +539,18 @@ function selectItem(item, scope, additive = false) {
   const key = keyOf(item);
   if (selection.scope !== scope || !additive) selection = { scope, keys: new Set(additive && selection.scope === scope ? selection.keys : []) };
   if (additive && selection.keys.has(key)) selection.keys.delete(key); else selection.keys.add(key);
-  if (transferPicker?.windowId === scope) setServerPickerPath(item.path);
+  if (transferPicker?.windowId === scope) {
+    setServerPickerPath(item.path);
+    transferPicker.selectedPaths = transferPicker.multiple ? selectedFilePaths(scope) : [item.path];
+    updateServerPickerCount();
+  }
   syncSelection();
+}
+function syncServerPickerSelection(scope) {
+  if (transferPicker?.windowId !== scope || !transferPicker.multiple) return;
+  const paths = selectedFilePaths(scope);
+  setServerPickerPath(paths.at(-1) || getWindow(scope)?.folder || rootPath);
+  transferPicker.selectedPaths = paths; updateServerPickerCount();
 }
 function preserveSelection(item, scope) {
   if (selection.scope !== scope || !selection.keys.has(keyOf(item))) selectItem(item, scope);
@@ -569,7 +579,7 @@ function bindItem(element, item, scope) {
       if (editor) { event.preventDefault(); return; }
       preserveSelection(item, scope);
       dragPayload = { paths: selectedFilePaths(scope), scope };
-      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.effectAllowed = 'copyMove';
       event.dataTransfer.setData('application/x-remote-desktop', JSON.stringify(dragPayload));
       event.dataTransfer.setData('text/plain', dragPayload.paths.join('\n'));
     });
@@ -667,9 +677,11 @@ function bindDesktopDrag(element, item) {
         $('dragGhost').hidden = false;
       }
       $('dragGhost').style.left = `${next.clientX + 15}px`; $('dragGhost').style.top = `${next.clientY + 12}px`;
-      const target = dropDestination(document.elementFromPoint(next.clientX, next.clientY));
+      const over = document.elementFromPoint(next.clientX, next.clientY);
+      const target = dropDestination(over);
       clearDropHighlight();
-      if (target && canMove(selectedFilePaths('desktop'), target.parent)) target.element.classList.add('drop-target');
+      if (isTransferDropTarget(over)) $('downloadsPanel').classList.add('drop-target');
+      else if (target && canMove(selectedFilePaths('desktop'), target.parent)) target.element.classList.add('drop-target');
     }
     function finish(next) {
       element.removeEventListener('pointermove', move); element.removeEventListener('pointerup', finish); element.removeEventListener('pointercancel', finish);
@@ -679,8 +691,10 @@ function bindDesktopDrag(element, item) {
       element.suppressClick = true; setTimeout(() => { element.suppressClick = false; }, 0);
       moving.forEach(record => record.element.classList.remove('dragging'));
       if (next.type === 'pointercancel') return;
-      const target = dropDestination(document.elementFromPoint(next.clientX, next.clientY));
+      const over = document.elementFromPoint(next.clientX, next.clientY);
+      const target = dropDestination(over);
       const paths = selectedFilePaths('desktop');
+      if (isTransferDropTarget(over)) { void runTransferWorkflow('download', paths); return; }
       if (target && target.parent !== rootPath && canMove(paths, target.parent)) { moveFiles(paths, target.parent); return; }
       const dx = Math.round((next.clientX - start.x) / GRID) * GRID;
       const dy = Math.round((next.clientY - start.y) / GRID) * GRID;
@@ -721,7 +735,7 @@ function bindMarquee(surface, scope) {
     $('context').hidden = true;
     const additive = event.ctrlKey || event.metaKey;
     const original = additive && selection.scope === scope ? new Set(selection.keys) : new Set();
-    selection = { scope, keys: new Set(original) }; syncSelection();
+    selection = { scope, keys: new Set(original) }; syncSelection(); syncServerPickerSelection(scope);
     const start = { x: event.clientX, y: event.clientY };
     surface.setPointerCapture(event.pointerId);
     function move(next) {
@@ -736,7 +750,7 @@ function bindMarquee(surface, scope) {
         const rect = element.getBoundingClientRect();
         if (rect.right > left && rect.left < left + width && rect.bottom > top && rect.top < top + height) selection.keys.add(element.dataset.key);
       });
-      syncSelection();
+      syncSelection(); syncServerPickerSelection(scope);
     }
     function finish() {
       surface.removeEventListener('pointermove', move); surface.removeEventListener('pointerup', finish); surface.removeEventListener('pointercancel', finish);
@@ -1161,7 +1175,7 @@ function createWindow(path, restored) {
   });
   const pickerPath = element.querySelector('.window-picker-path');
   pickerPath.addEventListener('input', () => {
-    if (transferPicker?.windowId === win.id) { transferPicker.path = pickerPath.value; win.error = null; updateWindowStatus(win); }
+    if (transferPicker?.windowId === win.id) { transferPicker.path = pickerPath.value; transferPicker.selectedPaths = []; updateServerPickerCount(); win.error = null; updateWindowStatus(win); }
   });
   pickerPath.addEventListener('keydown', event => {
     event.stopPropagation();
@@ -1283,7 +1297,7 @@ async function windowAction(action, win) {
   }
   if (action === 'close' || action === 'close-confirmed') {
     if (win.kind === 'terminal') disposeTerminal(win.id);
-    if (win.kind === 'image') { images.get(win.id)?.observer?.disconnect(); images.delete(win.id); }
+    if (win.kind === 'image') { images.get(win.id)?.viewer?.destroy(); images.delete(win.id); }
     if (editor?.scope === win.id) editor.cancel();
     if (selection.scope === win.id) selection = { scope: 'desktop', keys: new Set() };
     windowElements.get(win.id)?.remove(); windowElements.delete(win.id);
@@ -1349,7 +1363,7 @@ function showMenu(event, context) {
   buttons.querySelector('[data-action="cut"]').disabled = !files.length;
   buttons.querySelector('[data-action="paste"]').disabled = !state.clipboard?.paths?.length;
   buttons.querySelector('[data-action="arrange"]').hidden = context.scope !== 'desktop';
-  for (const action of ['workbench','vim']) buttons.querySelector(`[data-action="${action}"]`).disabled = files.length !== 1 || files[0].type === 'folder';
+  buttons.querySelector('[data-action="workbench"]').disabled = files.length !== 1 || files[0].type === 'folder';
   buttons.hidden = false;
   buttons.style.left = `${clamp(event.clientX, window.innerWidth - buttons.offsetWidth - 6)}px`;
   buttons.style.top = `${clamp(event.clientY, window.innerHeight - buttons.offsetHeight - 6)}px`;
@@ -1425,7 +1439,7 @@ function beginNameEditor(operation, context) {
 function performAction(action, context) {
   const selected = selectedItems(context.scope), paths = selectedFilePaths(context.scope);
   if (action === 'open') selected.forEach(item => openItem(item, context.scope));
-  else if (action === 'workbench' || action === 'vim') selected.forEach(item => openItem(item, context.scope, action));
+  else if (action === 'workbench') selected.forEach(item => openItem(item, context.scope, action));
   else if (action === 'new-file' || action === 'new-folder' || action === 'rename') beginNameEditor(action, context);
   else if (action === 'copy' || action === 'cut') {
     if (!paths.length) return;
@@ -1437,7 +1451,7 @@ function performAction(action, context) {
     for (const id of commands) host.postMessage({ type: 'deleteCommandShortcut', id });
     if (paths.length) sendOperation({ operation: 'delete', parent: context.parent, paths });
   } else if (action === 'shortcut' && paths.length) sendOperation({ operation: 'shortcut', parent: rootPath, paths });
-  else if (action === 'download') paths.forEach(startDownload);
+  else if (action === 'download') void runTransferWorkflow('download', paths);
   else if (action === 'terminal') openTerminal(context.parent);
   else if (action === 'refresh') { if (context.scope === 'desktop') refreshAll(); else refreshDirectory(context.parent); }
   else if (action === 'arrange') arrange();
@@ -1629,7 +1643,7 @@ document.addEventListener('keydown', event => {
     const key = event.key.toLowerCase();
     if (key === 'a') {
       const surface = getSurface(selection.scope); if (!surface) return;
-      event.preventDefault(); selection.keys = new Set([...surface.querySelectorAll('.icon, .entry')].map(element => element.dataset.key)); syncSelection(); return;
+      event.preventDefault(); selection.keys = new Set([...surface.querySelectorAll('.icon, .entry')].map(element => element.dataset.key)); syncSelection(); syncServerPickerSelection(selection.scope); return;
     }
     action = { c: 'copy', x: 'cut', v: 'paste' }[key];
   }
@@ -1638,6 +1652,13 @@ document.addEventListener('keydown', event => {
 $('desktopSettings').addEventListener('click', openSettings);
 $('homeShortcut').replaceChildren(toolIcon('House'));
 $('homeShortcut').addEventListener('click', openHome);
+$('editorShortcut').replaceChildren(toolIcon('FileCode2'));
+$('editorShortcut').addEventListener('click', async () => {
+  if (!remoteMode) { notify('请先连接 SSH'); return; }
+  try { await api.openDocument(null); } catch (error) { notify(error.message || String(error)); }
+});
+$('imageShortcut').replaceChildren(toolIcon('Image'));
+$('imageShortcut').addEventListener('click', () => { if (!remoteMode) { notify('请先连接 SSH'); return; } openImageLauncher(); });
 $('activityButton').replaceChildren(toolIcon('Activity'));
 $('activityButton').addEventListener('click', () => openActivityWindow());
 $('openActivityToast').addEventListener('click', () => openActivityWindow(activity.toastSession));
@@ -1704,7 +1725,7 @@ let connecting = false;
 function clearWindowViews(preserveTerminals = false) {
   finishServerPicker(null);
   if (!preserveTerminals) for (const id of [...terminals.keys()]) disposeTerminal(id);
-  for (const record of images.values()) record.observer?.disconnect(); images.clear();
+  for (const record of images.values()) record.viewer?.destroy(); images.clear();
   for (const win of state.windows) {
     if (win.kind === 'settings' || win.kind === 'activity') continue;
     if (preserveTerminals && win.kind === 'terminal') continue;
@@ -1715,6 +1736,7 @@ function clearWindowViews(preserveTerminals = false) {
 }
 function clearRemoteDesktop(preserveTerminals = false) {
   connectionGeneration++; fileAccessRequests.clear(); fileAccessChoice = null;
+  transferWorkflow = null; setTransferBusy(false);
   closeDirectoryPicker(); $('fileAccessDialog').close();
   finishServerPicker(null);
   clearTimeout(saveTimer); clearTimeout(settingsTimer); pendingConfig = {}; settingsRequest = null;
@@ -1755,7 +1777,7 @@ async function initializeConnection() {
   });
   $('skipDesktop').addEventListener('click', () => $('missingDesktopDialog').close());
   $('createDesktop').addEventListener('click', () => { $('missingDesktopDialog').close(); host.postMessage({ type: 'createDesktop' }); });
-  $('downloadsButton').addEventListener('click', () => { $('downloadsPanel').hidden = !$('downloadsPanel').hidden; if (!$('transferRemotePath').value) $('transferRemotePath').value = contextFor(selection.scope).parent; api.listTransfers?.().then(tasks => tasks.forEach(updateDownload)).catch(error => notify(error.message)); });
+  $('downloadsButton').addEventListener('click', () => { $('downloadsPanel').hidden = !$('downloadsPanel').hidden; api.listTransfers?.().then(tasks => tasks.forEach(updateDownload)).catch(error => notify(error.message)); });
   $('closeDownloads').addEventListener('click', () => { $('downloadsPanel').hidden = true; });
   api.onDownloadProgress(updateDownload);
   document.addEventListener('keydown', event => {
@@ -1766,50 +1788,100 @@ async function initializeConnection() {
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
 }
 function updateDownload(value) {
+  if (value?.type === 'history-error') { $('transferError').textContent = value.error || '无法保存传输历史'; notify($('transferError').textContent); return; }
   if (!value || typeof value.id !== 'string') return;
+  if (value.type === 'removed') { removeTransferRow(value.id); return; }
   if (!downloadTasks.has(value.id)) createTransferRow(value.id, value.source || value.name || value.path || value.id, value.direction || 'download');
   const task = downloadTasks.get(value.id);
   Object.assign(task, value);
   const row = task.element;
-  row.querySelector('.download-status').textContent = task.status === 'complete' ? '已完成 · ' + (task.path || '') : task.status === 'cancelled' ? '已取消' : task.status === 'error' ? task.error || '下载失败' : (task.method ? task.method.toUpperCase() + ' · ' : '') + (task.total > 0 ? Math.min(100, Math.round(task.done / task.total * 100)) + '%' : '准备中…');
+  const finished = ['complete', 'completed', 'cancelled', 'error'].includes(task.status);
+  const completed = task.status === 'complete' || task.status === 'completed';
+  row.querySelector('.download-status').textContent = completed ? '已完成' : task.status === 'cancelled' ? '已取消' : task.status === 'error' ? task.error || '传输失败' : (task.method ? task.method.toUpperCase() + ' · ' : '') + (task.total > 0 ? Math.min(100, Math.round(task.done / task.total * 100)) + '%' : '准备中…');
   const progress = row.querySelector('progress');
+  progress.hidden = finished;
   if (task.total > 0) { progress.max = task.total; progress.value = Math.max(0, task.done || 0); } else progress.removeAttribute('value');
-  row.querySelector('button').disabled = ['complete','cancelled','error'].includes(task.status);
+  row.querySelector('.transfer-cancel').hidden = finished;
+  row.querySelector('.transfer-remove').hidden = !finished;
+  const target = row.querySelector('.transfer-target');
+  target.hidden = !completed || !(task.path || task.destination);
+  target.textContent = '打开目标目录：' + (task.targetDirectory || (task.path ? parentOf(String(task.path).replace(/\\/g, '/')) : task.destination) || '');
+  target.title = task.path || task.destination || '';
+  $('clearTransferHistory').disabled = ![...downloadTasks.values()].some(item => ['complete', 'completed', 'cancelled', 'error'].includes(item.status));
+}
+function removeTransferRow(id) {
+  downloadTasks.get(id)?.element.remove(); downloadTasks.delete(id);
+  $('downloadsEmpty').hidden = downloadTasks.size > 0;
+  $('clearTransferHistory').disabled = ![...downloadTasks.values()].some(item => ['complete', 'completed', 'cancelled', 'error'].includes(item.status));
 }
 function createTransferRow(id, remotePath, direction = 'download') {
   if (downloadTasks.has(id)) return;
   const row = document.createElement('section'); row.className = 'download-item'; row.dataset.downloadId = id;
   const title = document.createElement('strong'); title.textContent = `${direction === 'upload' ? '↑ 上传' : '↓ 下载'} · ${basename(direction === 'upload' ? remotePath.replace(/\\/g, '/') : remotePath)}`; title.title = remotePath;
   const status = document.createElement('p'); status.className = 'download-status'; status.textContent = '准备中…'; status.setAttribute('role','status');
-  const progress = document.createElement('progress'); progress.setAttribute('aria-label', basename(remotePath) + ' 下载进度');
-  const cancel = document.createElement('button'); cancel.textContent = '取消'; cancel.addEventListener('click', async () => { cancel.disabled = true; status.textContent = '正在取消…'; try { await api.cancelDownload(id); } catch(error) { status.textContent = error.message; cancel.disabled = false; } });
-  row.append(title, status, progress, cancel); $('downloadItems').append(row); $('downloadsPanel').hidden = false; $('downloadsEmpty').hidden = true;
+  const progress = document.createElement('progress'); progress.setAttribute('aria-label', basename(remotePath) + ' 传输进度');
+  const cancel = document.createElement('button'); cancel.className = 'transfer-cancel'; cancel.textContent = '取消'; cancel.addEventListener('click', async () => { cancel.disabled = true; status.textContent = '正在取消…'; try { await api.cancelDownload(id); } catch(error) { status.textContent = error.message; cancel.disabled = false; } });
+  const remove = document.createElement('button'); remove.className = 'transfer-remove'; remove.textContent = '删除记录'; remove.hidden = true;
+  remove.addEventListener('click', async () => {
+    remove.disabled = true;
+    try { await api.removeTransfer(id); removeTransferRow(id); } catch (error) { $('transferError').textContent = error.message; remove.disabled = false; }
+  });
+  const target = document.createElement('button'); target.className = 'transfer-target'; target.hidden = true;
+  target.addEventListener('click', async () => {
+    try { const result = await api.openTransferTarget(id); if (result?.side === 'remote' && result.path) { $('downloadsPanel').hidden = true; openFolder(result.path); } }
+    catch (error) { $('transferError').textContent = error.message; }
+  });
+  row.append(title, status, progress, cancel, target, remove); $('downloadItems').append(row); $('downloadsEmpty').hidden = true;
   downloadTasks.set(id, { id, remotePath, direction, status:'running', element:row });
 }
-async function startDownload(remotePath) {
+async function startDownload(remotePath, destination) {
   if (!remoteMode) { notify('请先连接 SSH'); return; }
   const id = 'download-' + Date.now() + '-' + nextRequest++;
   createTransferRow(id, remotePath);
-  try { const result = await api.download(remotePath, id, transferDestination); updateDownload({ ...result, id, status: 'complete' }); notify('下载完成：' + (result.path || basename(remotePath))); }
+  try { const result = await api.download(remotePath, id, destination); updateDownload({ ...result, id, destination, status: 'complete' }); notify('下载完成：' + (result.path || basename(remotePath))); }
   catch(error) { const cancelled = error.code === 'ABORT_ERR' || /取消|cancel|abort/i.test(error.message || ''); updateDownload({ id, status: cancelled ? 'cancelled' : 'error', error: error.message }); }
 }
-async function startUpload(kind) {
+function setTransferBusy(busy) {
+  $('transferUpload').disabled = busy; $('transferDownload').disabled = busy;
+}
+async function runTransferWorkflow(direction, sources = null) {
   if (!remoteMode) { $('transferError').textContent = '请先连接 SSH'; return; }
+  if (transferWorkflow || transferPicker) { notify('请先完成或取消当前路径选择。'); return; }
+  const workflow = { generation: connectionGeneration }; transferWorkflow = workflow;
+  const current = () => transferWorkflow === workflow && remoteMode && workflow.generation === connectionGeneration;
+  setTransferBusy(true); $('transferError').textContent = '';
   try {
-    const target = resolveDirectoryAddress($('transferRemotePath').value, rootPath);
-    const files = await api.chooseUpload(kind);
-    for (const localPath of files) {
-      const id = 'upload-' + Date.now() + '-' + nextRequest++;
-      createTransferRow(id, localPath, 'upload');
-      void api.upload(localPath, target, id).then(result => { updateDownload({ ...result, id, status:'complete' }); refreshDirectory(target); }, error => updateDownload({ id, status:/取消|cancel|abort/i.test(error.message) ? 'cancelled' : 'error', error:error.message }));
+    let paths = typeof sources === 'function' ? await sources() : sources;
+    if (sources === null) paths = direction === 'upload' ? await api.chooseUpload() : await chooseServerPath({ initialPath: contextFor(selection.scope).parent, title: '选择下载项目', multiple: true });
+    if (!current() || !Array.isArray(paths) || !paths.length) return;
+    paths = [...new Set(paths.filter(path => typeof path === 'string' && path))];
+    if (!paths.length) return;
+    const destination = direction === 'upload' ? await chooseServerPath({ initialPath: contextFor(selection.scope).parent, title: '选择上传目标目录', directoryOnly: true }) : await api.chooseDownloadDirectory();
+    if (!current() || !destination) return;
+    $('downloadsPanel').hidden = false;
+    for (const source of paths) {
+      if (direction === 'download') { void startDownload(source, destination); continue; }
+      const id = 'upload-' + Date.now() + '-' + nextRequest++; createTransferRow(id, source, 'upload');
+      void api.upload(source, destination, id).then(result => {
+        updateDownload({ ...result, id, destination, direction: 'upload', status:'complete' });
+        if (remoteMode && workflow.generation === connectionGeneration) refreshDirectory(destination);
+      }, error => updateDownload({ id, status:/取消|cancel|abort/i.test(error.message) ? 'cancelled' : 'error', error:error.message }));
     }
-  } catch(error) { $('transferError').textContent = error.message; }
+  } catch(error) { if (current()) { $('transferError').textContent = error.message; $('downloadsPanel').hidden = false; } }
+  finally { if (transferWorkflow === workflow) { transferWorkflow = null; setTransferBusy(false); if (remoteMode) $('downloadsPanel').hidden = false; } }
 }
 function setServerPickerPath(value) {
   if (!transferPicker) return;
   transferPicker.path = value;
+  transferPicker.selectedPaths = [];
   const input = windowElements.get(transferPicker.windowId)?.querySelector('.window-picker-path');
   if (input) input.value = value;
+  updateServerPickerCount();
+}
+function updateServerPickerCount() {
+  if (!transferPicker) return;
+  const element = windowElements.get(transferPicker.windowId);
+  if (element) element.querySelector('.window-picker-count').textContent = transferPicker.multiple ? (transferPicker.selectedPaths?.length ? `已选择 ${transferPicker.selectedPaths.length} 项（Ctrl + 单击可多选）` : 'Ctrl + 单击可多选文件与文件夹，或输入项目完整路径') : '';
 }
 function finishServerPicker(value, closingWindow = false) {
   const picker = transferPicker; if (!picker) return;
@@ -1825,7 +1897,7 @@ function finishServerPicker(value, closingWindow = false) {
   }
   picker.resolve(value);
 }
-function chooseServerPath({ initialPath = rootPath, title = '选择服务器项目', directoryOnly = false } = {}) {
+function chooseServerPath({ initialPath = rootPath, title = '选择服务器项目', directoryOnly = false, multiple = false } = {}) {
   if (!remoteMode) { notify('请先连接 SSH'); return Promise.resolve(null); }
   if (transferPicker) { focusWindow(transferPicker.windowId); return transferPicker.promise; }
   let target;
@@ -1836,13 +1908,15 @@ function chooseServerPath({ initialPath = rootPath, title = '选择服务器项�
   const existing = state.windows.find(win => !win.kind && win.folder === directory);
   const win = existing || createWindow(rootPath);
   let resolve; const promise = new Promise(done => { resolve = done; });
-  transferPicker = { windowId: win.id, title, directoryOnly, path: target, initialSelection: !existing && target !== directory ? target : null, owned: !existing, generation: connectionGeneration, request: 0, resolve, promise };
+  transferPicker = { windowId: win.id, title, directoryOnly, multiple, selectedPaths: [], path: target, initialSelection: !existing && target !== directory ? target : null, owned: !existing, generation: connectionGeneration, request: 0, resolve, promise };
+  selection = { scope: win.id, keys: new Set() };
   const element = windowElements.get(win.id);
   element.classList.add('server-picker-window');
   element.querySelector('.window-picker-bar').hidden = false;
   element.querySelector('.window-picker-select').textContent = directoryOnly ? '选择目录' : '选择项目';
   element.querySelector('.window-picker-select').disabled = false;
   element.querySelector('.window-picker-path').value = target;
+  updateServerPickerCount();
   $('downloadsPanel').hidden = true;
   $('context').hidden = true;
   focusWindow(win.id); renderWindow(win);
@@ -1858,19 +1932,22 @@ async function confirmServerPicker() {
   element.querySelector('.window-picker-select').disabled = true;
   const entered = element.querySelector('.window-picker-path').value;
   try {
-    const target = resolveDirectoryAddress(entered, win.folder);
-    let directoryError;
-    try { await withTimeout(api.list(target), '目录读取超时，请重试。'); }
-    catch (error) {
-      directoryError = error;
-      if (picker.directoryOnly) throw error;
-      try {
-        const access = await withTimeout(api.checkFileAccess(target), '文件权限检查超时，请重试。');
-        if (!access?.readable) throw new Error(access?.error || '无访问权限：当前账号不能读取此文件。');
-      } catch (fileError) { throw /不是普通文件|not a regular file/i.test(fileError.message) ? directoryError : fileError; }
+    const selected = picker.multiple && picker.selectedPaths.length ? [...picker.selectedPaths] : [resolveDirectoryAddress(entered, win.folder)];
+    for (const target of selected) {
+      let directoryError;
+      try { await withTimeout(api.list(target), '目录读取超时，请重试。'); }
+      catch (error) {
+        directoryError = error;
+        if (picker.directoryOnly) throw error;
+        try {
+          const access = await withTimeout(api.checkFileAccess(target), '文件权限检查超时，请重试。');
+          if (!access?.readable) throw new Error(access?.error || '无访问权限：当前账号不能读取此文件。');
+        } catch (fileError) { throw /不是普通文件|not a regular file/i.test(fileError.message) ? directoryError : fileError; }
+      }
+      if (transferPicker !== picker || picker.request !== request || picker.generation !== connectionGeneration || !remoteMode) return;
     }
     if (transferPicker !== picker || picker.request !== request || picker.generation !== connectionGeneration || !remoteMode || element.querySelector('.window-picker-path').value !== entered) return;
-    finishServerPicker(target);
+    finishServerPicker(picker.multiple ? selected : selected[0]);
   } catch (error) {
     if (transferPicker !== picker || picker.request !== request || picker.generation !== connectionGeneration) return;
     win.error = accessError(error); updateWindowStatus(win); notify(win.error);
@@ -1878,62 +1955,93 @@ async function confirmServerPicker() {
     if (transferPicker === picker) { picker.busy = false; element.querySelector('.window-picker-select').disabled = false; }
   }
 }
-$('transferBrowse').addEventListener('click', async () => {
-  const selected = await chooseServerPath({ initialPath: $('transferRemotePath').value });
-  if (selected) { $('transferRemotePath').value = selected; $('transferError').textContent = ''; }
-  if (remoteMode) $('downloadsPanel').hidden = false;
+$('transferUpload').addEventListener('click', () => { void runTransferWorkflow('upload'); });
+$('transferDownload').addEventListener('click', () => { void runTransferWorkflow('download'); });
+$('clearTransferHistory').addEventListener('click', async () => {
+  const finished = [...downloadTasks].filter(([, task]) => ['complete', 'completed', 'cancelled', 'error'].includes(task.status)).map(([id]) => id);
+  try {
+    const removed = await api.clearTransferHistory();
+    for (const id of Array.isArray(removed) ? removed : finished) removeTransferRow(id);
+  } catch (error) { $('transferError').textContent = error.message; }
 });
-$('transferUploadFiles').addEventListener('click', () => startUpload('files'));
-$('transferUploadFolder').addEventListener('click', () => startUpload('directory'));
-$('transferDownload').addEventListener('click', () => { try { void startDownload(resolveDirectoryAddress($('transferRemotePath').value, rootPath)); } catch(error) { $('transferError').textContent = error.message; } });
-$('transferChooseDestination').addEventListener('click', async () => { try { const value = await api.chooseDownloadDirectory(); if(value) { transferDestination = value; $('transferDestination').textContent = value; } } catch(error) { $('transferError').textContent = error.message; } });
-function imageTransform(win) {
-  const record = images.get(win.id); if (!record) return;
-  record.image.style.transform = 'translate(' + record.x + 'px,' + record.y + 'px) scale(' + record.scale + ')';
-  record.element.querySelector('.image-scale').textContent = Math.round(record.scale * 100) + '%';
-  record.element.dataset.imageScale = String(record.scale); record.element.dataset.imageX = String(record.x); record.element.dataset.imageY = String(record.y);
+function isTransferDropTarget(element) { return Boolean(element?.closest('#downloadsPanel, #downloadsButton')); }
+function remoteDragPaths(event) {
+  if (![...event.dataTransfer.types].includes('application/x-remote-desktop')) return null;
+  try { const value = JSON.parse(event.dataTransfer.getData('application/x-remote-desktop')); return Array.isArray(value.paths) && value.paths.every(path => typeof path === 'string') ? value.paths : null; } catch { return null; }
 }
-function fitImage(win) {
-  const r = images.get(win.id); if (!r?.image.naturalWidth || !r.viewport.clientWidth || !r.viewport.clientHeight) return;
-  r.scale = Math.min(1, r.viewport.clientWidth / r.image.naturalWidth, r.viewport.clientHeight / r.image.naturalHeight);
-  r.x = (r.viewport.clientWidth - r.image.naturalWidth * r.scale) / 2; r.y = (r.viewport.clientHeight - r.image.naturalHeight * r.scale) / 2; r.fit = true; imageTransform(win);
+document.addEventListener('dragover', event => {
+  const local = [...event.dataTransfer.types].includes('Files');
+  const remote = isTransferDropTarget(event.target) && [...event.dataTransfer.types].includes('application/x-remote-desktop');
+  if (!local && !remote) return;
+  event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy';
+  if (remote) $('downloadsPanel').classList.add('drop-target');
+  else $('desktop').classList.add('drop-target');
+}, true);
+document.addEventListener('dragleave', event => { if (!event.relatedTarget) clearDropHighlight(); }, true);
+document.addEventListener('drop', event => {
+  const local = [...event.dataTransfer.types].includes('Files');
+  const remote = isTransferDropTarget(event.target) ? remoteDragPaths(event) : null;
+  if (!local && !remote) return;
+  event.preventDefault(); event.stopPropagation(); clearDropHighlight(); dragPayload = null;
+  if (local) {
+    const files = [...event.dataTransfer.files];
+    if (!remoteMode || transferWorkflow || transferPicker) { notify(remoteMode ? '请先完成或取消当前路径选择。' : '请先连接 SSH'); return; }
+    void runTransferWorkflow('upload', () => api.acceptDroppedFiles(files));
+  } else void runTransferWorkflow('download', remote);
+}, true);
+function resizeImage(win) { images.get(win.id)?.viewer?.resize(); }
+function openImageLauncher() {
+  const existing = state.windows.find(win => win.kind === 'image' && !win.path);
+  if (existing) { focusWindow(existing.id); windowElements.get(existing.id)?.focus(); return existing; }
+  return createImageWindow();
 }
-function resizeImage(win) { const r = images.get(win.id); if (r?.fit) fitImage(win); }
-function zoomImage(win, scale, x, y) {
-  const r = images.get(win.id); if (!r?.image.naturalWidth) return;
-  const next = Math.min(32, Math.max(0.02, scale));
-  const anchorX = (x - r.x) / r.scale, anchorY = (y - r.y) / r.scale;
-  r.x = x - anchorX * next; r.y = y - anchorY * next; r.scale = next; r.fit = false; imageTransform(win);
-}
-async function openImage(item) {
+function createImageWindow(item = null) {
   const offset = state.windows.length * 28;
-  const win = { id:'image-' + nextWindow++, kind:'image', folder:parentOf(item.path), imageName:item.name, path:item.path, minimized:false, maximized:false, position:{x:30+offset,y:40+offset}, size:{width:780,height:560},z:++nextLayer };
+  const win = { id:'image-' + nextWindow++, kind:'image', folder:item ? parentOf(item.path) : rootPath, imageName:item?.name || '图片查看器', path:item?.path || '', minimized:false, maximized:false, position:{x:30+offset,y:40+offset}, size:{width:820,height:580}, z:++nextLayer };
   const element = $('imageTemplate').content.firstElementChild.cloneNode(true); element.dataset.windowId = win.id;
-  element.querySelector('.window-title').textContent = item.name; element.setAttribute('aria-label','图片查看器 ' + item.name);
+  element.querySelector('.window-title').textContent = win.imageName;
+  element.querySelector('.titlebar > span').replaceChildren(toolIcon('Image'));
   state.windows.push(win); windowElements.set(win.id,element); $('windows').append(element);
-  const viewport=element.querySelector('.image-viewport'), image=element.querySelector('img'); image.alt=item.name;
-  const record={element,viewport,image,scale:1,x:0,y:0,fit:true}; images.set(win.id,record);
-  element.addEventListener('pointerdown',()=>{if(state.activeWindow!==win.id)focusWindow(win.id);});
+  const record = { element, request:0, viewer:null }; images.set(win.id,record);
+  record.viewer = RemoteImageViewer.mount({element,viewport:element.querySelector('.image-viewport'),isActive:()=>state.activeWindow===win.id,onStatus:text=>{element.querySelector('.image-status').textContent=text;}});
+  element.addEventListener('pointerdown',event=>{
+    if(state.activeWindow!==win.id)focusWindow(win.id);
+    if(!event.target.closest('button, input'))element.focus({preventScroll:true});
+  });
+  element.addEventListener('focusin',()=>{if(state.activeWindow!==win.id)focusWindow(win.id);});
   element.addEventListener('click',event=>{
-    const action=event.target.closest('[data-window-action]')?.dataset.windowAction;if(action){windowAction(action,win);return;}
-    const actionImage=event.target.closest('[data-image-action]')?.dataset.imageAction;
-    if(actionImage==='fit')fitImage(win);else if(actionImage)zoomImage(win,actionImage==='actual'?1:record.scale*(actionImage==='in'?1.25:0.8),viewport.clientWidth/2,viewport.clientHeight/2);
+    const action=event.target.closest('[data-window-action]')?.dataset.windowAction;
+    if(action){void windowAction(action,win);return;}
+    const imageAction=event.target.closest('[data-image-action]')?.dataset.imageAction;
+    if(imageAction==='open'){void chooseImage(win);return;}
+    if(imageAction)record.viewer.run(imageAction);
   });
-  viewport.addEventListener('wheel',event=>{event.preventDefault();const box=viewport.getBoundingClientRect();zoomImage(win,record.scale*Math.exp(-event.deltaY*0.002),event.clientX-box.left,event.clientY-box.top);},{passive:false});
-  viewport.addEventListener('pointerdown',event=>{
-    if(event.button!==0)return;event.preventDefault();viewport.setPointerCapture(event.pointerId);record.fit=false;
-    const start={x:event.clientX,y:event.clientY,left:record.x,top:record.y};
-    const move=next=>{record.x=start.left+next.clientX-start.x;record.y=start.top+next.clientY-start.y;imageTransform(win);};
-    const end=()=>{viewport.removeEventListener('pointermove',move);viewport.removeEventListener('pointerup',end);viewport.removeEventListener('pointercancel',end);if(viewport.hasPointerCapture(event.pointerId))viewport.releasePointerCapture(event.pointerId);};
-    viewport.addEventListener('pointermove',move);viewport.addEventListener('pointerup',end);viewport.addEventListener('pointercancel',end);
-  });
-  renderToolIcons(element);bindWindowDrag(win,element);bindWindowResize(win,element);positionWindow(win);focusWindow(win.id);
-  record.observer=new ResizeObserver(()=>resizeImage(win));record.observer.observe(viewport);
-  image.addEventListener('load',()=>{if(!images.has(win.id))return;fitImage(win);element.querySelector('.image-status').textContent=image.naturalWidth+' × '+image.naturalHeight+' · '+item.path;});
-  image.addEventListener('error',()=>{element.querySelector('.image-status').textContent='图片无法解码，可右键下载原文件。';});
-  try {const value=await api.image(item.path);if(!images.has(win.id))return;if(!/^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(value.mime)||typeof value.data!=='string')throw new Error('图片格式无效');image.src='data:'+value.mime+';base64,'+value.data;}
-  catch(error){if(images.has(win.id))element.querySelector('.image-status').textContent='图片打开失败：'+error.message;}
+  renderToolIcons(element);bindWindowDrag(win,element);bindWindowResize(win,element);positionWindow(win);focusWindow(win.id);element.focus({preventScroll:true});
+  return win;
 }
+async function chooseImage(win) {
+  const generation=connectionGeneration;
+  const path=await chooseServerPath({initialPath:win.folder || rootPath,title:'选择图片'});
+  if(!path || generation!==connectionGeneration || !images.has(win.id))return;
+  await loadImage(win,{path,name:basename(path)});
+  if(generation===connectionGeneration && images.has(win.id)){focusWindow(win.id);windowElements.get(win.id)?.focus({preventScroll:true});}
+}
+async function loadImage(win,item) {
+  const record=images.get(win.id);if(!record)return;
+  const request=++record.request,generation=connectionGeneration;
+  record.element.querySelector('.image-status').textContent='正在载入…';
+  try {
+    const value=await api.image(item.path);
+    if(!images.has(win.id)||request!==record.request||generation!==connectionGeneration)return;
+    if(!/^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(value.mime)||typeof value.data!=='string')throw new Error('图片格式无效');
+    if(!await record.viewer.load('data:'+value.mime+';base64,'+value.data,item.name,item.path))return;
+    if(!images.has(win.id)||request!==record.request||generation!==connectionGeneration)return;
+    win.path=item.path;win.folder=parentOf(item.path);win.imageName=item.name;
+    record.element.querySelector('.window-title').textContent=item.name;
+    record.element.setAttribute('aria-label','图片查看器 '+item.name);renderDock();
+  } catch(error){if(images.has(win.id)&&request===record.request)record.element.querySelector('.image-status').textContent='图片打开失败：'+error.message;}
+}
+async function openImage(item) { const win=createImageWindow(item);await loadImage(win,item); }
 
 initializeConnection();
 host.postMessage({ type: 'ready' });

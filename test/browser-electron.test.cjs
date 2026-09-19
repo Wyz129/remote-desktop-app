@@ -59,6 +59,7 @@ test('real isolated Electron browser uses SSH DNS, isolates APIs and preserves c
   await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('document.getElementById("download").click()', true));
   await waitFor(application, () => browserFixture.transfers.some(value => value.status === 'completed'));
   assert.equal(await fs.readFile(path.join(userData, 'result.txt'), 'utf8'), 'authenticated:GET:');
+  assert.deepEqual(await application.evaluate(() => { const task = browserFixture.transfers.findLast(value => value.status === 'completed'); return { side: task.targetSide, directory: task.targetDirectory }; }), { side: 'local', directory: userData });
   // Native save-dialog confirmation must never bypass the exclusive final write.
   await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('document.getElementById("download").click()', true));
   await waitFor(application, () => browserFixture.transfers.some(value => value.status === 'error' && /未覆盖/.test(value.error)));
@@ -67,6 +68,8 @@ test('real isolated Electron browser uses SSH DNS, isolates APIs and preserves c
   await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('document.getElementById("post").click()', true));
   await waitFor(application, () => browserFixture.uploaded.length === 1);
   assert.deepEqual(await application.evaluate(() => browserFixture.uploaded[0]), { content: 'authenticated:POST:payload=private', directory: '/srv/downloads' });
+  await waitFor(application, () => browserFixture.transfers.some(value => value.status === 'completed' && value.targetSide === 'remote'));
+  assert.equal(await application.evaluate(() => browserFixture.transfers.findLast(value => value.status === 'completed').targetDirectory), '/srv/downloads');
   await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('document.getElementById("blob").click()', true));
   await waitFor(application, () => browserFixture.uploaded.length === 2);
   assert.equal(await application.evaluate(() => browserFixture.uploaded[1].content), 'blob-content');

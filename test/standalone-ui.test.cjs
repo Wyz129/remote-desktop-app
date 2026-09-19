@@ -13,7 +13,7 @@ const results = [];
 before(async () => {
   server = http.createServer((req, res) => {
     const file = req.url === '/' ? '/app/index.html' : req.url.split('?')[0];
-    if (!/^\/(app|media)\/[\w.-]+$/.test(file)) return res.writeHead(404).end();
+    if (!/^\/(?:app|media|media\/workbench)\/[\w.-]+$/.test(file)) return res.writeHead(404).end();
     const target = path.join(root, file);
     if (!fs.existsSync(target)) return res.writeHead(404).end();
     res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.css') ? 'text/css' : 'application/javascript');
@@ -52,6 +52,15 @@ async function scenario(name, fn) {
       async openBrowser() { window.calls.push({type:'openBrowser'}); if (window.deferBrowserOpen) return new Promise(resolve=>{window.resolveBrowserOpen=resolve;}); return {id:41,embedded:true}; },
       async layoutBrowser(id,bounds,hidden) { window.calls.push({type:'browserLayout',id,bounds,hidden}); },
       async closeBrowser(id) { window.calls.push({type:'closeBrowser',id}); window.browserEvent({type:'closed',id}); return true; },
+      async openDocument(path,options) { window.calls.push({type:'openDocument',path,...options}); },
+      async chooseUpload() { window.calls.push({type:'chooseUpload'}); return ['D:\\projects\\code.py']; },
+      async chooseDownloadDirectory() { window.calls.push({type:'chooseDownloadDirectory'}); return 'D:\\Downloads'; },
+      async acceptDroppedFiles(files) { window.calls.push({type:'acceptDroppedFiles',names:files.map(file=>file.name)}); return files.map(file=>'D:\\drop\\'+file.name); },
+      async upload(localPath,remoteDirectory,id) { window.calls.push({type:'upload',localPath,remoteDirectory,id}); return {id,path:remoteDirectory+'/code.py',done:12,total:12}; },
+      async listTransfers() { return []; },
+      async removeTransfer(id) { window.calls.push({type:'removeTransfer',id}); return true; },
+      async clearTransferHistory() { window.calls.push({type:'clearTransferHistory'}); return true; },
+      async openTransferTarget(id) { window.calls.push({type:'openTransferTarget',id}); return window.transferTarget || {side:'local'}; },
       send(message) {
         window.messages.push(message);
         queueMicrotask(() => {
@@ -84,7 +93,7 @@ async function scenario(name, fn) {
         return window.cancelTerminalClose !== true;
       },
       async image(file) { window.calls.push({type:'image',path:file}); const canvas = document.createElement('canvas'); canvas.width = 1600; canvas.height = 1200; const context = canvas.getContext('2d'); context.fillStyle = '#70b294'; context.fillRect(0,0,1600,1200); context.fillStyle = '#fff'; context.beginPath(); context.arc(400,400,180,0,Math.PI*2); context.fill(); return {name:'picture.png',mime:'image/png',data:canvas.toDataURL('image/png').split(',')[1]}; },
-      download(file,id) { window.calls.push({type:'download',path:file,id}); return new Promise((resolve,reject) => window.downloadPending.set(id,{resolve,reject})); },
+      download(file,id,destination) { window.calls.push({type:'download',path:file,id,destination}); return new Promise((resolve,reject) => window.downloadPending.set(id,{resolve,reject})); },
       async cancelDownload(id) { window.calls.push({type:'cancelDownload',id}); const error=new Error('操作已取消');error.code='ABORT_ERR';window.downloadPending.get(id)?.reject(error); },
       onDownloadProgress(callback) { window.progress = callback; },
       async quitFullscreen() { window.calls.push({type:'quitFullscreen'}); }
@@ -160,27 +169,56 @@ test('crud_selection_and_terminal_shortcut_preserved', () => scenario('file-acti
   await page.waitForFunction(()=>window.messages.some(m=>m.type==='openTerminal'&&m.program==='shell'));
   await page.locator('.terminal-window [data-window-action="close"]').click();
   assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='terminalClose')));
-  await icon(page,'notes.txt').dblclick();await page.locator('.terminal-window').waitFor();
-  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='openTerminal'&&m.program==='vim'&&m.filePath.endsWith('/notes.txt'))));
+  await icon(page,'notes.txt').dblclick();
+  await page.waitForFunction(()=>window.calls.some(m=>m.type==='openDocument'&&m.path.endsWith('/notes.txt')));
+  assert.equal(await page.locator('.terminal-window').count(),0);
 }));
 
-test('image_fit_pointer_zoom_pan_and_window_lifecycle', () => scenario('image', async page => {
+test('image_viewer_library_zoom_pan_rotate_flip_and_window_lifecycle', () => scenario('image', async page => {
   await connect(page);await icon(page,'picture.png').dblclick();const win=page.locator('.image-window');
-  await page.waitForFunction(()=>document.querySelector('.image-viewport img')?.naturalWidth===1600);
-  const fit=Number(await win.getAttribute('data-image-scale'));assert.ok(fit>0&&fit<1);
+  await page.waitForFunction(()=>document.querySelector('.image-source')?.viewer?.viewed);
+  const data=()=>win.evaluate(el=>({...el.querySelector('.image-source').viewer.imageData}));
+  const first=await data();assert.ok(first.ratio>0&&first.ratio<1);
+  assert.equal(await win.locator('.image-viewport > .viewer-container').count(),1,'real Viewer.js is embedded');
   const viewport=await win.locator('.image-viewport').boundingBox();const x=viewport.x+viewport.width*0.3,y=viewport.y+viewport.height*0.35;
-  const first=await win.evaluate(el=>({s:Number(el.dataset.imageScale),x:Number(el.dataset.imageX),y:Number(el.dataset.imageY)}));
   await page.mouse.move(x,y);await page.mouse.wheel(0,-200);
-  await page.waitForFunction(scale=>Number(document.querySelector('.image-window').dataset.imageScale)>scale,fit);
-  const next=await win.evaluate(el=>({s:Number(el.dataset.imageScale),x:Number(el.dataset.imageX),y:Number(el.dataset.imageY)}));
-  assert.ok(Math.abs((x-viewport.x-first.x)/first.s-(x-viewport.x-next.x)/next.s)<0.5,'zoom keeps pointer image coordinate fixed');
+  await page.waitForFunction(scale=>document.querySelector('.image-source').viewer.imageData.ratio>scale,first.ratio);
+  const next=await data();
+  assert.ok(Math.abs((x-viewport.x-first.x)/first.ratio-(x-viewport.x-next.x)/next.ratio)<1,'library zoom anchors pointer');
   await page.mouse.down();await page.mouse.move(x+80,y+50,{steps:8});await page.mouse.up();
-  assert.ok(Number(await win.getAttribute('data-image-x'))>next.x+60);
-  await win.locator('[data-image-action="actual"]').click();assert.equal(Number(await win.getAttribute('data-image-scale')),1);
-  await win.locator('[data-image-action="fit"]').click();assert.ok(Number(await win.getAttribute('data-image-scale'))<1);
+  assert.ok((await data()).x>next.x+60,'Viewer.js pans the image');
+  await win.locator('[data-image-action="actual"]').click();assert.equal((await data()).ratio,1);
+  await win.locator('[data-image-action="rotate"]').click();assert.equal((await data()).rotate,90);
+  await win.locator('[data-image-action="flip"]').click();assert.equal((await data()).scaleX,-1);
+  await win.locator('[data-image-action="fit"]').click();assert.ok((await data()).ratio<1);assert.equal((await data()).rotate,0);assert.equal((await data()).scaleX,1);
   await win.locator('[data-window-action="maximize"]').click();await win.locator('[data-window-action="minimize"]').click();await page.locator('#windowTabs .window-tab').click();
   await page.screenshot({path:path.join(root,'artifacts','standalone-image.png')});
+  await page.evaluate(()=>{window.oldImageViewer=document.querySelector('.image-source').viewer;});
   await win.locator('[data-window-action="close"]').click();assert.equal(await page.locator('.image-window').count(),0);
+  assert.equal(await page.evaluate(()=>window.oldImageViewer.element.viewer),undefined,'close destroys Viewer.js instance');
+}));
+
+test('image_launcher_remote_picker_errors_keyboard_focus_and_disconnect_cleanup', () => scenario('image-launcher', async page => {
+  await connect(page);await page.locator('#imageShortcut').click();const win=page.locator('.image-window');
+  await win.locator('.image-empty').waitFor();assert.equal(await win.locator('[data-image-action="in"]').isDisabled(),true);
+  await win.locator('.image-controls [data-image-action="open"]').click();
+  const picker=page.locator('.server-picker-window');await picker.locator('.window-picker-path').fill(desktop+'/picture.png');await picker.locator('.window-picker-select').click();
+  await page.waitForFunction(()=>document.querySelector('.image-source')?.viewer?.viewed);
+  assert.equal(await win.locator('.window-title').textContent(),'picture.png');
+  await win.focus();await page.keyboard.press('r');assert.equal(await win.evaluate(el=>el.querySelector('.image-source').viewer.imageData.rotate),90);
+  await page.locator('#homeShortcut').click();await page.locator('.window-path').fill('/home/tester');await page.keyboard.press('r');
+  assert.equal(await win.evaluate(el=>el.querySelector('.image-source').viewer.imageData.rotate),90,'typing in another window does not rotate image');
+  await page.locator('#windowTabs .window-tab').filter({hasText:'picture.png'}).click();
+  await win.locator('.image-controls [data-image-action="open"]').click();
+  await picker.locator('.window-picker-path').fill(desktop+'/notes.txt');await picker.locator('.window-picker-select').click();
+  await page.waitForFunction(()=>document.querySelector('.image-status').textContent.includes('/notes.txt'));
+  await page.evaluate(()=>{window.remoteDesktop.image=async()=>{throw new Error('无访问权限：Permission denied');};});
+  await win.locator('.image-controls [data-image-action="open"]').click();await picker.locator('.window-picker-path').fill(desktop+'/picture.png');await picker.locator('.window-picker-select').click();
+  await page.waitForFunction(()=>document.querySelector('.image-status').textContent.includes('无访问权限'));
+  assert.equal(await win.locator('.viewer-container').count(),1,'failed reads preserve current image');
+  await page.evaluate(()=>{window.oldImageViewer=document.querySelector('.image-source').viewer;window.receive({type:'remoteState',status:'disconnected'});});
+  assert.equal(await page.locator('.image-window').count(),0);
+  assert.equal(await page.evaluate(()=>window.oldImageViewer.element.viewer),undefined,'disconnect destroys Viewer.js instance');
 }));
 
 test('download_menu_directory_progress_cancel_and_completion', () => scenario('downloads', async page => {
@@ -188,7 +226,7 @@ test('download_menu_directory_progress_cancel_and_completion', () => scenario('d
   await page.locator('.download-item').waitFor();const id=await page.evaluate(()=>window.calls.find(c=>c.type==='download').id);
   await page.evaluate(id=>window.progress({id,done:25,total:100,method:'sftp',status:'running'}),id);
   assert.match(await page.locator('.download-status').textContent(),/25%/);
-  await page.locator('.download-item button').click();await page.waitForFunction(()=>document.querySelector('.download-status').textContent.includes('已取消'));
+  await page.locator('.download-item .transfer-cancel').click();await page.waitForFunction(()=>document.querySelector('.download-status').textContent.includes('已取消'));
   assert.ok(await page.evaluate(id=>window.calls.some(c=>c.type==='cancelDownload'&&c.id===id),id));
   await page.locator('#closeDownloads').click();await icon(page,'notes.txt').click({button:'right'});await page.locator('[data-action="download"]').click();
   const second=await page.evaluate(()=>window.calls.filter(c=>c.type==='download').at(-1).id);
@@ -218,8 +256,8 @@ test('missing_desktop_requires_explicit_creation', () => scenario('missing-deskt
   await page.locator('#createDesktop').click();assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop')));
 }));
 
-test('terminal_close_cancel_pending_and_save_failure_preserve_editor', () => scenario('terminal-save-close', async page => {
-  await connect(page); await icon(page,'notes.txt').dblclick();
+test('terminal_close_error_and_pending_request_keep_window_until_channel_closes', () => scenario('terminal-channel-close', async page => {
+  await connect(page); await page.keyboard.press('Control+Alt+t');
   const win=page.locator('.terminal-window'); await win.waitFor();
   const id=await win.getAttribute('data-window-id');
   const close=win.locator('[data-window-action="close"]');
@@ -245,7 +283,7 @@ test('terminal_close_cancel_pending_and_save_failure_preserve_editor', () => sce
 }));
 
 test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => scenario('editor-refresh', async page => {
-  await connect(page); await icon(page,'notes.txt').dblclick();
+  await connect(page); await page.keyboard.press('Control+Alt+t');
   const id = await page.locator('.terminal-window').getAttribute('data-window-id');
   await page.evaluate(()=>window.receive({type:'remoteState',status:'error',message:'temporary read failure'}));
   assert.equal(await page.locator('.terminal-window').getAttribute('data-window-id'),id);
@@ -261,7 +299,7 @@ test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => s
 
 test('builtin_home_and_settings_remain_available_without_connection_or_pins', () => scenario('builtin-shortcuts', async page => {
   await page.locator('#closeConnection').click();
-  assert.equal(await page.locator('#builtinApps button').count(),0);
+  assert.equal(await page.locator('#builtinApps button').count(),2);
   assert.deepEqual(await page.locator('.toolbar-actions button').evaluateAll(nodes => nodes.map(node => node.id).filter(id => ['browserButton', 'homeShortcut', 'desktopSettings'].includes(id))), ['browserButton', 'homeShortcut', 'desktopSettings']);
   assert.equal(await page.locator('#dock #homeShortcut, #dock #browserButton, #dock #desktopSettings').count(), 0);
   await page.locator('#desktopSettings').click();
@@ -282,11 +320,11 @@ test('builtin_home_and_settings_remain_available_without_connection_or_pins', ()
   await win.locator('[data-window-action="minimize"]').click(); await page.locator('#homeShortcut').click();
   assert.equal(await page.locator('.window').count(),1); assert.equal(await win.isVisible(),true);
   await page.evaluate(()=>window.receive({type:'configUpdated',config:{pinnedApps:[]}}));
-  assert.equal(await page.locator('#builtinApps button').count(),0);
+  assert.equal(await page.locator('#builtinApps button').count(),2);
   await page.locator('#homeShortcut').click({button:'right'});
   assert.equal(await page.locator('#appContext').isVisible(),false);
   await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
-  assert.equal(await page.locator('#builtinApps button').count(),0);
+  assert.equal(await page.locator('#builtinApps button').count(),2);
   await page.locator('#desktopSettings').click(); await page.locator('#settingsDialog[open]').waitFor();
 }));
 
@@ -386,7 +424,7 @@ test('public_filesystem_navigation_and_denied_directory_restore_previous_locatio
 }));
 
 test('desktop_picker_accepts_arbitrary_public_path_and_preserves_running_editor', () => scenario('desktop-location', async page => {
-  await connect(page);await icon(page,'notes.txt').dblclick();
+  await connect(page);await page.keyboard.press('Control+Alt+t');
   const terminal=await page.locator('.terminal-window').getAttribute('data-window-id');
   await page.evaluate(()=>{window.directories['/']=[{name:'shared',path:'/shared',type:'folder'}];window.directories['/shared']=[{name:'anything',path:'/shared/anything',type:'folder'}];window.directories['/shared/anything']=[{name:'public.txt',path:'/shared/anything/public.txt',type:'file'}];window.deniedDirectory='/locked';});
   await page.locator('#desktopSettings').click();await page.locator('#browseDesktopPath').click();
@@ -453,8 +491,8 @@ test('file_permission_denied_and_read_only_confirmation_are_explicit_and_failed_
   assert.equal(await page.locator('#fileAccessTitle').textContent(),'无编辑权限');
   await page.locator('#fileAccessCancel').click();assert.equal(await page.locator('.terminal-window').count(),0);
   await icon(page,'notes.txt').dblclick();await page.locator('#fileAccessReadOnly').click();
-  await page.locator('.terminal-window').waitFor();
-  assert.ok(await page.evaluate(()=>window.messages.some(m=>m.type==='openTerminal'&&m.readOnly===true)));
+  await page.waitForFunction(()=>window.calls.some(m=>m.type==='openDocument'&&m.readOnly===true));
+  await page.keyboard.press('Control+Alt+t');
   const id=await page.locator('.terminal-window').getAttribute('data-window-id');
   await page.evaluate(id=>window.receive({type:'fileAccessError',id,path:'/home/tester/Desktop/notes.txt',error:'Permission denied after permissions changed'}),id);
   assert.equal(await page.locator('.terminal-window').count(),0);await page.locator('#fileAccessDialog[open]').waitFor();
@@ -524,7 +562,7 @@ test('clock_uses_server_zone_or_explicit_offset_without_client_timezone_fallback
   assert.equal(await page.locator('#serverClock').textContent(),'服务器时间 —');
 }));
 
-test('workbench_default_readonly_and_explicit_vim_routes_are_distinct', () => scenario('workbench-open-routes', async page => {
+test('monaco_default_readonly_and_fixed_launcher_have_no_vim_file_route', () => scenario('workbench-open-routes', async page => {
   await page.evaluate(() => { window.remoteDesktop.openDocument = async(path,options) => window.calls.push({type:'openDocument',path,...options}); });
   await connect(page); await icon(page,'notes.txt').dblclick();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&!value.readOnly));
@@ -532,23 +570,33 @@ test('workbench_default_readonly_and_explicit_vim_routes_are_distinct', () => sc
   await page.evaluate(()=>{window.readOnlyFile='/home/tester/Desktop/notes.txt';});
   await icon(page,'notes.txt').dblclick();await page.locator('#fileAccessReadOnly').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&value.readOnly));
-  await page.evaluate(()=>{window.readOnlyFile=null;});await icon(page,'notes.txt').click({button:'right'});await page.locator('#context [data-action=vim]').click();
-  await page.locator('.terminal-window').waitFor();
-  assert.equal(await page.evaluate(()=>window.messages.filter(value=>value.type==='openTerminal').at(-1).program),'vim');
+  await page.evaluate(()=>{window.readOnlyFile=null;});await icon(page,'notes.txt').click({button:'right'});
+  assert.equal(await page.locator('#context [data-action=vim]').count(),0);
+  await page.keyboard.press('Escape');await page.locator('#editorShortcut').click();
+  await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&value.path===null));
 }));
 
 test('transfer_center_upload_destination_download_and_browser_entry', () => scenario('transfer-controls', async page => {
   await page.evaluate(() => {
-    window.remoteDesktop.chooseUpload=async kind=>{window.calls.push({type:'chooseUpload',kind});return ['D:\\projects\\code.py'];};
-    window.remoteDesktop.upload=async(localPath,remoteDirectory,id)=>{window.calls.push({type:'upload',localPath,remoteDirectory,id});return {id,path:remoteDirectory+'/code.py',done:12,total:12};};
-    window.remoteDesktop.chooseDownloadDirectory=async()=> 'D:\\saved';
+    window.remoteDesktop.chooseUpload=async()=>{window.calls.push({type:'chooseUpload'});return ['D:\\projects\\code.py','D:\\projects\\folder'];};
+    window.directories['/shared']=[];
+    window.remoteDesktop.chooseDownloadDirectory=async()=>{window.calls.push({type:'chooseDownloadDirectory'});return 'D:\\saved';};
     window.remoteDesktop.download=async(path,id,destination)=>{window.calls.push({type:'download',path,id,destination});return {id,path:destination+'\\code.py'};};
     window.remoteDesktop.openBrowser=async url=>{window.calls.push({type:'openBrowser',url});return {id:41,embedded:true};};
   });
-  await connect(page);await page.locator('#downloadsButton').click();await page.locator('#transferRemotePath').fill('/shared');await page.locator('#transferUploadFiles').click();
-  await page.waitForFunction(()=>window.calls.some(value=>value.type==='upload'));
-  assert.match(await page.locator('#downloadItems strong').textContent(),/^↑ 上传 · code.py$/);
-  await page.locator('#transferChooseDestination').click();await page.locator('#transferRemotePath').fill('/shared/code.py');await page.locator('#transferDownload').click();
+  await connect(page);await page.locator('#downloadsButton').click();
+  assert.equal(await page.locator('.transfer-controls button').count(),2);
+  await page.locator('#transferUpload').click();
+  const picker=page.locator('.server-picker-window');await picker.waitFor();
+  assert.equal(await page.evaluate(()=>window.calls.filter(value=>value.type==='upload').length),0);
+  assert.equal(await page.evaluate(()=>window.calls.some(value=>value.type==='chooseUpload')),true);
+  await picker.locator('.window-picker-path').fill('/shared');await picker.locator('[data-window-action="pick"]').click();
+  await page.waitForFunction(()=>window.calls.filter(value=>value.type==='upload').length===2);
+  assert.match(await page.locator('#downloadItems strong').first().textContent(),/^↑ 上传 · code.py$/);
+  assert.equal(await page.locator('#downloadItems progress:visible, #downloadItems .transfer-cancel:visible').count(),0);
+  await page.locator('#transferDownload').click();await picker.waitFor();
+  assert.equal(await page.evaluate(()=>window.calls.some(value=>value.type==='chooseDownloadDirectory')),false);
+  await picker.locator('.window-picker-path').fill('/shared/code.py');await picker.locator('[data-window-action="pick"]').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='download'&&value.destination==='D:\\saved'));
   await page.locator('#closeDownloads').click();await page.locator('#browserButton').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openBrowser'));
@@ -559,16 +607,16 @@ test('transfer_server_picker_reuses_virtual_explorer_and_selects_files_without_o
   await connect(page); await icon(page,'projects').dblclick();
   const win = page.locator('#windows .window').first();
   await win.getByText('source.txt',{exact:true}).waitFor();
+  await win.getByText('source.txt',{exact:true}).click();
   await page.locator('#downloadsButton').click();
-  await page.locator('#transferRemotePath').fill(`${desktop}/projects`);
-  await page.locator('#transferBrowse').click();
+  await page.locator('#transferDownload').click();
   await win.locator('.window-picker-bar').waitFor();
   assert.equal(await page.locator('#windows .window').count(),1);
   assert.equal(await page.locator('#downloadsPanel').isVisible(),false);
   assert.equal(await win.locator('.window-path').inputValue(),`${desktop}/projects`);
   await win.getByText('source.txt',{exact:true}).dblclick();
   await page.locator('#downloadsPanel').waitFor();
-  assert.equal(await page.locator('#transferRemotePath').inputValue(),`${desktop}/projects/source.txt`);
+  assert.equal(await page.evaluate(()=>window.calls.find(call=>call.type==='download').path),`${desktop}/projects/source.txt`);
   assert.equal(await win.locator('.window-picker-bar').isVisible(),false);
   assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='openDocument')),false);
   assert.equal(await page.locator('#windows .window').count(),1);
@@ -576,7 +624,7 @@ test('transfer_server_picker_reuses_virtual_explorer_and_selects_files_without_o
 
 test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_directory', () => scenario('transfer-explorer-path', async page => {
   await connect(page); await page.locator('#downloadsButton').click();
-  await page.locator('#transferRemotePath').fill(desktop); await page.locator('#transferBrowse').click();
+  await page.locator('#transferDownload').click();
   const win = page.locator('.server-picker-window'); await win.getByText('notes.txt',{exact:true}).waitFor();
   await page.evaluate(() => { window.deniedDirectory = '/private'; window.deniedFile = '/private'; });
   await win.locator('.window-path').fill('/private'); await win.locator('.window-path').press('Enter');
@@ -587,17 +635,17 @@ test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_dir
   assert.equal(await win.count(),1);
   await win.locator('.window-picker-path').fill('~/Desktop/notes.txt'); await win.locator('.window-picker-path').press('Enter');
   await page.locator('#downloadsPanel').waitFor();
-  assert.equal(await page.locator('#transferRemotePath').inputValue(),`${desktop}/notes.txt`);
+  assert.equal(await page.evaluate(()=>window.calls.find(call=>call.type==='download').path),`${desktop}/notes.txt`);
   assert.equal(await page.locator('.server-picker-window').count(),0);
-  await page.locator('#transferRemotePath').fill(desktop); await page.locator('#transferBrowse').click();
+  await page.locator('#transferDownload').click();
   await page.locator('.server-picker-window [data-window-action="cancel-picker"]').click();
   await page.locator('#downloadsPanel').waitFor();
-  assert.equal(await page.locator('#transferRemotePath').inputValue(),desktop);
+  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='download').length),1);
 }));
 
 test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenario('browser-window', async page => {
   await connect(page);
-  assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), []);
+  assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), ['editorShortcut','imageShortcut']);
   await page.locator('#browserButton').click();
   const win = page.locator('.browser-window'); await win.waitFor();
   const browserIcon = win.locator('.browser-app-icon');
@@ -760,15 +808,109 @@ test('cli_activity_rendering_is_bounded_and_keeps_latest_entries', () => scenari
 
 test('cancelled_pending_transfer_picker_can_be_reopened_in_reused_explorer', () => scenario('transfer-picker-pending-cancel', async page => {
   await connect(page); await icon(page,'projects').dblclick();
-  await page.locator('#downloadsButton').click(); await page.locator('#transferRemotePath').fill(`${desktop}/projects`);
-  await page.locator('#transferBrowse').click();
+  await page.locator('.window').getByText('source.txt',{exact:true}).click();
+  await page.locator('#downloadsButton').click(); await page.locator('#transferDownload').click();
   await page.evaluate(()=>{const list=window.remoteDesktop.list;window.remoteDesktop.list=path=>path==='/deferred' ? new Promise(resolve=>{window.resolvePickerList=resolve;}) : list(path);});
   const win = page.locator('.server-picker-window');
   await win.locator('.window-picker-path').fill('/deferred'); await win.locator('[data-window-action="pick"]').click();
   await page.waitForFunction(()=>typeof window.resolvePickerList==='function');
   await win.locator('[data-window-action="cancel-picker"]').click(); await page.locator('#downloadsPanel').waitFor();
-  await page.locator('#transferBrowse').click(); await win.waitFor();
+  await page.locator('#transferDownload').click(); await win.waitFor();
   assert.equal(await win.locator('[data-window-action="pick"]').isEnabled(),true,'new picker must reset a cancelled pending validation');
   await page.evaluate(()=>window.resolvePickerList([]));
   assert.equal(await win.count(),1,'old validation cannot close the new picker');
+}));
+
+test('transfer_download_multiselect_uses_one_destination_and_preserves_sources', () => scenario('transfer-multi-download', async page => {
+  await connect(page);await page.locator('#downloadsButton').click();await page.locator('#transferDownload').click();
+  const win=page.locator('.server-picker-window');await win.locator(`[data-path="${desktop}/projects"]`).click();
+  await win.locator(`[data-path="${desktop}/notes.txt"]`).click({modifiers:['Control']});
+  assert.match(await win.locator('.window-picker-count').textContent(),/已选择 2 项/);
+  await win.locator('[data-window-action="pick"]').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='download').length===2);
+  assert.deepEqual(await page.evaluate(()=>window.calls.filter(call=>call.type==='download').map(call=>call.path)),[`${desktop}/projects`,`${desktop}/notes.txt`]);
+  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='chooseDownloadDirectory').length),1);
+  assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='openDocument')),false);
+}));
+
+test('transfer_cancel_and_late_local_selection_do_not_start_or_cross_connections', () => scenario('transfer-cancel-stale', async page => {
+  await connect(page);await page.locator('#downloadsButton').click();
+  await page.evaluate(()=>{window.remoteDesktop.chooseUpload=async()=>[];});
+  await page.locator('#transferUpload').click();
+  assert.equal(await page.locator('.server-picker-window').count(),0);
+  assert.equal(await page.locator('.download-item').count(),0);
+  await page.evaluate(()=>{window.remoteDesktop.chooseUpload=()=>new Promise(resolve=>{window.resolveUploadChoice=resolve;});});
+  await page.locator('#transferUpload').click();await page.waitForFunction(()=>typeof window.resolveUploadChoice==='function');
+  assert.equal(await page.locator('#transferDownload').isDisabled(),true);
+  await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
+  await page.locator('#connectButton').click();await connect(page);
+  await page.evaluate(()=>window.resolveUploadChoice(['D:\\stale.txt']));
+  assert.equal(await page.locator('.server-picker-window').count(),0);
+  assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='upload')),false);
+  await page.evaluate(()=>{window.remoteDesktop.chooseDownloadDirectory=async()=>null;});
+  await page.locator('#transferDownload').click();
+  await page.locator('.server-picker-window .window-picker-path').fill(`${desktop}/notes.txt`);
+  await page.locator('.server-picker-window [data-window-action="pick"]').click();
+  assert.equal(await page.locator('.download-item').count(),0);
+}));
+
+test('remote_html_drag_downloads_to_local_and_local_drop_prompts_server_destination', () => scenario('transfer-drops', async page => {
+  await connect(page);await page.locator('#downloadsButton').click();
+  await page.evaluate(()=>{
+    const data=new DataTransfer();data.setData('application/x-remote-desktop',JSON.stringify({paths:['/home/tester/Desktop/projects','/home/tester/Desktop/notes.txt']}));
+    document.getElementById('downloadsPanel').dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:data}));
+  });
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='download').length===2);
+  assert.equal(await page.locator('.server-picker-window').count(),0);
+  await page.evaluate(()=>{
+    const data=new DataTransfer();data.items.add(new File(['print(1)'],'local.py'));data.items.add(new File(['text'],'notes.txt'));
+    document.getElementById('desktop').dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:data}));
+  });
+  const win=page.locator('.server-picker-window');await win.waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.calls.find(call=>call.type==='acceptDroppedFiles').names),['local.py','notes.txt']);
+  assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='chooseUpload')),false);
+  assert.equal(await page.evaluate(()=>window.calls.some(call=>call.type==='upload')),false);
+  await win.locator('[data-window-action="pick"]').click();
+  await page.waitForFunction(()=>window.calls.filter(call=>call.type==='upload').length===2);
+  assert.deepEqual(await page.evaluate(()=>window.calls.filter(call=>call.type==='upload').map(call=>call.remoteDirectory)),[desktop,desktop]);
+  assert.equal(await page.evaluate(()=>window.messages.some(message=>message.operation==='paste')),false);
+}));
+
+test('desktop_pointer_drag_to_transfer_center_downloads_without_reposition_or_move', () => scenario('transfer-desktop-drag', async page => {
+  await connect(page);await page.locator('#downloadsButton').click();
+  const source=await icon(page,'notes.txt').boundingBox();const target=await page.locator('#downloadsPanel').boundingBox();
+  await page.mouse.move(source.x+source.width/2,source.y+30);await page.mouse.down();
+  await page.mouse.move(target.x+target.width/2,target.y+70,{steps:10});await page.mouse.up();
+  await page.waitForFunction(()=>window.calls.some(call=>call.type==='download'));
+  assert.equal(await page.evaluate(()=>window.calls.find(call=>call.type==='download').path),`${desktop}/notes.txt`);
+  assert.equal(await page.evaluate(()=>window.messages.some(message=>message.operation==='paste'||message.type==='saveDesktopConfig')),false);
+}));
+
+test('transfer_history_can_open_targets_delete_finished_and_keep_active_tasks', () => scenario('transfer-history', async page => {
+  await connect(page);await page.locator('#downloadsButton').click();
+  await page.evaluate(()=>{
+    window.progress({id:'upload-done',direction:'upload',source:'D:\\project.py',path:'/home/tester/Desktop/projects/project.py',status:'complete'});
+    window.progress({id:'download-done',direction:'download',source:'/tmp/file.txt',path:'D:\\Downloads\\file.txt',status:'complete'});
+    window.progress({id:'failed',direction:'download',source:'/tmp/fail',status:'error',error:'permission denied'});
+    window.progress({id:'active',direction:'download',source:'/tmp/live',status:'running',done:1,total:100});
+  });
+  const upload=page.locator('[data-download-id="upload-done"]');
+  assert.equal(await upload.locator('progress, .transfer-cancel').evaluateAll(nodes=>nodes.every(node=>node.hidden)),true);
+  await page.evaluate(()=>{window.transferTarget={side:'remote',path:'/home/tester/Desktop/projects'};});
+  await upload.locator('.transfer-target').click();
+  await page.locator('.window').getByText('source.txt',{exact:true}).waitFor();
+  await page.locator('#downloadsButton').click();
+  await page.evaluate(()=>{window.transferTarget={side:'local'};});
+  await page.locator('[data-download-id="download-done"] .transfer-target').click();
+  assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='openTransferTarget').length),2);
+  await page.locator('[data-download-id="failed"] .transfer-remove').click();
+  assert.equal(await page.locator('[data-download-id="failed"]').count(),0);
+  await page.locator('#clearTransferHistory').click();
+  assert.deepEqual(await page.locator('.download-item').evaluateAll(nodes=>nodes.map(node=>node.dataset.downloadId)),['active']);
+  assert.equal(await page.locator('[data-download-id="active"] progress').isVisible(),true);
+  assert.equal(await page.locator('[data-download-id="active"] .transfer-remove').isVisible(),false);
+  await page.evaluate(()=>window.progress({type:'removed',id:'active'}));
+  assert.equal(await page.locator('.download-item').count(),0);
+  await page.evaluate(()=>window.progress({type:'history-error',error:'无法保存传输历史：Permission denied'}));
+  assert.match(await page.locator('#transferError').textContent(),/无法保存传输历史/);
 }));

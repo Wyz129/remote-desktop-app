@@ -14,19 +14,21 @@ const { createAuditor, safeUrl } = require('./lib/activity-audit.cjs');
 const { UploadService } = require('./lib/upload-service.cjs');
 const { InstanceBridge, executeRemote } = require('./lib/instance-bridge.cjs');
 const { TransferCenter } = require('./lib/transfer-center.cjs');
+const { LocalPicker } = require('./lib/local-picker.cjs');
+const { registerLocalPaths, transferIdentity, openTransferTarget } = require('./lib/transfer-targets.cjs');
 const { createWorkbenchManager } = require('./lib/workbench-manager.cjs');
 const { createBrowserManager } = require('./lib/browser-manager.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
 let windowRef, backend, desktopService, connecting = false;
-let uploader, instanceBridge, workbench, browserManager;
+let uploader, instanceBridge, workbench, browserManager, localPicker;
 const activityLog = new ActivityLog({ onEvent: value => send('activity:event', value) });
 const audit = createAuditor(activityLog);
 const cliActivity = new Map();
 const transferCenter = new TransferCenter(value => send('download:progress', value));
 const selectedLocalPaths = new Set(), selectedDownloadDirectories = new Set();
-let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'vim', knownHosts: {}, desktopLocations: {} };
+let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {} };
 let settingsQueue = Promise.resolve();
 const selectedKeys = new Set();
 const completedDownloads = new Set();
@@ -36,7 +38,6 @@ let sessionTransition = false, allowWindowClose = false, closingApplication = fa
 let connectionCleanup = Promise.resolve();
 const terminalGuard = new TerminalGuard({ getBackend: () => backend,
   onAction: (record, source) => { if (currentSession(source)) activityLog.system(record); },
-  ask: options => dialog.showMessageBox(windowRef, options), report: options => dialog.showMessageBox(windowRef, options),
   closed: id => { terminalStarts.delete(id); post({ type: 'terminalClosed', id }); } });
 const entryPath = path.join(__dirname, 'app', 'index.html');
 const entryUrl = pathToFileURL(entryPath).href;
@@ -52,7 +53,7 @@ async function loadSettings() {
   try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'desktopLocations', 'privateKeyPath'].includes(key))) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
-  settings.scriptEditor = 'vim';
+  settings.scriptEditor = 'monaco';
   settings.desktopLocations = desktopLocations(settings.desktopLocations);
 }
 function saveSettings(patch) {
@@ -107,13 +108,13 @@ async function quitSafely() {
   try {
     if (!await workbench?.confirmAll() || !await terminalGuard.all()) return;
     await closeConnectionResources();
-    terminalStarts.clear(); await backend?.disconnect(); await instanceBridge?.close(); allowWindowClose = true; app.quit();
+    terminalStarts.clear(); await backend?.disconnect(); await instanceBridge?.close(); await transferCenter.flush(); allowWindowClose = true; app.quit();
   } catch (error) { post({ type: 'desktopError', error: `关闭应用未完成：${error.message}` });
   } finally { closingApplication = false; sessionTransition = false; }
 }
 function closeConnectionResources() {
   const previousUploader = uploader;
-  uploader = null; selectedLocalPaths.clear();
+  uploader = null; localPicker?.close(); selectedLocalPaths.clear(); selectedDownloadDirectories.clear();
   const cleanup = connectionCleanup.then(async () => {
     const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close()]);
     const failure = results.find(result => result.status === 'rejected');
@@ -125,12 +126,12 @@ function closeConnectionResources() {
   return cleanup;
 }
 async function upload(localPath, remoteDirectory, { id = crypto.randomUUID(), signal, onProgress } = {}) {
-  requireBackend(); const source = uploader;
+  const connection = requireBackend(), source = uploader;
   if (!source || sessionTransition) throw new Error('连接正在切换，请稍后传输。');
   const abort = () => source.cancel(id); signal?.addEventListener('abort', abort, { once: true });
   try {
     if (signal?.aborted) throw new Error('上传已取消。');
-    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory }, progress => source.upload(localPath, remoteDirectory, { id, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory, targetDirectory: normalizeRemote(remoteDirectory), targetSide: 'remote', serverIdentity: transferIdentity(connection) }, progress => source.upload(localPath, remoteDirectory, { id, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
   } finally { signal?.removeEventListener('abort', abort); }
 }
 async function download(remotePath, { id = crypto.randomUUID(), destination, signal, onProgress } = {}) {
@@ -139,7 +140,8 @@ async function download(remotePath, { id = crypto.randomUUID(), destination, sig
   const abort = () => source.cancelDownload(id); signal?.addEventListener('abort', abort, { once: true });
   try {
     if (signal?.aborted) throw new Error('下载已取消。');
-    const result = await transferCenter.run({ id, source: remotePath, direction: 'download', destination }, progress => source.download(remotePath, { id, destination, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+    const targetDirectory = path.resolve(destination || app.getPath('downloads'));
+    const result = await transferCenter.run({ id, source: remotePath, direction: 'download', destination: targetDirectory, targetDirectory, targetSide: 'local', serverIdentity: transferIdentity(source) }, progress => source.download(remotePath, { id, destination: targetDirectory, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
     completedDownloads.add(result.path); return result;
   } finally { signal?.removeEventListener('abort', abort); }
 }
@@ -197,7 +199,7 @@ async function setDesktop(remotePath) {
     throw new Error(accessMessage(error, remotePath));
   }
 }
-function compatibilitySettings(requestId) { return { type: 'extensionSettings', requestId, hasWorkspace: false, target: 'user', settings: { openOnStartup: true, remoteRoot: '/', remoteHome: backend?.home || '', scriptEditor: 'vim' } }; }
+function compatibilitySettings(requestId) { return { type: 'extensionSettings', requestId, hasWorkspace: false, target: 'user', settings: { openOnStartup: true, remoteRoot: '/', remoteHome: backend?.home || '', scriptEditor: 'monaco' } }; }
 async function handleDesktopMessage(message) {
   if (!message || typeof message.type !== 'string') throw new Error('无效的桌面请求。');
   const type = message.type;
@@ -345,7 +347,7 @@ function registerIpc() {
     const threshold = Number(patch?.downloadThreshold);
     if (!Number.isSafeInteger(threshold) || threshold < 1048576 || threshold > 1073741824) throw new Error('下载阈值必须为 1–1024 MiB。');
     if (backend) backend.threshold = threshold;
-    return saveSettings({ downloadThreshold: threshold, scriptEditor: 'vim' });
+    return saveSettings({ downloadThreshold: threshold, scriptEditor: 'monaco' });
   });
   handle('app:quit-fullscreen', () => { windowRef.setFullScreen(false); return true; });
   handle('terminal:close', id => terminalGuard.request(id));
@@ -388,19 +390,28 @@ function registerIpc() {
     return download(remotePath, { id, destination });
   });
   handle('transfer:choose-local', async kind => {
-    const result = await dialog.showOpenDialog(windowRef, { title: kind === 'directory' ? '选择上传文件夹' : '选择上传文件', properties: kind === 'directory' ? ['openDirectory'] : ['openFile', 'multiSelections'] });
-    if (result.canceled) return [];
-    result.filePaths.forEach(value => selectedLocalPaths.add(value)); return result.filePaths;
+    const source = requireBackend();
+    const paths = await localPicker.choose(kind);
+    if (!currentSession(source) || sessionTransition) return [];
+    return registerLocalPaths(paths, selectedLocalPaths, () => currentSession(source) && !sessionTransition);
+  });
+  handle('transfer:accept-drop', async paths => {
+    const source = requireBackend();
+    return registerLocalPaths(paths, selectedLocalPaths, () => currentSession(source) && !sessionTransition);
   });
   handle('transfer:choose-download-directory', async () => {
+    const source = requireBackend();
     const result = await dialog.showOpenDialog(windowRef, { title: '选择本地保存目录', properties: ['openDirectory', 'createDirectory'] });
-    if (result.canceled) return null; selectedDownloadDirectories.add(result.filePaths[0]); return result.filePaths[0];
+    if (result.canceled || !currentSession(source) || sessionTransition) return null; selectedDownloadDirectories.add(result.filePaths[0]); return result.filePaths[0];
   });
   handle('transfer:upload', (localPath, remoteDirectory, id) => {
     if (!selectedLocalPaths.has(localPath)) throw new Error('请使用选择按钮选择本地项目。');
     return upload(localPath, remoteDirectory, { id });
   });
   handle('transfer:list', () => transferCenter.publicList());
+  handle('transfer:remove', id => transferCenter.remove(id));
+  handle('transfer:clear', () => transferCenter.clearHistory());
+  handle('transfer:open-target', id => openTransferTarget(transferCenter.get(id), { getBackend: requireBackend, shell }));
   handle('ssh:cancel-download', id => { return browserManager?.cancel(id) || transferCenter.cancel(id) || backend?.cancelDownload(id) || false; });
   handle('workbench:open', (remotePath, options) => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return workbench.open(remotePath, { readOnly: Boolean(options?.readOnly) }); });
   handle('browser:open', url => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return browserManager.open(url); });
@@ -411,11 +422,15 @@ function registerIpc() {
 }
 app.whenReady().then(async () => {
   await loadSettings();
+  let historyWarning;
+  try { await transferCenter.load(path.join(app.getPath('userData'), 'transfer-history.json')); } catch (error) { historyWarning = `无法读取传输历史：${error.message}`; }
+  localPicker = new LocalPicker({ app, dialog, getParent: () => windowRef });
   const logging = { audit, captureLog: source => (!source || currentSession(source)) ? activityLog.capture() : null, log: (record, context) => activityLog.system(record, context) };
   workbench = createWorkbenchManager({ ...logging, getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
   browserManager = createBrowserManager({ ...logging, embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
     uploadFile: ({ localPath, remoteDirectory, id, signal, onProgress }) => { requireBackend(); if (!uploader || sessionTransition) throw new Error('SSH 连接正在切换。'); return uploader.upload(localPath, remoteDirectory, { id, signal, onProgress }); } });
   registerIpc(); createWindow();
+  if (historyWarning) windowRef.webContents.once('did-finish-load', () => post({ type: 'desktopError', error: historyWarning }));
   instanceBridge = new InstanceBridge({ userDataDir: app.getPath('userData'), onActivity: bridgeActivity, metadata: { pid: process.pid, executable: process.execPath }, callbacks: {
     status: async () => ({ connected: Boolean(backend?.connected), host: settings.host, port: settings.port, username: settings.username, privateKeyPath: settings.privateKeyPath, desktop: backend?.desktop, home: backend?.home }),
     focus: async () => { windowRef.show(); windowRef.focus(); return { ok: true }; },

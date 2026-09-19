@@ -9,7 +9,8 @@ for (const [source, destination] of [
   ['marked/lib/marked.umd.js', 'marked.js'], ['marked/LICENSE', 'marked-LICENSE'],
   ['dompurify/dist/purify.min.js', 'purify.js'], ['dompurify/LICENSE', 'dompurify-LICENSE'],
   ['katex/dist/katex.min.js', 'katex.js'], ['katex/dist/katex.min.css', 'katex.css'],
-  ['katex/dist/contrib/auto-render.min.js', 'auto-render.js'], ['katex/dist/fonts', 'fonts'], ['katex/LICENSE', 'katex-LICENSE']
+  ['katex/dist/contrib/auto-render.min.js', 'auto-render.js'], ['katex/dist/fonts', 'fonts'], ['katex/LICENSE', 'katex-LICENSE'],
+  ['viewerjs/dist/viewer.min.js', 'viewer.js'], ['viewerjs/dist/viewer.min.css', 'viewer.css'], ['viewerjs/LICENSE', 'viewer-LICENSE']
 ]) fs.cpSync(path.join(root, 'node_modules', source), path.join(target, destination), { recursive: true });
 // Monaco 0.53's minified AMD chunks contain top-level `var` helpers outside
 // their define() factory. Parallel file:// script loads otherwise overwrite

@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-19。独立应用版本：1.1.3。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-19。独立应用版本：1.1.4。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.4：传输中心改为上传/下载两按钮、按来源再目标选择、多选及双向拖放。`lib/transfer-center.cjs` 保存有上限的历史，`lib/transfer-targets.cjs` 校验本地选择授权及历史目标身份。文本/脚本统一 Monaco Editor，左侧增加 Monaco 和图片入口，支持未命名另存为与远程打开。图片使用 MIT Viewer.js 1.14.0；本地资源与许可证由 vendor 脚本打包。用户明确取消终端关闭保存提示，TerminalGuard 直接关闭 SSH 通道，Monaco 未保存确认继续保留。回退分支 `checkpoint/pre-transfer-editor-1.1.3`；本轮不推送。说明见 `docs/TRANSFERS.md`、`docs/WORKBENCH.md`、`docs/RELEASE-1.1.4.md`。下方旧版行为说明不覆盖此段与源码。
 
 1.1.3 新增本地 CLI 自动通知、实时监听和服务器桌面 `.log`，分离 CLI/系统日志并记录 GUI 终端转录。Home 移到顶栏浏览器与设置之间，删除三个固定侧栏入口，保留动态窗口标签。新增 `lib/activity-log.cjs`（远程顺序写入、轮换、隔离与错误状态）、`lib/activity-audit.cjs`（系统操作摘要）。回退分支：`checkpoint/pre-audit-1.1.2`。说明见 `docs/ACTIVITY_LOG.md`，本轮交付见 `docs/RELEASE-1.1.3.md`。本轮不推送。
 

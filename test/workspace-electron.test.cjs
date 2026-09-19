@@ -54,6 +54,22 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   if (!await page.locator('#downloadsPanel').isVisible()) await page.locator('#downloadsButton').click();await page.locator('#downloadItems').getByText(/cli-upload.txt/).first().waitFor();
   await page.locator('#closeDownloads').click();
   async function openDocument(name){const opened=application.waitForEvent('window');await page.locator(`#icons [data-path="${fixture.home}/Desktop/${name}"]`).dblclick();const work=await opened;work.setDefaultTimeout(15000);work.on('pageerror',error=>console.error('Workbench renderer:',error.message));work.on('console',message=>{if(message.type()==='error') console.error('Workbench console:',message.text());});try {await work.waitForFunction(()=>window.monaco?.editor.getModels().length>0);await work.waitForFunction(()=>document.getElementById('filePath').textContent.startsWith('/'));}catch(error){console.error('Workbench state:',await work.locator('body').innerText());throw error;}return work;}
+  const launched = application.waitForEvent('window'); await page.locator('#editorShortcut').click();
+  const untitled = await launched; untitled.setDefaultTimeout(15000);
+  await untitled.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
+  const editorTitle = () => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('/app/workbench.html')).getTitle());
+  await untitled.locator('#filePath').getByText('未命名文件 · 尚未保存', { exact: true }).waitFor();
+  assert.match(await editorTitle(), /Untitled.txt — Monaco Editor/);
+  await untitled.evaluate(() => monaco.editor.getModels()[0].setValue('print("new from launcher")\n'));
+  await answer(0); await closeDocument(); await untitled.locator('#inputDialog[open]').waitFor();
+  await untitled.locator('#inputValue').fill(`${fixture.home}/Desktop/launcher.py`); await untitled.locator('#inputForm button[type=submit]').click();
+  await untitled.waitForFunction(() => document.getElementById('status').textContent === '已另存为。');
+  assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/Desktop/launcher.py`), 'utf8'), 'print("new from launcher")\n');
+  assert.match(await editorTitle(), /^launcher.py — Monaco Editor$/);
+  await untitled.locator('#open').click(); await untitled.locator('#inputValue').fill(`${fixture.home}/Desktop/source.py`); await untitled.locator('#inputForm button[type=submit]').click();
+  await untitled.waitForFunction(() => document.getElementById('filePath').textContent.endsWith('/source.py'));
+  assert.equal(await untitled.evaluate(() => monaco.editor.getModels()[0].getValue()), 'print("original")\n');
+  const untitledClosed = untitled.waitForEvent('close'); await closeDocument(); await untitledClosed;
   const editor=await openDocument('source.py');assert.equal(await editor.locator('#language').inputValue(),'python');
   assert.equal(await editor.evaluate(()=>typeof window.remoteDesktop),'undefined');
   await editor.evaluate(()=>monaco.editor.getModels()[0].setValue('print("edited")\n'));await editor.locator('#save').click();

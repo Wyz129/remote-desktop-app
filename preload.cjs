@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const subscribe = (channel, callback) => { const listener = (_, value) => callback(value); ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener); };
 contextBridge.exposeInMainWorld('remoteDesktop', {
   getSettings: () => ipcRenderer.invoke('app:get-settings'),
@@ -17,9 +17,13 @@ contextBridge.exposeInMainWorld('remoteDesktop', {
   image: remotePath => ipcRenderer.invoke('ssh:image', remotePath),
   download: (remotePath, id, destination) => ipcRenderer.invoke('ssh:download', remotePath, id, destination),
   chooseUpload: kind => ipcRenderer.invoke('transfer:choose-local', kind),
+  acceptDroppedFiles: files => ipcRenderer.invoke('transfer:accept-drop', Array.from(files).map(file => webUtils.getPathForFile(file)).filter(Boolean)),
   chooseDownloadDirectory: () => ipcRenderer.invoke('transfer:choose-download-directory'),
   upload: (localPath, remoteDirectory, id) => ipcRenderer.invoke('transfer:upload', localPath, remoteDirectory, id),
   listTransfers: () => ipcRenderer.invoke('transfer:list'),
+  removeTransfer: id => ipcRenderer.invoke('transfer:remove', id),
+  clearTransferHistory: () => ipcRenderer.invoke('transfer:clear'),
+  openTransferTarget: id => ipcRenderer.invoke('transfer:open-target', id),
   openDocument: (remotePath, options) => ipcRenderer.invoke('workbench:open', remotePath, options),
   openBrowser: url => ipcRenderer.invoke('browser:open', url),
   layoutBrowser: (id, bounds, hidden) => ipcRenderer.invoke('browser:layout', id, bounds, hidden),
