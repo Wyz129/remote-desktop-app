@@ -151,8 +151,19 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/Desktop`, 'ungranted-upload']), /选择/);
   await assert.rejects(page.evaluate(args => window.remoteDesktop.download(...args), [`${fixture.home}/Desktop/notes.txt`, 'ungranted-download', fixture.root]), /选择/);
   assert.deepEqual(await page.evaluate(() => { const forged=new File(['unsafe'],'forged.txt');Object.defineProperty(forged,'path',{value:'C:\\Windows\\win.ini'});return window.remoteDesktop.acceptDroppedFiles([forged]); }), []);
-  await application.evaluate((_electron, file) => globalThis.openDialogAnswers.push({ canceled:false,filePaths:[file] }), localUpload);
-  assert.deepEqual(await page.evaluate(() => window.remoteDesktop.chooseUpload('files')), [localUpload]);
+  await application.evaluate(() => globalThis.openDialogAnswers.push({ canceled:true,filePaths:[] }));
+  assert.deepEqual(await page.evaluate(() => window.remoteDesktop.chooseUpload()), []);
+  const otherUpload = path.join(fixture.root, 'native second.py'); await fsp.writeFile(otherUpload, 'print(2)');
+  await application.evaluate((_electron, files) => globalThis.openDialogAnswers.push({ canceled:false,filePaths:files }), [localUpload, otherUpload]);
+  assert.deepEqual(await page.evaluate(() => window.remoteDesktop.chooseUpload()), [localUpload, otherUpload]);
+  assert.deepEqual(await application.evaluate(() => globalThis.openDialogLog.at(-1).properties), ['openFile', 'multiSelections']);
+  // A path selected as a file may be replaced before the user chooses the server
+  // target. The upload service must still reject a directory without writing it.
+  await fsp.rename(otherUpload, `${otherUpload}.original`); await fsp.mkdir(otherUpload);
+  await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [otherUpload, `${fixture.home}/Desktop`, 'replaced-file-upload']), /不支持文件夹/);
+  await page.evaluate(() => window.remoteDesktop.removeTransfer('replaced-file-upload'));
+  await application.evaluate((_electron, files) => globalThis.openDialogAnswers.push({ canceled:false,filePaths:files }), [fixture.root]);
+  await assert.rejects(page.evaluate(() => window.remoteDesktop.chooseUpload()), /不支持文件夹/);
   const uploaded = await page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/Desktop`, 'electron-upload']);
   assert.equal(await fsp.readFile(fixture.mapPath(uploaded.path), 'utf8'), 'native picker upload');
   assert.deepEqual(await page.evaluate(() => window.remoteDesktop.openTransferTarget('electron-upload')), {side:'remote',path:`${fixture.home}/Desktop`});

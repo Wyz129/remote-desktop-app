@@ -2,7 +2,7 @@
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
   "description": "独立 SSH Monaco Editor、服务器浏览器、传输中心与命令行实例",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -45,7 +45,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.1.4"
+      "output": "artifacts/electron-1.1.5"
     },
     "files": [
       "main.cjs",
@@ -75,10 +75,6 @@
       {
         "from": "lib/instance-bridge.cjs",
         "to": "cli/lib/instance-bridge.cjs"
-      },
-      {
-        "from": "scripts/native-picker",
-        "to": "native-picker"
       }
     ]
   }

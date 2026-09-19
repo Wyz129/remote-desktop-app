@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-19。独立应用版本：1.1.4。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-20。独立应用版本：1.1.5。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.5：上传改为 Electron 原生文件多选，不再返回浮窗确认；删除旧 app/local-picker.*、PowerShell/Shell COM 脚本及打包资源。GUI 选择/拖放仅普通文件，UploadService 的 filesOnly 在规划阶段拒绝目录（防止选中后替换），CLI 递归目录上传保留。文本沿用微软 MIT Monaco Editor 0.53.0，公开文档明确 Fortran 适配与语言服务边界。统一桌面、工作台与浏览器工具栏按钮对比度，工作台 CSS 不覆盖 Monaco 内部控件。回退分支 `checkpoint/pre-native-upload-1.1.4`；仅本地提交与打包，不推送。详情见 `docs/RELEASE-1.1.5.md`。
 
 1.1.4：传输中心改为上传/下载两按钮、按来源再目标选择、多选及双向拖放。`lib/transfer-center.cjs` 保存有上限的历史，`lib/transfer-targets.cjs` 校验本地选择授权及历史目标身份。文本/脚本统一 Monaco Editor，左侧增加 Monaco 和图片入口，支持未命名另存为与远程打开。图片使用 MIT Viewer.js 1.14.0；本地资源与许可证由 vendor 脚本打包。用户明确取消终端关闭保存提示，TerminalGuard 直接关闭 SSH 通道，Monaco 未保存确认继续保留。回退分支 `checkpoint/pre-transfer-editor-1.1.3`；本轮不推送。说明见 `docs/TRANSFERS.md`、`docs/WORKBENCH.md`、`docs/RELEASE-1.1.4.md`。下方旧版行为说明不覆盖此段与源码。
 

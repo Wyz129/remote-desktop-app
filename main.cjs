@@ -125,13 +125,13 @@ function closeConnectionResources() {
   connectionCleanup = cleanup.catch(() => {});
   return cleanup;
 }
-async function upload(localPath, remoteDirectory, { id = crypto.randomUUID(), signal, onProgress } = {}) {
+async function upload(localPath, remoteDirectory, { id = crypto.randomUUID(), signal, onProgress, filesOnly = false } = {}) {
   const connection = requireBackend(), source = uploader;
   if (!source || sessionTransition) throw new Error('连接正在切换，请稍后传输。');
   const abort = () => source.cancel(id); signal?.addEventListener('abort', abort, { once: true });
   try {
     if (signal?.aborted) throw new Error('上传已取消。');
-    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory, targetDirectory: normalizeRemote(remoteDirectory), targetSide: 'remote', serverIdentity: transferIdentity(connection) }, progress => source.upload(localPath, remoteDirectory, { id, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory, targetDirectory: normalizeRemote(remoteDirectory), targetSide: 'remote', serverIdentity: transferIdentity(connection) }, progress => source.upload(localPath, remoteDirectory, { id, filesOnly, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
   } finally { signal?.removeEventListener('abort', abort); }
 }
 async function download(remotePath, { id = crypto.randomUUID(), destination, signal, onProgress } = {}) {
@@ -405,8 +405,8 @@ function registerIpc() {
     if (result.canceled || !currentSession(source) || sessionTransition) return null; selectedDownloadDirectories.add(result.filePaths[0]); return result.filePaths[0];
   });
   handle('transfer:upload', (localPath, remoteDirectory, id) => {
-    if (!selectedLocalPaths.has(localPath)) throw new Error('请使用选择按钮选择本地项目。');
-    return upload(localPath, remoteDirectory, { id });
+    if (!selectedLocalPaths.has(localPath)) throw new Error('请使用选择按钮选择本地文件。');
+    return upload(localPath, remoteDirectory, { id, filesOnly: true });
   });
   handle('transfer:list', () => transferCenter.publicList());
   handle('transfer:remove', id => transferCenter.remove(id));
@@ -424,7 +424,7 @@ app.whenReady().then(async () => {
   await loadSettings();
   let historyWarning;
   try { await transferCenter.load(path.join(app.getPath('userData'), 'transfer-history.json')); } catch (error) { historyWarning = `无法读取传输历史：${error.message}`; }
-  localPicker = new LocalPicker({ app, dialog, getParent: () => windowRef });
+  localPicker = new LocalPicker({ dialog, getParent: () => windowRef });
   const logging = { audit, captureLog: source => (!source || currentSession(source)) ? activityLog.capture() : null, log: (record, context) => activityLog.system(record, context) };
   workbench = createWorkbenchManager({ ...logging, getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
   browserManager = createBrowserManager({ ...logging, embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),

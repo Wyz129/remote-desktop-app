@@ -1,8 +1,10 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-19。对象为 `remote-desktop-app` 1.1.4，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-20。对象为 `remote-desktop-app` 1.1.5，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.5 原生文件选择、取消/迟到结果、目录拒绝与按钮样式回归，实际执行结果与边界见 [1.1.5 交付记录](docs/RELEASE-1.1.5.md)。原生对话框返回由隔离测试主进程模拟，不把这一合同测试计作 Windows 原生窗口的鼠标人工验收。
 
 1.1.4 改为两按钮传输、多选与拖放、持久化历史、Monaco Editor 默认文本访问及启动入口、Viewer.js 图片查看器。终端保存提示按用户要求取消；下方旧版关闭保护记录仅作历史参考。最终验证范围见 [1.1.4 交付记录](docs/RELEASE-1.1.4.md)。
 
