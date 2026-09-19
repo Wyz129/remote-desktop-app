@@ -18,13 +18,13 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
     }
     await fixture.close();
   });
-  await fixture.put('Desktop/source.py','print("original")\n');
-  await fixture.put('Desktop/site/index.html','<!doctype html><link rel="stylesheet" href="style.css"><div id="hello">loading</div><img id="pixel" src="pixel.png"><script src="main.js"></script>');
-  await fixture.put('Desktop/site/style.css','#hello{color:rgb(1, 120, 30)}');
-  await fixture.put('Desktop/site/main.js','document.getElementById("hello").textContent="remote resource loaded";');
-  await fixture.put('Desktop/site/pixel.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=','base64'));
-  await fixture.put('Desktop/book.ipynb',JSON.stringify({nbformat:4,nbformat_minor:5,metadata:{language_info:{name:'python'}},cells:[{id:'markdown',cell_type:'markdown',metadata:{},source:'# Notebook\n\n$x^2$'},{id:'code',cell_type:'code',metadata:{},source:'print(42)',execution_count:1,outputs:[{output_type:'stream',name:'stdout',text:'42\n'},{output_type:'display_data',metadata:{},data:{'text/html':'<b>existing output</b><script>window.pwned=true</script>'}}]}]}));
-  fixture.link(`${fixture.home}/Desktop/public-link`,'/outside');
+  await fixture.put('.rdesktop/desktop/source.py','print("original")\n');
+  await fixture.put('.rdesktop/desktop/site/index.html','<!doctype html><link rel="stylesheet" href="style.css"><div id="hello">loading</div><img id="pixel" src="pixel.png"><script src="main.js"></script>');
+  await fixture.put('.rdesktop/desktop/site/style.css','#hello{color:rgb(1, 120, 30)}');
+  await fixture.put('.rdesktop/desktop/site/main.js','document.getElementById("hello").textContent="remote resource loaded";');
+  await fixture.put('.rdesktop/desktop/site/pixel.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=','base64'));
+  await fixture.put('.rdesktop/desktop/book.ipynb',JSON.stringify({nbformat:4,nbformat_minor:5,metadata:{language_info:{name:'python'}},cells:[{id:'markdown',cell_type:'markdown',metadata:{},source:'# Notebook\n\n$x^2$'},{id:'code',cell_type:'code',metadata:{},source:'print(42)',execution_count:1,outputs:[{output_type:'stream',name:'stdout',text:'42\n'},{output_type:'display_data',metadata:{},data:{'text/html':'<b>existing output</b><script>window.pwned=true</script>'}}]}]}));
+  fixture.link(`${fixture.home}/.rdesktop/desktop/public-link`,'/outside');
   await fs.writeFile(path.join(fixture.outsideRoot,'shared.txt'),'shared');
   const userData=path.join(fixture.root,'workspace-app');await fs.mkdir(userData);
   await fs.writeFile(path.join(userData,'settings.json'),JSON.stringify({host:fixture.config.host,port:fixture.config.port,username:fixture.username,knownHosts:{[`${fixture.config.host}:${fixture.config.port}`]:fixture.fingerprint}}));
@@ -37,7 +37,7 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   const answer=response=>application.evaluate((_electron,value)=>globalThis.answers.push(value),response);
   const closeDocument=()=>application.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows().find(window=>window.webContents.getURL().endsWith('/app/workbench.html'));setImmediate(()=>window.close());});
   await page.locator('#connectionDialog[open]').waitFor();await page.locator('#sshPassword').fill(fixture.password);await page.locator('#connectSubmit').click();await page.locator('#connectionDialog').waitFor({state:'hidden'});
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/public-link"]`).dblclick();
+  await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/public-link"]`).dblclick();
   await page.locator('.window .entry').getByText('shared.txt',{exact:true}).waitFor();assert.equal(await page.locator('.window-path').inputValue(),'/outside');
   await page.locator('.window [data-window-action=close]').click();
   let instances=[];for(let i=0;i<50&&!instances.length;i++){instances=await listInstances(userData);if(!instances.length)await new Promise(resolve=>setTimeout(resolve,100));}assert.equal(instances.length,1);
@@ -53,7 +53,7 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   assert.equal(await fs.readFile(path.join(fixture.outsideRoot,'cli-upload.txt'),'utf8'),'uploaded through running instance');
   if (!await page.locator('#downloadsPanel').isVisible()) await page.locator('#downloadsButton').click();await page.locator('#downloadItems').getByText(/cli-upload.txt/).first().waitFor();
   await page.locator('#closeDownloads').click();
-  async function openDocument(name){const opened=application.waitForEvent('window');await page.locator(`#icons [data-path="${fixture.home}/Desktop/${name}"]`).dblclick();const work=await opened;work.setDefaultTimeout(15000);work.on('pageerror',error=>console.error('Workbench renderer:',error.message));work.on('console',message=>{if(message.type()==='error') console.error('Workbench console:',message.text());});try {await work.waitForFunction(()=>window.monaco?.editor.getModels().length>0);await work.waitForFunction(()=>document.getElementById('filePath').textContent.startsWith('/'));}catch(error){console.error('Workbench state:',await work.locator('body').innerText());throw error;}return work;}
+  async function openDocument(name){const opened=application.waitForEvent('window');await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/${name}"]`).dblclick();const work=await opened;work.setDefaultTimeout(15000);work.on('pageerror',error=>console.error('Workbench renderer:',error.message));work.on('console',message=>{if(message.type()==='error') console.error('Workbench console:',message.text());});try {await work.waitForFunction(()=>window.monaco?.editor.getModels().length>0);await work.waitForFunction(()=>document.getElementById('filePath').textContent.startsWith('/'));}catch(error){console.error('Workbench state:',await work.locator('body').innerText());throw error;}return work;}
   const launched = application.waitForEvent('window'); await page.locator('#applicationsButton').click(); await page.locator('[data-application=editor]').click();
   const untitled = await launched; untitled.setDefaultTimeout(15000);
   await untitled.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
@@ -62,25 +62,25 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   assert.match(await editorTitle(), /Untitled.txt — Monaco Editor/);
   await untitled.evaluate(() => monaco.editor.getModels()[0].setValue('print("new from launcher")\n'));
   await answer(0); await closeDocument(); await untitled.locator('#inputDialog[open]').waitFor();
-  await untitled.locator('#inputValue').fill(`${fixture.home}/Desktop/launcher.py`); await untitled.locator('#inputForm button[type=submit]').click();
+  await untitled.locator('#inputValue').fill(`${fixture.home}/.rdesktop/desktop/launcher.py`); await untitled.locator('#inputForm button[type=submit]').click();
   await untitled.waitForFunction(() => document.getElementById('status').textContent === '已另存为。');
-  assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/Desktop/launcher.py`), 'utf8'), 'print("new from launcher")\n');
+  assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/.rdesktop/desktop/launcher.py`), 'utf8'), 'print("new from launcher")\n');
   assert.match(await editorTitle(), /^launcher.py — Monaco Editor$/);
-  await untitled.locator('#open').click(); await untitled.locator('#inputValue').fill(`${fixture.home}/Desktop/source.py`); await untitled.locator('#inputForm button[type=submit]').click();
+  await untitled.locator('#open').click(); await untitled.locator('#inputValue').fill(`${fixture.home}/.rdesktop/desktop/source.py`); await untitled.locator('#inputForm button[type=submit]').click();
   await untitled.waitForFunction(() => document.getElementById('filePath').textContent.endsWith('/source.py'));
   assert.equal(await untitled.evaluate(() => monaco.editor.getModels()[0].getValue()), 'print("original")\n');
   const untitledClosed = untitled.waitForEvent('close'); await closeDocument(); await untitledClosed;
   const editor=await openDocument('source.py');assert.equal(await editor.locator('#language').inputValue(),'python');
   assert.equal(await editor.evaluate(()=>typeof window.remoteDesktop),'undefined');
   await editor.evaluate(()=>monaco.editor.getModels()[0].setValue('print("edited")\n'));await editor.locator('#save').click();
-  await editor.waitForFunction(()=>document.getElementById('status').textContent.includes('已保存'));assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/Desktop/source.py`),'utf8'),'print("edited")\n');
-  await fs.writeFile(fixture.mapPath(`${fixture.home}/Desktop/source.py`),'external change\n');
+  await editor.waitForFunction(()=>document.getElementById('status').textContent.includes('已保存'));assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/.rdesktop/desktop/source.py`),'utf8'),'print("edited")\n');
+  await fs.writeFile(fixture.mapPath(`${fixture.home}/.rdesktop/desktop/source.py`),'external change\n');
   await editor.evaluate(()=>monaco.editor.getModels()[0].setValue('do not overwrite\n'));await editor.locator('#save').click();
   await editor.waitForFunction(()=>document.getElementById('status').textContent.includes('其他程序修改'));
-  assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/Desktop/source.py`),'utf8'),'external change\n');
+  assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/.rdesktop/desktop/source.py`),'utf8'),'external change\n');
   await answer(2);await closeDocument();await new Promise(resolve=>setTimeout(resolve,150));assert.equal(editor.isClosed(),false,JSON.stringify(await application.evaluate(()=>({prompts:globalThis.promptLog,answers:globalThis.answers}))));
   await answer(1);const closed=editor.waitForEvent('close');await closeDocument();await closed;
-  const openedHtml=application.waitForEvent('window');await page.evaluate(remotePath=>window.remoteDesktop.openDocument(remotePath),`${fixture.home}/Desktop/site/index.html`);const html=await openedHtml;html.setDefaultTimeout(15000);await html.waitForFunction(()=>window.monaco?.editor.getModels().length>0);
+  const openedHtml=application.waitForEvent('window');await page.evaluate(remotePath=>window.remoteDesktop.openDocument(remotePath),`${fixture.home}/.rdesktop/desktop/site/index.html`);const html=await openedHtml;html.setDefaultTimeout(15000);await html.waitForFunction(()=>window.monaco?.editor.getModels().length>0);
   await html.locator('[data-mode=split]').click();const preview=html.frameLocator('#preview');await preview.locator('#hello').getByText('remote resource loaded',{exact:true}).waitFor();
   assert.equal(await preview.locator('#hello').evaluate(el=>getComputedStyle(el).color),'rgb(1, 120, 30)');
   assert.equal(await preview.locator('#pixel').evaluate(el=>el.naturalWidth),1);

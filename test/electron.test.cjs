@@ -29,9 +29,9 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   });
   const userData = path.join(fixture.root, 'electron-user-data');
   await fsp.mkdir(userData);
-  await fixture.put('Desktop/notes.txt', 'Real Electron -> IPC -> SSH fixture\n');
-  await fixture.put('Desktop/pixel.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=', 'base64'));
-  await fixture.put('Desktop/projects/example.txt', 'nested');
+  await fixture.put('.rdesktop/desktop/notes.txt', 'Real Electron -> IPC -> SSH fixture\n');
+  await fixture.put('.rdesktop/desktop/pixel.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=', 'base64'));
+  await fixture.put('.rdesktop/desktop/projects/example.txt', 'nested');
   await fsp.mkdir(path.join(fixture.outsideRoot, 'shared workspace'));
   await fsp.mkdir(path.join(fixture.outsideRoot, 'blocked'));
   await fsp.writeFile(path.join(fixture.outsideRoot, 'shared workspace', 'readonly.txt'), 'public readonly file');
@@ -67,9 +67,9 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('#sshPassword').fill(fixture.password);
   await page.locator('#connectSubmit').click();
   await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).waitFor();
+  await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/notes.txt"]`).waitFor();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
-  assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/Desktop`);
+  assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/.rdesktop/desktop`);
   await page.waitForFunction(() => document.getElementById('serverClock').textContent.includes('Asia/Shanghai (UTC+08:00)'));
   assert.equal(await page.locator('#newWindow').count(), 0);
   assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(), 0);
@@ -122,10 +122,10 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.equal(auditSnapshot.sessions.length, 1);
   assert.ok(!auditSnapshot.error, auditSnapshot.error);
   const cliSession = auditSnapshot.sessions[0];
-  assert.ok(cliSession.logPath.startsWith(`${fixture.home}/Desktop/.log/`));
+  assert.ok(cliSession.logPath.startsWith(`${fixture.home}/.rdesktop/log/`));
   await page.locator('.activity-window [data-window-action="close"]').click();
   await page.locator('#homeShortcut').click();
-  await page.locator('.window .entry').filter({ hasText: 'Desktop' }).waitFor();
+  await page.locator('.window .entry').getByText('Desktop', { exact: true }).waitFor();
   assert.equal(await page.locator('.window-path').inputValue(), fixture.home);
   await page.locator('.window [data-window-action="close"]').click();
   await page.locator('#desktopSettings').click(); await page.locator('#systemSettingsTab').click();
@@ -133,15 +133,15 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.equal(await page.locator('[data-system-info="home"]').textContent(), fixture.home);
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-control-panel.png' : 'electron-control-panel.png') });
   await page.locator('#closeSettings').click();
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/projects"]`).dblclick();
+  await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/projects"]`).dblclick();
   await page.locator('.window .entry').filter({ hasText: 'example.txt' }).waitFor();
   await page.locator('.window [data-window-action="close"]').click();
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/pixel.png"]`).dblclick();
+  await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/pixel.png"]`).dblclick();
   await page.waitForFunction(() => document.querySelector('.image-window img')?.naturalWidth === 1);
   await page.locator('.image-window [data-image-action="in"]').click();
   await page.waitForFunction(() => parseFloat(document.querySelector('.image-window .image-scale').textContent) > 100);
   await page.locator('.image-window [data-window-action="close"]').click();
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).click({ button: 'right' });
+  await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/notes.txt"]`).click({ button: 'right' });
   await page.locator('#context [data-action="download"]').click();
   await page.waitForFunction(() => document.querySelector('.download-status')?.textContent.includes('已完成'));
   assert.equal(await fsp.readFile(path.join(fixture.downloads, 'notes.txt'), 'utf8'), 'Real Electron -> IPC -> SSH fixture\n');
@@ -158,8 +158,8 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.ok(await application.evaluate(() => globalThis.openDialogLog.some(value => value.properties.includes('openDirectory'))));
   await page.locator('#closeDownloads').click();
   const localUpload = path.join(fixture.root, 'electron-upload.txt'); await fsp.writeFile(localUpload, 'native picker upload');
-  await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/Desktop`, 'ungranted-upload']), /选择/);
-  await assert.rejects(page.evaluate(args => window.remoteDesktop.download(...args), [`${fixture.home}/Desktop/notes.txt`, 'ungranted-download', fixture.root]), /选择/);
+  await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/.rdesktop/desktop`, 'ungranted-upload']), /选择/);
+  await assert.rejects(page.evaluate(args => window.remoteDesktop.download(...args), [`${fixture.home}/.rdesktop/desktop/notes.txt`, 'ungranted-download', fixture.root]), /选择/);
   assert.deepEqual(await page.evaluate(() => { const forged=new File(['unsafe'],'forged.txt');Object.defineProperty(forged,'path',{value:'C:\\Windows\\win.ini'});return window.remoteDesktop.acceptDroppedFiles([forged]); }), []);
   await application.evaluate(() => globalThis.openDialogAnswers.push({ canceled:true,filePaths:[] }));
   assert.deepEqual(await page.evaluate(() => window.remoteDesktop.chooseUpload()), []);
@@ -170,19 +170,19 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   // A path selected as a file may be replaced before the user chooses the server
   // target. The upload service must still reject a directory without writing it.
   await fsp.rename(otherUpload, `${otherUpload}.original`); await fsp.mkdir(otherUpload);
-  await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [otherUpload, `${fixture.home}/Desktop`, 'replaced-file-upload']), /不支持文件夹/);
+  await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [otherUpload, `${fixture.home}/.rdesktop/desktop`, 'replaced-file-upload']), /不支持文件夹/);
   await page.evaluate(() => window.remoteDesktop.removeTransfer('replaced-file-upload'));
   await application.evaluate((_electron, files) => globalThis.openDialogAnswers.push({ canceled:false,filePaths:files }), [fixture.root]);
   await assert.rejects(page.evaluate(() => window.remoteDesktop.chooseUpload()), /不支持文件夹/);
-  const uploaded = await page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/Desktop`, 'electron-upload']);
+  const uploaded = await page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/.rdesktop/desktop`, 'electron-upload']);
   assert.equal(await fsp.readFile(fixture.mapPath(uploaded.path), 'utf8'), 'native picker upload');
-  assert.deepEqual(await page.evaluate(() => window.remoteDesktop.openTransferTarget('electron-upload')), {side:'remote',path:`${fixture.home}/Desktop`});
+  assert.deepEqual(await page.evaluate(() => window.remoteDesktop.openTransferTarget('electron-upload')), {side:'remote',path:`${fixture.home}/.rdesktop/desktop`});
   const droppedFile = path.join(fixture.root, 'electron-drop.txt'); await fsp.writeFile(droppedFile, 'real File object drop');
   await page.evaluate(() => { const input = document.createElement('input'); input.type = 'file'; input.id = 'fixtureFiles'; input.hidden = true; document.body.append(input); });
   await page.locator('#fixtureFiles').setInputFiles(droppedFile);
   await page.evaluate(() => { const data = new DataTransfer(); data.items.add(document.getElementById('fixtureFiles').files[0]); document.getElementById('desktop').dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: data })); document.getElementById('fixtureFiles').remove(); });
   const uploadPicker = page.locator('.server-picker-window'); await uploadPicker.waitFor();
-  await uploadPicker.locator('.window-picker-path').fill(`${fixture.home}/Desktop`); await uploadPicker.locator('.window-picker-select').click();
+  await uploadPicker.locator('.window-picker-path').fill(`${fixture.home}/.rdesktop/desktop`); await uploadPicker.locator('.window-picker-select').click();
   await page.locator('.download-item').filter({ hasText: 'electron-drop.txt' }).locator('.download-status').getByText('已完成', { exact: true }).waitFor();
   const dropTask = (await page.evaluate(() => window.remoteDesktop.listTransfers())).find(task => task.source === droppedFile);
   assert.equal(typeof dropTask.path, 'string', JSON.stringify(dropTask));
@@ -202,7 +202,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
     try { await candidate.waitForURL('**/app/workbench.html', { timeout: 12000 }); return true; }
     catch { return false; }
   } });
-  await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).dblclick();
+  await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/notes.txt"]`).dblclick();
   const editor = await documentOpened; editor.setDefaultTimeout(12000);
   await editor.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
   assert.equal(await editor.locator('.brand').textContent(), 'Monaco Editor');
@@ -249,7 +249,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.ok(cliRecords.some(record => record.type === 'stdout' && record.data === fixture.home));
   const pointer = systemRecords.find(record => record.type === 'cli-connection');
   assert.ok(pointer); assert.equal(pointer.logPath, cliSession.logPath);
-  assert.deepEqual(Object.keys(pointer).sort(), ['ip', 'logPath', 'time', 'type']);
+  assert.deepEqual(Object.keys(pointer).sort(), ['ip', 'logPath', 'operationId', 'time', 'type']);
   assert.ok(!systemLog.includes(cliCommand), 'CLI commands must not be duplicated in system log');
   assert.ok(systemRecords.some(record => record.type === 'terminal-output' && record.data.includes('fixture-echo:Electron 中文 input')));
   assert.ok(systemRecords.some(record => record.type === 'terminal-command' && record.command.includes('exec')));
@@ -291,7 +291,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('#desktopSettings').click();
   await page.locator('#settingsDesktopPath').fill('/outside/blocked'); await page.locator('#applySettings').click();
   await page.locator('#settingsError').getByText(/无访问权限/).waitFor();
-  assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/Desktop`);
+  assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/.rdesktop/desktop`);
   await page.locator('#settingsDesktopPath').fill('/outside/shared workspace'); await page.locator('#applySettings').click();
   await page.locator('#settingsDialog').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#desktopPath').textContent(), '/outside/shared workspace');
@@ -335,13 +335,13 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('#sshPassword').fill(fixture.password); await page.locator('#connectSubmit').click();
   await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
   await page.locator('#homeShortcut').click();
-  await page.locator('.window .entry').filter({ hasText: 'Desktop' }).waitFor();
+  await page.locator('.window .entry').getByText('Desktop', { exact: true }).waitFor();
   await page.locator('.window [data-window-action="close"]').click();
   await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('#applySettings').isEnabled(), true, 'unavailable saved desktop still permits recovery');
-  await page.locator('#settingsDesktopPath').fill(`${fixture.home}/Desktop`); await page.locator('#applySettings').click();
+  await page.locator('#settingsDesktopPath').fill(`${fixture.home}/.rdesktop/desktop`); await page.locator('#applySettings').click();
   await page.locator('#settingsDialog').waitFor({ state: 'hidden' });
-  assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/Desktop`);
+  assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/.rdesktop/desktop`);
   const relaunchedExit = page.waitForEvent('close', { timeout: 10000 });
   await application.evaluate(({ BrowserWindow }) => { setImmediate(() => BrowserWindow.getAllWindows()[0].close()); return true; });
   await relaunchedExit;

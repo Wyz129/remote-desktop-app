@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const subscribe = (channel, callback) => { const listener = (_, value) => callback(value); ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener); };
 contextBridge.exposeInMainWorld('remoteDesktop', {
   getSettings: () => ipcRenderer.invoke('app:get-settings'),
+  saveServer: input => ipcRenderer.invoke('app:save-server', input),
   getSystemInfo: () => ipcRenderer.invoke('ssh:system-info'),
   setDesktop: remotePath => ipcRenderer.invoke('ssh:set-desktop', remotePath),
   checkFileAccess: remotePath => ipcRenderer.invoke('ssh:file-access', remotePath),
@@ -15,6 +16,8 @@ contextBridge.exposeInMainWorld('remoteDesktop', {
   discoverDesktop: create => ipcRenderer.invoke('ssh:discover-desktop', create),
   list: remotePath => ipcRenderer.invoke('ssh:list', remotePath),
   image: remotePath => ipcRenderer.invoke('ssh:image', remotePath),
+  openVideo: remotePath => ipcRenderer.invoke('video:open', remotePath),
+  releaseVideo: id => ipcRenderer.invoke('video:release', id),
   download: (remotePath, id, destination) => ipcRenderer.invoke('ssh:download', remotePath, id, destination),
   chooseUpload: kind => ipcRenderer.invoke('transfer:choose-local', kind),
   acceptDroppedFiles: files => ipcRenderer.invoke('transfer:accept-drop', Array.from(files).map(file => webUtils.getPathForFile(file)).filter(Boolean)),

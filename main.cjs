@@ -18,17 +18,20 @@ const { LocalPicker } = require('./lib/local-picker.cjs');
 const { registerLocalPaths, transferIdentity, openTransferTarget } = require('./lib/transfer-targets.cjs');
 const { createWorkbenchManager } = require('./lib/workbench-manager.cjs');
 const { createBrowserManager } = require('./lib/browser-manager.cjs');
+const { ensureRemoteStorage } = require('./lib/remote-storage.cjs');
+const { VideoService } = require('./lib/video-service.cjs');
+const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle } = require('./lib/server-profiles.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
 let windowRef, backend, desktopService, connecting = false;
-let uploader, instanceBridge, workbench, browserManager, localPicker;
+let uploader, instanceBridge, workbench, browserManager, localPicker, videoService;
 const activityLog = new ActivityLog({ onEvent: value => send('activity:event', value) });
 const audit = createAuditor(activityLog);
 const cliActivity = new Map();
 const transferCenter = new TransferCenter(value => send('download:progress', value));
 const selectedLocalPaths = new Set(), selectedDownloadDirectories = new Set();
-let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {} };
+let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {}, storageVersion: 2, serverProfiles: [], selectedServerId: '' };
 let settingsQueue = Promise.resolve();
 const selectedKeys = new Set();
 const completedDownloads = new Set();
@@ -50,7 +53,7 @@ function currentSession(source) { return Boolean(source && source === backend &&
 function accessDenied(error) { return [3, 'EACCES', 'EPERM'].includes(error?.code); }
 function accessMessage(error, remotePath) { return `${accessDenied(error) ? '无访问权限：' : ''}${remotePath ? `${remotePath} — ` : ''}${error.message}${error.code !== undefined ? ` (${error.code})` : ''}`; }
 async function loadSettings() {
-  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'desktopLocations', 'privateKeyPath'].includes(key))) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
+  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), serverProfiles: profilesFromSettings(loaded) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
   settings.scriptEditor = 'monaco';
@@ -77,11 +80,11 @@ function bridgeActivity(event) {
     session = activityLog.beginCli({ id, time: event.connection.connectedAt, transport: event.connection.transport, action: event.action,
       ip: net.isIP(address || '') ? address : null, ipSource: 'ssh-local-address' });
     cliActivity.set(id, session);
-    activityLog.cli(id, { type: 'command', action: event.action, args: event.args });
+    activityLog.cli(id, { type: event.action === 'exec' ? 'request' : 'command', action: event.action, args: event.args });
   }
   if (event.type === 'progress') {
     const progress = event.progress;
-    activityLog.cli(id, ['stdout', 'stderr'].includes(progress?.kind) ? { type: progress.kind, data: progress.data } : { type: 'progress', progress });
+    activityLog.cli(id, progress?.kind === 'command' ? { type: 'command', command: progress.data, protocol: 'SSH exec' } : ['stdout', 'stderr'].includes(progress?.kind) ? { type: progress.kind, data: progress.data } : { type: 'progress', progress });
   } else if (event.type === 'finish' || event.type === 'error') {
     const result = event.action === 'exec' && event.result ? { code: event.result.code, signal: event.result.signal } : event.result;
     activityLog.cli(id, { type: 'end', result, error: event.error }); cliActivity.delete(id);
@@ -113,10 +116,10 @@ async function quitSafely() {
   } finally { closingApplication = false; sessionTransition = false; }
 }
 function closeConnectionResources() {
-  const previousUploader = uploader;
-  uploader = null; localPicker?.close(); selectedLocalPaths.clear(); selectedDownloadDirectories.clear();
+  const previousUploader = uploader, previousVideo = videoService;
+  uploader = null; videoService = null; windowRef?.setTitle('Remote Desktop'); localPicker?.close(); selectedLocalPaths.clear(); selectedDownloadDirectories.clear();
   const cleanup = connectionCleanup.then(async () => {
-    const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close()]);
+    const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close(), previousVideo?.disconnect()]);
     const failure = results.find(result => result.status === 'rejected');
     if (failure) throw failure.reason;
     activityLog.system({ type: 'connection-closed' });
@@ -125,31 +128,36 @@ function closeConnectionResources() {
   connectionCleanup = cleanup.catch(() => {});
   return cleanup;
 }
-async function upload(localPath, remoteDirectory, { id = crypto.randomUUID(), signal, onProgress, filesOnly = false } = {}) {
+async function upload(localPath, remoteDirectory, { id = crypto.randomUUID(), signal, onProgress, filesOnly = false, auditCommands = true } = {}) {
   const connection = requireBackend(), source = uploader;
   if (!source || sessionTransition) throw new Error('连接正在切换，请稍后传输。');
   const abort = () => source.cancel(id); signal?.addEventListener('abort', abort, { once: true });
   try {
     if (signal?.aborted) throw new Error('上传已取消。');
-    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory, targetDirectory: normalizeRemote(remoteDirectory), targetSide: 'remote', serverIdentity: transferIdentity(connection) }, progress => source.upload(localPath, remoteDirectory, { id, filesOnly, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+    return await transferCenter.run({ id, source: localPath, direction: 'upload', destination: remoteDirectory, targetDirectory: normalizeRemote(remoteDirectory), targetSide: 'remote', serverIdentity: transferIdentity(connection) }, progress => source.upload(localPath, remoteDirectory, { id, filesOnly, audit: auditCommands, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
   } finally { signal?.removeEventListener('abort', abort); }
 }
-async function download(remotePath, { id = crypto.randomUUID(), destination, signal, onProgress } = {}) {
+async function download(remotePath, { id = crypto.randomUUID(), destination, signal, onProgress, auditCommands = true } = {}) {
   const source = requireBackend();
   if (sessionTransition) throw new Error('连接正在切换，请稍后传输。');
   const abort = () => source.cancelDownload(id); signal?.addEventListener('abort', abort, { once: true });
   try {
     if (signal?.aborted) throw new Error('下载已取消。');
     const targetDirectory = path.resolve(destination || app.getPath('downloads'));
-    const result = await transferCenter.run({ id, source: remotePath, direction: 'download', destination: targetDirectory, targetDirectory, targetSide: 'local', serverIdentity: transferIdentity(source) }, progress => source.download(remotePath, { id, destination: targetDirectory, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
+    const result = await transferCenter.run({ id, source: remotePath, direction: 'download', destination: targetDirectory, targetDirectory, targetSide: 'local', serverIdentity: transferIdentity(source) }, progress => source.download(remotePath, { id, destination: targetDirectory, audit: auditCommands, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
     completedDownloads.add(result.path); return result;
   } finally { signal?.removeEventListener('abort', abort); }
 }
 async function inspect(create = false) {
   const source = requireBackend();
-  const remote = await desktopService.inspect(create, create ? null : settings.desktopLocations[source.desktopIdentity]);
+  if (!source.remoteStorage || create) source.remoteStorage = await ensureRemoteStorage(source);
+  await activityLog.attach(source, source.remoteStorage.root, { directory: source.remoteStorage.log });
+  const logContext = activityLog.capture();
+  for (const record of source.startupActivity || []) activityLog.system(record, logContext);
+  source.startupActivity = null;
+  source.onCommandActivity = record => { if (currentSession(source)) activityLog.system(record, logContext); };
+  const remote = await desktopService.inspect(false, settings.desktopLocations[source.desktopIdentity] || source.remoteStorage.desktop);
   if (!currentSession(source)) return { cancelled: true };
-  if (remote.status === 'ready') await activityLog.attach(source, source.desktop);
   post(remote);
   if (remote.configError) post({ type: 'desktopError', error: remote.configError });
   return { ...remote, found: remote.status === 'ready', path: remote.rootPath, home: remote.homePath };
@@ -179,7 +187,6 @@ async function setDesktop(remotePath) {
     } });
     if (currentSession(source)) {
       activityLog.system({ type: 'desktop-changed', path: source.desktop });
-      await activityLog.attach(source, source.desktop);
     }
     return result;
   } catch (error) {
@@ -238,7 +245,8 @@ async function handleDesktopMessage(message) {
   } else if (type === 'openTerminal') {
     if (sessionTransition) throw new Error('正在关闭或切换连接，请稍后打开终端。');
     const token = {}, terminalBackend = backend, service = desktopService;
-    const terminalLog = record => { if (currentSession(terminalBackend)) activityLog.system(record); };
+    const operationId = crypto.randomUUID(), terminalContext = activityLog.capture();
+    const terminalLog = record => { if (currentSession(terminalBackend)) activityLog.system({ ...record, operationId, protocol: 'SSH exec + PTY' }, terminalContext); };
     if (terminalStarts.has(message.id)) throw new Error('终端 ID 已存在。');
     terminalStarts.set(message.id, token);
     try {
@@ -269,6 +277,7 @@ async function handleDesktopMessage(message) {
         terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: code ?? 0 });
       }, { program, filePath, readOnly, cols: message.cols, rows: message.rows,
         onCommand: command => terminalLog({ type: 'terminal-command', terminalId: message.id, command }),
+        onInput: data => terminalLog({ type: 'terminal-input', terminalId: message.id, data }),
         onReady: () => post({ type: 'terminalOpened', id: message.id }) });
     } catch (error) {
       terminalLog({ type: 'terminal-error', terminalId: message.id, error: error.message });
@@ -290,30 +299,37 @@ async function connectSsh(input, trustedLocal = false) {
       await closeConnectionResources();
       terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
       post({ type: 'remoteState', status: 'disconnected', message: '正在建立新的 SSH 连接。' });
-      const host = String(input.host || '').trim(), port = Number(input.port) || 22, username = String(input.username || '').trim();
+      const profile = serverProfile({ ...input, id: input.profileId });
+      const { host, port, username, alias } = profile;
       const hostKey = `${host.toLowerCase()}:${port}`, known = settings.knownHosts[hostKey];
       if (known && input.hostKeyFingerprint && input.hostKeyFingerprint.replace(/=+$/, '') !== known) throw new Error('输入指纹与本机保存的指纹不同。连接已拒绝。');
       let privateKey;
       if (input.privateKeyPath) {
-        const savedKey = settings.privateKeyPath === input.privateKeyPath && settings.host === host && settings.port === port && settings.username === username;
+        const savedKey = settings.serverProfiles.some(saved => saved.privateKeyPath === input.privateKeyPath && saved.host === host && saved.port === port && saved.username === username);
         if (!trustedLocal && !selectedKeys.has(input.privateKeyPath) && !savedKey) throw new Error('请使用“选择私钥”按钮选择本地文件。');
         const stats = await fsp.stat(input.privateKeyPath);
         if (!stats.isFile() || stats.size > 1024 * 1024) throw new Error('私钥必须是小于 1 MiB 的普通文件。');
         privateKey = await fsp.readFile(input.privateKeyPath);
       }
+      const startupActivity = [];
       const nextBackend = new SshBackend({ threshold: settings.downloadThreshold, downloadsPath: app.getPath('downloads'),
+        onCommandActivity: record => { if (startupActivity.length < 100) startupActivity.push(record); },
         verifyHost: async info => {
           const answer = await dialog.showMessageBox(windowRef, { type: 'warning', title: '首次连接：核验 SSH 主机', message: `信任 ${info.host}:${info.port} 的主机密钥？`, detail: `SHA-256 指纹：\n${info.fingerprint}\n\n请与服务器管理员提供的指纹核对。确认后保存到本应用的已知主机记录。`, buttons: ['取消', '指纹无误，信任并连接'], defaultId: 0, cancelId: 0, noLink: true });
           return answer.response === 1;
         }, onDisconnect: () => { if (backend !== nextBackend) return; desktopService = null; terminalStarts.clear(); void closeConnectionResources().catch(error => post({ type: 'desktopError', error: `断线清理未完成：${error.message}` })); post({ type: 'remoteState', status: 'disconnected', message: 'SSH 连接已断开，请重新连接。' }); } });
       backend = nextBackend;
+      backend.startupActivity = startupActivity;
       let result;
       try { result = await backend.connect({ host, port, username, password: input.password, privateKey, passphrase: input.passphrase, hostKeyFingerprint: known || input.hostKeyFingerprint }); }
       finally { privateKey?.fill(0); }
       desktopService = backend.desktopService();
       uploader = new UploadService(backend);
+      videoService = new VideoService(backend);
       backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
-      await saveSettings({ host, port, username, privateKeyPath: input.privateKeyPath || null, hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...settings.knownHosts, [hostKey]: result.hostFingerprint } });
+      await saveSettings(current => ({ host, port, username, alias, privateKeyPath: input.privateKeyPath || null, ...upsertProfile(current.serverProfiles, profile), hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...current.knownHosts, [hostKey]: result.hostFingerprint } }));
+      result = { ...result, alias, port, address: backend.client?._sock?.remoteAddress || host };
+      windowRef.setTitle(connectionTitle(profile, result.address));
       try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
       if (!trustedLocal) activityLog.system({ type: 'ssh-connected', host, port, username, home: backend.home, desktop: backend.desktop });
       await serverInfo(); return result;
@@ -325,7 +341,7 @@ function registerIpc() {
     'app:save-settings': patch => ({ downloadThreshold: patch?.downloadThreshold }),
     'terminal:close': id => ({ terminalId: id }),
     'ssh:list': path => ({ path, protocol: 'SFTP READDIR' }),
-    'ssh:system-info': () => ({ protocol: 'SSH exec', command: 'read system information' }),
+    'ssh:system-info': () => ({ protocol: 'SSH exec' }),
     'ssh:set-desktop': path => ({ path, protocol: 'SFTP REALPATH/READDIR' }),
     'ssh:file-access': path => ({ path, protocol: 'SSH test -r / test -w' }),
     'ssh:image': path => ({ path, protocol: 'SFTP READ' }),
@@ -343,6 +359,11 @@ function registerIpc() {
   });
   handle('activity:snapshot', () => activityLog.snapshot());
   handle('app:get-settings', () => publicSettings());
+  handle('app:save-server', async input => {
+    const profile = serverProfile(input);
+    if (profile.privateKeyPath && !selectedKeys.has(profile.privateKeyPath) && !settings.serverProfiles.some(saved => saved.privateKeyPath === profile.privateKeyPath && saved.host === profile.host && saved.port === profile.port && saved.username === profile.username)) throw new Error('请使用“选择私钥”按钮选择本地文件。');
+    return saveSettings(current => upsertProfile(current.serverProfiles, profile));
+  });
   handle('app:save-settings', patch => {
     const threshold = Number(patch?.downloadThreshold);
     if (!Number.isSafeInteger(threshold) || threshold < 1048576 || threshold > 1073741824) throw new Error('下载阈值必须为 1–1024 MiB。');
@@ -385,6 +406,8 @@ function registerIpc() {
     try { return await requireBackend().readImage(remotePath); }
     catch (error) { throw new Error(accessMessage(error, remotePath)); }
   });
+  handle('video:open', remotePath => { requireBackend(); if (sessionTransition || !videoService) throw new Error('SSH 连接正在切换。'); return audit('video:open', { path: remotePath, protocol: 'SFTP READ / HTTP Range' }, () => videoService.open(remotePath)); });
+  handle('video:release', id => videoService?.release(id));
   handle('ssh:download', (remotePath, id, destination) => {
     if (destination && !selectedDownloadDirectories.has(destination)) throw new Error('请先选择本地下载目录。');
     return download(remotePath, { id, destination });
@@ -435,9 +458,9 @@ app.whenReady().then(async () => {
     status: async () => ({ connected: Boolean(backend?.connected), host: settings.host, port: settings.port, username: settings.username, privateKeyPath: settings.privateKeyPath, desktop: backend?.desktop, home: backend?.home }),
     focus: async () => { windowRef.show(); windowRef.focus(); return { ok: true }; },
     connect: input => connectSsh(input, true),
-    exec: (input, context) => { if (sessionTransition) throw new Error('SSH 连接正在切换。'); return executeRemote(requireBackend(), input, context); },
-    upload: (input, context) => upload(input.localPath, input.remoteDirectory, { id: input.id, ...context }),
-    download: (input, context) => download(input.remotePath, { id: input.id, destination: input.destination, ...context }),
+    exec: (input, context) => { if (sessionTransition) throw new Error('SSH 连接正在切换。'); return executeRemote(requireBackend(), input, { ...context, onCommand: command => context.onProgress({ kind: 'command', data: command }) }); },
+    upload: (input, context) => upload(input.localPath, input.remoteDirectory, { id: input.id, ...context, auditCommands: false }),
+    download: (input, context) => download(input.remotePath, { id: input.id, destination: input.destination, ...context, auditCommands: false }),
     cancel: async input => browserManager.cancel(input.id) || transferCenter.cancel(input.id)
   } });
   try { await instanceBridge.start(); } catch(error) { post({type:'desktopError',error:`本地命令行接口启动失败：${error.message}`}); }

@@ -1,6 +1,10 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-20。独立应用版本：1.1.6。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-20。独立应用版本：1.1.7。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.7：完成 Video.js 视频播放器与七项工具箱、Ubuntu 风格服务器登录和多配置切换、动态连接标题、统一窗口按钮及顶栏模块提示。首次连接自动建立 ~/.rdesktop/{desktop,log,download}；storageVersion=2 忽略旧桌面偏好，新版再次设置的位置仍恢复，不移动旧远程内容。密码和私钥口令不持久化。实时监听显示系统/终端及 CLI 的原始命令与回复；CLI 原文仍只写独立日志，系统仅保留连接引用。回退分支 checkpoint/pre-toolbox-login-1.1.6；本地提交、打包，不推送。详见 docs/RELEASE-1.1.7.md、docs/VIDEO.md 和 docs/ACTIVITY_LOG.md。下方旧版行为均作为历史快照，新版源码及本段优先。
+
+新模块：lib/remote-storage.cjs 初始化远程路径；lib/server-profiles.cjs 校验配置、迁移桌面偏好并生成窗口标题；lib/command-trace.cjs 旁路记录 SSH 流；lib/video-service.cjs 提供 SSH 绑定的临时媒体范围读取；app/connection-profiles.js 管理登录表单；app/video-player.js/css 适配本地 Video.js。main/preload 完成固定 IPC 和连接生命周期集成。
 
 1.1.6：仅设置与传输中心保留增强按钮配色，其余既有按钮回滚至 1.1.4；浏览器、Monaco CSS 与 435a4a4 完全一致。侧栏底部九点“应用”面板集合六个固定应用，移除 Monaco/图片的侧栏固定入口；支持搜索、键盘、断连状态与浏览器原生视图避让。显示名称统一为“浏览器”。视频方案仅探讨，没有安装或实现。回退分支 `checkpoint/pre-app-grid-1.1.5`；本地提交、打包，不推送。见 `docs/RELEASE-1.1.6.md`。
 

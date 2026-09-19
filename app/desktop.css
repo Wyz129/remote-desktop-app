@@ -313,13 +313,13 @@ button:disabled { opacity: .4; cursor: default; }
   --button-text: #f4f8f5;
   --button-focus: #d0f6de;
 }
-:is(#settingsDialog, #downloadsPanel) button { color: var(--button-text); border: 1px solid var(--button-border); background: var(--button-bg); box-shadow: 0 1px 2px #0004; }
-:is(#settingsDialog, #downloadsPanel) button:hover:not(:disabled) { background: var(--button-hover); border-color: #c4dacc; }
-:is(#settingsDialog, #downloadsPanel) button:active:not(:disabled) { background: var(--button-active); box-shadow: inset 0 1px 3px #0006; }
-:is(#settingsDialog, #downloadsPanel) button:focus-visible { outline: 2px solid var(--button-focus); outline-offset: -3px; }
-:is(#settingsDialog, #downloadsPanel) button:disabled { color: #aebbb3; background: #343c38; border-color: #65766c; opacity: 1; box-shadow: none; cursor: default; }
-:is(#settingsDialog, #downloadsPanel) button.primary { --button-bg: #9bd7b5; --button-text: #102a1b; --button-border: #c5efd6; --button-hover: #b6eacb; --button-active: #80bf9c; --button-focus: #163f29; font-weight: 600; }
-:is(#settingsDialog, #downloadsPanel) button:is(.danger, .close) { --button-bg: #703e45; --button-border: #db9da6; --button-hover: #984854; --button-active: #582d35; --button-text: #fff1f2; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads) { color: var(--button-text); border: 1px solid var(--button-border); background: var(--button-bg); box-shadow: 0 1px 2px #0004; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads):hover:not(:disabled) { background: var(--button-hover); border-color: #c4dacc; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads):active:not(:disabled) { background: var(--button-active); box-shadow: inset 0 1px 3px #0006; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads):focus-visible { outline: 2px solid var(--button-focus); outline-offset: -3px; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads):disabled { color: #aebbb3; background: #343c38; border-color: #65766c; opacity: 1; box-shadow: none; cursor: default; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads).primary { --button-bg: #9bd7b5; --button-text: #102a1b; --button-border: #c5efd6; --button-hover: #b6eacb; --button-active: #80bf9c; --button-focus: #163f29; font-weight: 600; }
+:is(#settingsDialog, #downloadsPanel) button:not(.window-control):not(#closeDownloads):is(.danger, .close) { --button-bg: #703e45; --button-border: #db9da6; --button-hover: #984854; --button-active: #582d35; --button-text: #fff1f2; }
 #settingsDialog .settings-tabs button[aria-selected="true"] { --button-bg: #496a58; --button-hover: #587d68; color: #f0fff6; border-color: #bbdfca; border-bottom: 2px solid #b2edcb; }
 #downloadsPanel .download-item .transfer-target { max-width: 100%; color: #e0f9eb; padding: 5px 8px; text-underline-offset: 3px; }
 
@@ -362,3 +362,29 @@ button.application-tile:active { background: #ffffff22; }
   .applications-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   button.application-tile { min-height: 118px; padding: 12px 6px; }
 }
+
+/* Ubuntu-inspired server sign-in; saved profiles never include credentials. */
+.login-dialog { width: min(490px, calc(100vw - 32px)); max-height: calc(100vh - 40px); padding: 26px 34px; border-radius: 12px; background: #29282d; border-color: #ffffff30; box-shadow: 0 20px 80px #0009; }
+.login-dialog::backdrop { background: #17131ec4; backdrop-filter: blur(12px); }
+.login-heading { display:flex; justify-content:space-between; align-items:center; }
+.login-heading h2 { margin:0; font-size:14px; font-weight:500; color:#c6c2ca; }
+.login-heading button { width:30px; height:30px; font-size:22px; border-radius:50%; }
+.login-avatar { display:grid; place-items:center; width:70px; height:70px; margin:20px auto 12px; background:#755881; border-radius:50%; font-size:36px; color:#eee7f3; }
+#serverDisplayName { margin:0; font-size:24px; text-align:center; overflow-wrap:anywhere; }
+#serverDisplayAddress { margin:8px 0 18px; color:#bdb5c6; text-align:center; font-size:12px; }
+.server-switcher { display:flex; gap:6px; margin-bottom:20px; }
+.server-switcher select { min-width:0; flex:1; }
+.login-dialog input, .login-dialog select { padding:9px 10px; color:#f4f0f6; background:#1e1d22; border:1px solid #77717d; border-radius:5px; font:inherit; }
+.login-dialog input:focus, .login-dialog select:focus { outline:2px solid #be9dd3; outline-offset:1px; }
+.login-credentials { display:grid; gap:8px; }
+.login-credentials label { font-size:12px; color:#c7c1cb; }
+.login-credentials input { width:100%; margin-bottom:6px; }
+#connectionAdvanced { margin-top:18px; }
+#connectionAdvanced summary { cursor:pointer; color:#cec3d8; padding:6px 0; }
+#connectionAdvanced .connection-fields { margin-top:14px; grid-template-columns:90px minmax(0,1fr); }
+#saveServer { padding:8px 12px; background:#514457; border:1px solid #85728f; border-radius:5px; }
+#connectSubmit { background:#c66032; border:1px solid #e08b61; padding:9px 30px; color:white; }
+.login-dialog #connectionError { white-space:pre-wrap; overflow-wrap:anywhere; }
+.application-tile:nth-child(7) .application-icon { color:#edc787; background:#82682d29; }
+
+.login-avatar .tool-icon { width:34px; height:34px; }

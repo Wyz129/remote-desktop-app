@@ -1,8 +1,10 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-20。对象为 `remote-desktop-app` 1.1.6，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-20。对象为 `remote-desktop-app` 1.1.7，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.7 的全量模块与界面回归、首次使用目录初始化、服务器配置不落盘密码、实际 SSH/PTY 指令与回复、Video.js 真实播放/seek，以及源码和打包集成验证见 [1.1.7 交付记录](docs/RELEASE-1.1.7.md)。所有服务器操作使用隔离回环夹具，没有接入用户生产服务器。
 
 1.1.6 新增应用面板交互、底部位置、搜索与键盘、离线限制、六个启动入口和浏览器原生视图避让验证；按钮配色仅保留在设置及传输中心。实际执行结果见 [1.1.6 交付记录](docs/RELEASE-1.1.6.md)。
 
@@ -44,7 +46,7 @@ npm.cmd run test:ui
 npm.cmd run test:electron
 ```
 
-也可运行 `npm.cmd test`，按 check → backend → modules → vim → ui → workbench → electron → workspace → browser → cli 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。本次七项均实际执行，无跳过。
+也可运行 `npm.cmd test`，按 check → backend → modules → vim → ui → workbench → electron → workspace → browser → cli → video 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。本次七项均实际执行，无跳过。
 
 后端与 Electron 测试使用系统临时目录及隔离的用户数据，不需要管理员权限、用户服务器密码或远程安装软件。Electron 通过 `--smoke-test` 隐藏测试窗口并配置独立 `--user-data-dir`，不覆盖用户日常应用设置。
 
@@ -52,7 +54,7 @@ npm.cmd run test:electron
 
 ```powershell
 npm.cmd run package
-$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.0\win-unpacked\Remote Desktop.exe').Path
+$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.7\win-unpacked\Remote Desktop.exe').Path
 npm.cmd run test:electron
 Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 ```

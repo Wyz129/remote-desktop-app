@@ -10,7 +10,9 @@ for (const [source, destination] of [
   ['dompurify/dist/purify.min.js', 'purify.js'], ['dompurify/LICENSE', 'dompurify-LICENSE'],
   ['katex/dist/katex.min.js', 'katex.js'], ['katex/dist/katex.min.css', 'katex.css'],
   ['katex/dist/contrib/auto-render.min.js', 'auto-render.js'], ['katex/dist/fonts', 'fonts'], ['katex/LICENSE', 'katex-LICENSE'],
-  ['viewerjs/dist/viewer.min.js', 'viewer.js'], ['viewerjs/dist/viewer.min.css', 'viewer.css'], ['viewerjs/LICENSE', 'viewer-LICENSE']
+  ['viewerjs/dist/viewer.min.js', 'viewer.js'], ['viewerjs/dist/viewer.min.css', 'viewer.css'], ['viewerjs/LICENSE', 'viewer-LICENSE'],
+  ['video.js/dist/video.min.js', 'video.js'], ['video.js/dist/video-js.min.css', 'video.css'],
+  ['video.js/dist/lang/zh-CN.js', 'video-zh-CN.js'], ['video.js/LICENSE', 'video-LICENSE']
 ]) fs.cpSync(path.join(root, 'node_modules', source), path.join(target, destination), { recursive: true });
 // Monaco 0.53's minified AMD chunks contain top-level `var` helpers outside
 // their define() factory. Parallel file:// script loads otherwise overwrite

@@ -126,8 +126,8 @@ test('applications_overview_bottom_dock_search_keyboard_and_offline_access', () 
   assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(), 0);
   await toggle.click(); await panel.waitFor();
   assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(await panel.locator('.application-label').allTextContents(), ['浏览器','传输中心','实时监听','htop','Monaco Editor','图片查看器']);
-  assert.equal(await panel.locator('button.application-tile:disabled').count(), 4);
+  assert.deepEqual(await panel.locator('.application-label').allTextContents(), ['浏览器','传输中心','实时监听','htop','Monaco Editor','图片查看器','视频播放器']);
+  assert.equal(await panel.locator('button.application-tile:disabled').count(), 5);
   assert.equal(await page.locator('#applicationsSearch').evaluate(el => el === document.activeElement), true);
   const toggleBounds = await toggle.boundingBox(), dockBounds = await page.locator('#dock').boundingBox();
   assert.ok(dockBounds.y + dockBounds.height - toggleBounds.y - toggleBounds.height <= 14, 'applications stays at dock bottom');
@@ -148,13 +148,13 @@ test('applications_overview_bottom_dock_search_keyboard_and_offline_access', () 
   await page.keyboard.press('ArrowRight');
   assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'transfer');
   await page.keyboard.press('End');
-  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'image');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'video');
   await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-applications.png') });
   await page.locator('#homeShortcut').click(); assert.equal(await panel.isVisible(), false);
   await page.locator('.window').first().waitFor();
   await toggle.click(); await page.evaluate(() => window.receive({type:'remoteState',status:'disconnected'}));
   assert.equal(await panel.isVisible(), false);
-  await toggle.click(); assert.equal(await panel.locator('button.application-tile:disabled').count(), 4);
+  await toggle.click(); assert.equal(await panel.locator('button.application-tile:disabled').count(), 5);
 }));
 
 test('applications_launch_existing_apps_and_hide_native_browser_views', () => scenario('applications-launch', async page => {
@@ -523,7 +523,7 @@ test('desktop_switch_failure_preserves_desktop_and_form_then_handles_appearance_
 test('missing_desktop_can_choose_existing_location_and_late_switch_cannot_restore_disconnected_session', () => scenario('missing-desktop-location', async page => {
   await page.evaluate(()=>{window.missingDesktop=true;window.directories['/public']=[];});await connect(page);
   await page.locator('#skipDesktop').click();await page.locator('#desktopSettings').click();
-  assert.equal(await page.locator('#settingsDesktopPath').inputValue(),'/home/tester/rdesktop');
+  assert.equal(await page.locator('#settingsDesktopPath').inputValue(),'/home/tester/.rdesktop/desktop');
   assert.equal(await page.locator('#applySettings').isEnabled(),true);
   await page.locator('#settingsDesktopPath').fill('/public');await page.locator('#applySettings').click();
   await page.locator('#settingsDialog').waitFor({state:'hidden'});

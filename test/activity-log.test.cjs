@@ -96,11 +96,12 @@ test('real SFTP records CLI streams separately and system logs retain only conne
   assert.deepEqual(cliRecords.map(record => record.type), ['connection', 'command', 'stdout', 'stderr', 'end']);
   assert.equal(cliRecords.at(-1).result.code, 7);
   const reference = systemRecords.find(record => record.type === 'cli-connection');
-  assert.deepEqual(reference, { type: 'cli-connection', time: session.time, ip: '192.0.2.1', logPath: session.logPath });
+  assert.deepEqual(reference, { type: 'cli-connection', operationId: session.id, time: session.time, ip: '192.0.2.1', logPath: session.logPath });
   assert.ok(!systemText.includes('printf')); assert.ok(!systemText.includes('测试结果'));
   assert.ok(systemText.includes('user-command')); assert.ok(!(cliText + systemText).includes('secret'));
   assert.equal(events.filter(event => event.type === 'connection').length, 1);
-  assert.ok(events.filter(event => event.type === 'entry').every(event => event.entry.id && event.entry.seq && event.entry.scope === 'cli'));
+  assert.ok(events.filter(event => event.type === 'entry').every(event => event.entry.id && event.entry.seq && event.entry.operationId && ['cli', 'system'].includes(event.entry.scope)));
+  assert.ok(events.some(event => event.type === 'entry' && event.entry.scope === 'system' && event.entry.type === 'terminal-output'));
   assert.ok(fixture.calls.sftp.filter(call => call[0] === 'OPEN' && call[1].includes('/.log/')).every(call => (call[2] & 32) !== 0));
 });
 
@@ -213,5 +214,48 @@ test('stalled SFTP calls time out and expose failure instead of hanging app shut
   fixture.sftp.realpath = () => {};
   const snapshot = await log.attach(fixture.backend, '/desktop');
   assert.match(snapshot.error, /超时/);
+  await log.disconnect();
+});
+
+test('explicit storage directory keeps desktop changes away from legacy desktop log folders', async () => {
+  const fixture = memoryBackend(), log = new ActivityLog();
+  fixture.nodes.set('/storage', { kind: 'directory', mode: 0o700 });
+  await log.attach(fixture.backend, '/desktop', { directory: '/storage/log' });
+  const first = log.capture();
+  assert.match(log.snapshot().systemLogPath, /^\/storage\/log\/system-/);
+  assert.equal(fixture.nodes.has('/desktop/.log'), false);
+  await log.attach(fixture.backend, '/desktop', { directory: '/storage/log' });
+  assert.equal(log.capture(), first, 'repeated attach to same desktop and directory does not create a new session');
+  await log.attach(fixture.backend, '/other', { directory: '/storage/log' });
+  log.system({ type: 'command', command: 'uname -r', operationId: 'query' });
+  await log.flush();
+  assert.equal(fixture.nodes.has('/other/.log'), false);
+  assert.ok(fixture.allLines('/storage/log/').some(record => record.command === 'uname -r'));
+  await log.disconnect();
+});
+
+test('system commands and PTY input enter the ordered bounded live stream with matching persisted timestamps', async () => {
+  const fixture = memoryBackend(), events = [], log = new ActivityLog({ maxEntries: 4, onEvent: event => events.push(event) });
+  await log.attach(fixture.backend, '/desktop');
+  const records = [
+    { type: 'command', command: 'printf 测试', operationId: 'command-1' },
+    { type: 'stdout', data: '测试', operationId: 'command-1' },
+    { type: 'end', code: 0, operationId: 'command-1' },
+    { type: 'terminal-input', terminalId: 'term', data: 'echo raw\u0003\r', password: 'omit-credential' },
+    { type: 'terminal-output', terminalId: 'term', data: 'reply\r\n' }
+  ];
+  for (const record of records) assert.equal(log.system(record), true);
+  await log.flush();
+  const live = events.filter(event => event.type === 'entry').map(event => event.entry);
+  const persisted = fixture.lines(log.snapshot().systemLogPath).slice(1);
+  assert.equal(live.length, records.length);
+  assert.deepEqual(live.map(record => record.type), records.map(record => record.type));
+  assert.equal(log.snapshot().entries.length, 4);
+  assert.ok(live.every(record => record.scope === 'system' && record.source === 'system' && record.sessionId === 'system' && record.operationId && Number.isFinite(Date.parse(record.time))));
+  assert.deepEqual(live.map(record => record.time), persisted.map(record => record.time));
+  assert.equal(persisted[3].data, 'echo raw\u0003\r');
+  assert.equal(persisted[3].password, undefined);
+  assert.equal(persisted[4].operationId, 'term');
+  assert.ok(!JSON.stringify(log.snapshot()).includes('omit-credential'));
   await log.disconnect();
 });

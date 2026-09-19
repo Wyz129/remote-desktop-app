@@ -274,7 +274,7 @@ function openSettings() {
   $('settingsWallpaper').value = state.wallpaper;
   $('settingsHidden').checked = state.showHiddenFiles;
   settingsBaseline = { viewMode: state.viewMode, wallpaper: state.wallpaper, showHiddenFiles: state.showHiddenFiles };
-  $('settingsDesktopPath').value = desktopAvailable ? rootPath : (homePath ? joinPath(homePath, 'rdesktop') : '');
+  $('settingsDesktopPath').value = desktopAvailable ? rootPath : (homePath ? joinPath(homePath, '.rdesktop/desktop') : '');
   $('settingsError').textContent = desktopAccessError;
   $('settingsLocation').textContent = remoteMode ? '桌面位置保存到本机。更改外观时才写入远程桌面配置，需要配置文件的写入权限。' : '连接 SSH 后可选择桌面目录；应用设置始终可用。';
   settingsBusy(false); setSettingsTab('desktop'); showSettingsWindow();
@@ -326,7 +326,7 @@ function openHome() {
   openFolder(homePath);
 }
 function updateBuiltinShortcuts() {
-  $('homeShortcut').title = remoteMode && homePath ? `Home · ${homePath}` : 'Home · 连接 SSH 后打开远程主目录';
+  $('homeShortcut').title = 'Home';
   $('refreshSystemInfo').disabled = !remoteMode || systemInfoLoading;
   updateApplicationAvailability();
 }
@@ -337,7 +337,8 @@ const APPLICATIONS = [
   { id: 'activity', label: '实时监听', icon: 'Activity', keywords: 'monitor log 日志 命令', description: '查看命令与操作记录', launch: () => openActivityWindow() },
   { id: 'htop', label: 'htop', icon: 'ChartNoAxesCombined', keywords: 'process cpu memory 进程 资源', description: '服务器进程与资源监视', remote: true, launch: () => openTerminal(desktopAvailable ? rootPath : homePath, 'htop') },
   { id: 'editor', label: 'Monaco Editor', icon: 'FileCode2', keywords: 'code text script 编辑器 文本 脚本', description: '编辑远程文本与脚本', remote: true, launch: () => api.openDocument(null) },
-  { id: 'image', label: '图片查看器', icon: 'Image', keywords: 'image photo viewer 照片 图像', description: '浏览服务器上的图片', remote: true, launch: openImageLauncher }
+  { id: 'image', label: '图片查看器', icon: 'Image', keywords: 'image photo viewer 照片 图像', description: '浏览服务器上的图片', remote: true, launch: openImageLauncher },
+  { id: 'video', label: '视频播放器', icon: 'Film', keywords: 'video movie 视频 电影 播放', description: '播放服务器上的视频', remote: true, launch: openVideoLauncher }
 ];
 function filterApplications() {
   const words = $('applicationsSearch').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -612,6 +613,7 @@ async function openItem(item, scope = 'desktop', mode = 'auto') {
     return;
   } finally { if (generation === connectionGeneration) fileAccessRequests.delete(item.path); }
   if (mode === 'auto' && /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(item.name)) { openImage(item); return; }
+  if (mode === 'auto' && /\.(mp4|m4v|webm|ogv|ogg|mov|mkv|avi)$/i.test(item.name)) { void openVideo(item); return; }
   if (mode === 'auto' && /\.(zip|gz|bz2|xz|7z|rar|tar|exe|dll|so|bin|odb|pdf|docx?|xlsx?|pptx?|mp4|mp3|wav|sqlite|db)$/i.test(item.name)) { notify('此文件适合下载后在本地打开，请右键选择“下载到本地”。'); return; }
   if (!access.writable) { showFileAccessDialog(item, true, access.error, mode); return; }
   await openDocument(item, mode, false);
@@ -931,7 +933,7 @@ function mergeActivitySessions(sessions, preferExisting = false) {
     merged.set(session.id, preferExisting ? { ...safe, ...merged.get(session.id) } : { ...merged.get(session.id), ...safe });
   }
   activity.sessions = [...merged.values()].slice(-ACTIVITY_SESSION_LIMIT);
-  if (!activity.selected || !activity.sessions.some(session => session.id === activity.selected)) activity.selected = activity.sessions.at(-1)?.id || '';
+  if (activity.selected && activity.selected !== 'system' && !activity.sessions.some(session => session.id === activity.selected)) activity.selected = '';
 }
 function mergeActivityEntries(entries) {
   const merged = new Map(activity.entries.map(entry => [entry.key, entry]));
@@ -943,7 +945,7 @@ function mergeActivityEntries(entries) {
     const labels = { action: '操作', command: '指令', cwd: '工作目录', args: '参数', result: '结果', error: '错误', progress: '进度', exitCode: '退出码' };
     const fields = Object.entries(content).flatMap(([name, value]) => name === 'args' && value && typeof value === 'object' ? Object.entries(value) : [[name, value]]);
     const text = fields.filter(([name]) => name !== 'stream').map(([name, value]) => name === 'data' ? activityText(value) : `${labels[name] || name}: ${activityText(value)}`).join('\n');
-    const entry = { key, seq: record.seq, sessionId: record.sessionId, time: record.time, type: record.type, content: activityText(text), stream: record.stream };
+    const entry = { key, seq: record.seq, sessionId: record.sessionId, scope: record.scope || record.source || 'cli', time: record.time, type: record.type, content: activityText(text), stream: record.stream };
     entry.bytes = entry.content.length * 2 + 256;
     merged.set(key, entry);
   }
@@ -971,25 +973,26 @@ function renderActivityWindow() {
   if (!element) return;
   const select = element.querySelector('.activity-session');
   select.replaceChildren();
+  for (const [value, text] of [['', '全部活动'], ['system', '系统与终端']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; select.append(option); }
   for (const session of activity.sessions.slice().reverse()) {
     const option = document.createElement('option'); option.value = session.id;
     option.textContent = `${activityTime(session.time)} · ${session.action || 'CLI'}`; select.append(option);
   }
-  select.value = activity.selected; select.disabled = !activity.sessions.length;
+  select.value = activity.selected; select.disabled = false;
   const session = activity.sessions.find(current => current.id === activity.selected);
   element.querySelector('.activity-status').textContent = activity.connected ? '监听已自动开启 · 关闭窗口不停止记录' : '当前连接已断开 · 可查看本次应用运行期间的记录';
   const paths = session?.logPaths?.length ? session.logPaths.join('\n') : session?.logPath || '尚无命令行日志';
-  element.querySelector('.activity-metadata').textContent = session ? `IP：${activityIp(session)}\n连接时间：${activityTime(session.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `尚未检测到本地命令行操作。\n系统日志：${activity.systemLogPath || '尚未创建'}`;
+  element.querySelector('.activity-metadata').textContent = session ? `IP：${activityIp(session)}\n连接时间：${activityTime(session.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `显示系统操作、终端输入及本地命令行的指令与回复。\n系统日志：${activity.systemLogPath || '尚未创建'}`;
   const error = element.querySelector('.activity-error'); error.textContent = [activity.error, session?.error].filter(Boolean).join('\n'); error.hidden = !error.textContent;
   const events = element.querySelector('.activity-events');
   const follow = element.querySelector('.activity-follow').checked;
   const scrollTop = events.scrollTop;
   events.replaceChildren();
-  const entries = activity.entries.filter(entry => entry.sessionId === activity.selected);
+  const entries = activity.entries.filter(entry => !activity.selected || (activity.selected === 'system' ? entry.scope === 'system' : entry.sessionId === activity.selected));
   if (!entries.length) {
-    const empty = document.createElement('p'); empty.className = 'activity-empty'; empty.textContent = session ? '等待指令与回复…' : '命令行连接后将在这里实时显示指令与回复。'; events.append(empty);
+    const empty = document.createElement('p'); empty.className = 'activity-empty'; empty.textContent = session ? '等待指令与回复…' : '通过应用执行操作后将在这里显示原始指令与回复。'; events.append(empty);
   }
-  const labels = { command: '发送指令', start: '请求开始', request: '请求', stdout: '标准输出', stderr: '错误输出', output: '服务器回复', progress: '进度', result: '执行结果', end: '请求结束', error: '错误' };
+  const labels = { 'terminal-input': '终端原始输入', 'terminal-command': '终端启动指令', 'terminal-output': '终端回复', 'terminal-exit': '终端结束', command: '发送指令', start: '请求开始', request: '请求', stdout: '标准输出', stderr: '错误输出', output: '服务器回复', progress: '进度', result: '执行结果', end: '请求结束', error: '错误' };
   for (const entry of entries) {
     const row = document.createElement('section'); row.className = 'activity-entry'; row.dataset.entryId = entry.key;
     const heading = document.createElement('div'); heading.className = 'activity-entry-heading'; heading.textContent = `${activityTime(entry.time)} · ${labels[entry.type] || entry.type || '活动'}`;
@@ -1007,16 +1010,16 @@ function openActivityWindow(sessionId) {
     const element = $('windowTemplate').content.firstElementChild.cloneNode(true); element.dataset.windowId = win.id; element.classList.add('activity-window'); element.setAttribute('aria-label', '实时监听');
     for (const child of [...element.children]) if (!child.classList.contains('titlebar') && !child.classList.contains('resize-handle')) child.remove();
     const icon = element.querySelector('.window-app-icon'); icon.className = 'window-app-icon activity-app-icon'; icon.replaceChildren(toolIcon('Activity'));
-    element.querySelector('.window-title').textContent = '实时监听 · 本地命令行'; element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭实时监听窗口');
+    element.querySelector('.window-title').textContent = '实时监听'; element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭实时监听窗口');
     const toolbar = document.createElement('div'); toolbar.className = 'activity-toolbar';
-    const label = document.createElement('label'); label.append('连接 '); const select = document.createElement('select'); select.className = 'activity-session'; select.setAttribute('aria-label', '命令行连接'); label.append(select);
+    const label = document.createElement('label'); label.append('活动 '); const select = document.createElement('select'); select.className = 'activity-session'; select.setAttribute('aria-label', '命令行连接'); label.append(select);
     select.addEventListener('change', () => { activity.selected = select.value; renderActivityWindow(); });
     const followLabel = document.createElement('label'), follow = document.createElement('input'); follow.type = 'checkbox'; follow.checked = true; follow.className = 'activity-follow'; followLabel.append(follow, '自动滚动');
     const status = document.createElement('span'); status.className = 'activity-status'; toolbar.append(label, followLabel, status);
     const metadata = document.createElement('div'); metadata.className = 'activity-metadata';
     const error = document.createElement('p'); error.className = 'activity-error'; error.setAttribute('role', 'alert'); error.hidden = true;
     const events = document.createElement('div'); events.className = 'activity-events'; events.setAttribute('aria-label', '实时指令与回复'); events.tabIndex = 0;
-    const footer = document.createElement('div'); footer.className = 'window-footer'; footer.textContent = '界面最多保留最近 600 条活动（约 2 MiB）；完整历史保存在服务器桌面的 .log 目录。';
+    const footer = document.createElement('div'); footer.className = 'window-footer'; footer.textContent = '界面最多保留最近 600 条活动（约 2 MiB）；日志保存在 ~/.rdesktop/log；终端输入按原始按键记录，二进制输出与超限内容另有标记。';
     element.append(toolbar, metadata, error, events, footer); renderToolIcons(element);
     state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
     element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
@@ -1048,12 +1051,12 @@ function renderDock() {
   for (const win of state.windows) {
     const tab = document.createElement('button');
     tab.className = `window-tab${win.id === state.activeWindow && !win.minimized ? ' active' : ''}${win.minimized ? ' minimized' : ''}`;
-    const appTitle = { browser: '浏览器', settings: '设置', activity: '实时监听' }[win.kind];
+    const appTitle = { browser: '浏览器', settings: '设置', activity: '实时监听', video: win.videoName || '视频播放器' }[win.kind];
     const title = appTitle || (win.kind === 'terminal' ? `${PROGRAM_LABELS[win.program]} · ${win.folder}` : win.kind === 'image' ? win.imageName : win.folder);
     tab.dataset.windowId = win.id; tab.title = `${title}${win.minimized ? '（已最小化）' : ''}`;
     tab.setAttribute('aria-label', `${win.minimized ? '恢复' : '切换到'} ${title}`);
     const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = appTitle || (win.kind === 'terminal' ? PROGRAM_LABELS[win.program] : win.kind === 'image' ? win.imageName : basename(win.folder));
-    const appIcon = { browser: 'Globe', settings: 'Settings', activity: 'Activity', image: 'Image', terminal: 'Terminal' }[win.kind];
+    const appIcon = { browser: 'Globe', settings: 'Settings', activity: 'Activity', image: 'Image', video: 'Film', terminal: 'Terminal' }[win.kind];
     tab.append(appIcon ? toolIcon(appIcon) : glyph({ type: 'folder', name: '' }), label);
     tab.addEventListener('click', () => { win.minimized = false; focusWindow(win.id); save(); });
     if (win.kind === 'terminal') tab.addEventListener('contextmenu', event => showAppMenu(event, null, win));
@@ -1186,6 +1189,7 @@ function positionWindow(win) {
   maximize.title = win.maximized ? '还原' : '最大化'; maximize.setAttribute('aria-label', maximize.title);
   if (win.kind === 'terminal') fitTerminal(win);
   if (win.kind === 'image') resizeImage(win);
+  if (win.kind === 'video') videos.get(win.id)?.player.resize();
 }
 function bindWindowDrag(win, element) {
   const bar = element.querySelector('.titlebar');
@@ -1392,6 +1396,7 @@ async function windowAction(action, win) {
   if (action === 'close' || action === 'close-confirmed') {
     if (win.kind === 'terminal') disposeTerminal(win.id);
     if (win.kind === 'image') { images.get(win.id)?.viewer?.destroy(); images.delete(win.id); }
+    if (win.kind === 'video') disposeVideo(win.id);
     if (editor?.scope === win.id) editor.cancel();
     if (selection.scope === win.id) selection = { scope: 'desktop', keys: new Set() };
     windowElements.get(win.id)?.remove(); windowElements.delete(win.id);
@@ -1808,13 +1813,14 @@ new MutationObserver(scheduleBrowserLayout).observe(document.body, { subtree: tr
 setInterval(updateClock, 1000);
 setInterval(() => host.postMessage({ type: 'getServerInfo' }), 30000);
 
-const images = new Map();
+const images = new Map(), videos = new Map();
 const downloadTasks = new Map();
 let connecting = false;
 function clearWindowViews(preserveTerminals = false) {
   finishServerPicker(null);
   if (!preserveTerminals) for (const id of [...terminals.keys()]) disposeTerminal(id);
   for (const record of images.values()) record.viewer?.destroy(); images.clear();
+  for (const id of videos.keys()) disposeVideo(id);
   for (const win of state.windows) {
     if (win.kind === 'settings' || win.kind === 'activity') continue;
     if (preserveTerminals && win.kind === 'terminal') continue;
@@ -1842,6 +1848,8 @@ function clearRemoteDesktop(preserveTerminals = false) {
   $('context').hidden = true; $('appContext').hidden = true;
 }
 async function initializeConnection() {
+  const profiles = RemoteConnectionProfiles.mount(api);
+  document.querySelector('.login-avatar').replaceChildren(toolIcon('Server'));
   $('connectButton').replaceChildren(toolIcon('Plug'));
   $('downloadsButton').replaceChildren(toolIcon('Download'));
   $('browserButton').replaceChildren(toolIcon('Globe'));
@@ -1851,13 +1859,13 @@ async function initializeConnection() {
   $('connectionForm').addEventListener('submit', async event => {
     event.preventDefault(); if (connecting) return;
     connecting = true; $('connectSubmit').disabled = true; $('connectSubmit').textContent = '正在连接…'; $('connectionError').textContent = '';
-    const input = { host: $('sshHost').value.trim(), port: Number($('sshPort').value), username: $('sshUsername').value.trim() };
+    const input = profiles.input();
     if ($('sshPassword').value) input.password = $('sshPassword').value;
     if ($('sshPrivateKey').value) input.privateKeyPath = $('sshPrivateKey').value;
     if ($('sshPassphrase').value) input.passphrase = $('sshPassphrase').value;
-    try { const result = await api.connect(input); if (result?.cancelled) { $('connectionError').textContent = '已取消切换连接，当前终端已保留。'; return; } $('connectionDialog').close(); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
+    try { const result = await api.connect(input); if (result?.cancelled) { $('connectionError').textContent = '已取消切换连接，当前终端已保留。'; return; } $('connectionDialog').close(); profiles.refresh(await api.getSettings(), false); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
     catch(error) { $('connectionError').textContent = error.message || String(error); notify('连接失败：' + (error.message || error)); }
-    finally { $('sshPassword').value = ''; $('sshPassphrase').value = ''; connecting = false; $('connectSubmit').disabled = false; $('connectSubmit').textContent = '连接'; }
+    finally { $('sshPassword').value = ''; $('sshPassphrase').value = ''; connecting = false; $('connectSubmit').disabled = false; $('connectSubmit').textContent = '登录'; }
   });
   $('chooseKey').addEventListener('click', async () => { try { const value = await api.choosePrivateKey(); if (value) $('sshPrivateKey').value = value; } catch(error) { $('connectionError').textContent = error.message; } });
   $('clearKey').addEventListener('click', () => { $('sshPrivateKey').value = ''; $('sshPassphrase').value = ''; });
@@ -1874,7 +1882,7 @@ async function initializeConnection() {
     if (event.key === 'F11' || (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'f')) { event.preventDefault(); requestFullscreen(); }
   }, true);
   clearRemoteDesktop(); $('connectionDialog').showModal();
-  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; $('sshHost').value = saved.host || ''; $('sshUsername').value = saved.username || ''; $('sshPort').value = saved.port || 22; $('sshPrivateKey').value = saved.privateKeyPath || ''; }
+  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; profiles.refresh(saved); }
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
 }
 function updateDownload(value) {
@@ -2132,6 +2140,59 @@ async function loadImage(win,item) {
   } catch(error){if(images.has(win.id)&&request===record.request)record.element.querySelector('.image-status').textContent='图片打开失败：'+error.message;}
 }
 async function openImage(item) { const win=createImageWindow(item);await loadImage(win,item); }
+
+function disposeVideo(id) {
+  const record = videos.get(id); if (!record) return;
+  videos.delete(id); record.player.destroy();
+  if (record.media) void api.releaseVideo(record.media.id).catch(() => {});
+}
+function openVideoLauncher() {
+  const existing = state.windows.find(win => win.kind === 'video' && !win.path);
+  if (existing) { focusWindow(existing.id); return existing; }
+  return createVideoWindow();
+}
+function createVideoWindow() {
+  const offset = state.windows.length * 24;
+  const win = { id: 'video-' + nextWindow++, kind: 'video', folder: rootPath, path: '', videoName: '视频播放器', minimized: false, maximized: false, position: { x: 40 + offset, y: 35 + offset }, size: { width: 880, height: 590 }, z: ++nextLayer };
+  const element = $('windowTemplate').content.firstElementChild.cloneNode(true); element.dataset.windowId = win.id; element.classList.add('video-window'); element.setAttribute('aria-label', '视频播放器');
+  for (const child of [...element.children]) if (!child.classList.contains('titlebar') && !child.classList.contains('resize-handle')) child.remove();
+  const icon = element.querySelector('.window-app-icon'); icon.className = 'window-app-icon'; icon.replaceChildren(toolIcon('Film'));
+  element.querySelector('.window-title').textContent = '视频播放器'; element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭视频播放器');
+  const toolbar = document.createElement('div'); toolbar.className = 'image-controls';
+  const open = document.createElement('button'); open.textContent = '打开视频…'; toolbar.append(open);
+  const viewport = document.createElement('div'); viewport.className = 'video-viewport';
+  const empty = document.createElement('div'); empty.className = 'video-empty';
+  const title = document.createElement('strong'); title.textContent = '视频播放器';
+  const hint = document.createElement('p'); hint.textContent = '打开服务器上的视频，通过 SSH 流式播放。支持的编码取决于当前 Electron；不进行服务器转码。'; empty.append(title, hint); viewport.append(empty);
+  const footer = document.createElement('div'); footer.className = 'window-footer video-status'; footer.setAttribute('role', 'status'); footer.textContent = 'Video.js · 选择视频开始播放';
+  element.append(toolbar, viewport, footer); state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
+  const record = { element, request: 0, media: null, player: RemoteVideoPlayer.mount({ element, viewport, isActive: () => state.activeWindow === win.id, onStatus: value => { footer.textContent = value; footer.title = value; } }) }; videos.set(win.id, record);
+  open.addEventListener('click', async () => {
+    const generation = connectionGeneration, target = await chooseServerPath({ initialPath: win.folder, title: '选择视频' });
+    if (target && generation === connectionGeneration && videos.has(win.id)) { await loadVideo(win, { path: target, name: basename(target) }); if (videos.has(win.id)) focusWindow(win.id); }
+  });
+  element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
+  element.addEventListener('click', event => { const action = event.target.closest('[data-window-action]')?.dataset.windowAction; if (action) void windowAction(action, win); });
+  renderToolIcons(element); bindWindowDrag(win, element); bindWindowResize(win, element); positionWindow(win); focusWindow(win.id); return win;
+}
+async function loadVideo(win, item) {
+  const record = videos.get(win.id); if (!record) return;
+  const request = ++record.request, generation = connectionGeneration;
+  record.element.querySelector('.video-status').textContent = '正在打开视频…';
+  let media;
+  try {
+    media = await api.openVideo(item.path);
+    if (!videos.has(win.id) || request !== record.request || generation !== connectionGeneration) { await api.releaseVideo(media.id); return; }
+    const previous = record.media; record.player.load(media); record.media = media;
+    if (previous) void api.releaseVideo(previous.id).catch(() => {});
+    win.path = media.path; win.folder = parentOf(media.path); win.videoName = media.name;
+    record.element.querySelector('.window-title').textContent = media.name; renderDock();
+  } catch (error) {
+    if (media && record.media !== media) void api.releaseVideo(media.id).catch(() => {});
+    if (videos.has(win.id) && request === record.request) record.element.querySelector('.video-status').textContent = '视频打开失败：' + error.message;
+  }
+}
+async function openVideo(item) { const win = createVideoWindow(); await loadVideo(win, item); }
 
 initializeConnection();
 host.postMessage({ type: 'ready' });
