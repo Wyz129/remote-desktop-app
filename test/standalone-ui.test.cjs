@@ -120,6 +120,63 @@ async function connect(page) {
 }
 const icon = (page,name) => page.locator(`#icons [data-path="${desktop}/${name}"]`);
 
+test('applications_overview_bottom_dock_search_keyboard_and_offline_access', () => scenario('applications-overview', async page => {
+  await page.locator('#closeConnection').click();
+  const toggle = page.locator('#applicationsButton'), panel = page.locator('#applicationsPanel');
+  assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(), 0);
+  await toggle.click(); await panel.waitFor();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(await panel.locator('.application-label').allTextContents(), ['浏览器','传输中心','实时监听','htop','Monaco Editor','图片查看器']);
+  assert.equal(await panel.locator('button.application-tile:disabled').count(), 4);
+  assert.equal(await page.locator('#applicationsSearch').evaluate(el => el === document.activeElement), true);
+  const toggleBounds = await toggle.boundingBox(), dockBounds = await page.locator('#dock').boundingBox();
+  assert.ok(dockBounds.y + dockBounds.height - toggleBounds.y - toggleBounds.height <= 14, 'applications stays at dock bottom');
+  await page.locator('#applicationsSearch').fill('nothing-matches'); await page.locator('#applicationsEmpty').waitFor();
+  assert.equal(await panel.locator('.application-tile:visible').count(), 0);
+  await page.locator('#applicationsSearch').fill('下载'); await page.keyboard.press('Enter');
+  assert.equal(await panel.isVisible(), false); await page.locator('#downloadsPanel').waitFor();
+  await page.locator('#closeDownloads').click();
+  await toggle.click(); await page.keyboard.press('Escape');
+  assert.equal(await toggle.evaluate(el => el === document.activeElement), true);
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  await toggle.click(); await toggle.click(); assert.equal(await panel.isVisible(), false);
+  await page.locator('#connectButton').click(); await connect(page);
+  await toggle.click(); assert.equal(await panel.locator('button.application-tile:disabled').count(), 0);
+  await page.keyboard.press('Control+Alt+t'); assert.equal(await page.locator('.terminal-window').count(), 0, 'overview consumes desktop shortcuts');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'browser');
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'transfer');
+  await page.keyboard.press('End');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'image');
+  await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-applications.png') });
+  await page.locator('#homeShortcut').click(); assert.equal(await panel.isVisible(), false);
+  await page.locator('.window').first().waitFor();
+  await toggle.click(); await page.evaluate(() => window.receive({type:'remoteState',status:'disconnected'}));
+  assert.equal(await panel.isVisible(), false);
+  await toggle.click(); assert.equal(await panel.locator('button.application-tile:disabled').count(), 4);
+}));
+
+test('applications_launch_existing_apps_and_hide_native_browser_views', () => scenario('applications-launch', async page => {
+  await connect(page);
+  const launch = async id => { await page.locator('#applicationsButton').click(); await page.locator(`[data-application="${id}"]`).click(); assert.equal(await page.locator('#applicationsPanel').isVisible(), false); };
+  await launch('browser'); await page.locator('.browser-window').waitFor();
+  assert.equal(await page.locator('.browser-window .window-title').textContent(), '浏览器');
+  assert.equal(await page.locator('#windowTabs .tab-label').textContent(), '浏览器');
+  await page.waitForFunction(() => window.calls.some(call => call.type === 'browserLayout' && !call.hidden));
+  await page.locator('#applicationsButton').click();
+  await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1)?.hidden === true);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1)?.hidden === false);
+  await launch('browser'); assert.equal(await page.locator('.browser-window').count(), 1);
+  await launch('activity'); await launch('activity'); assert.equal(await page.locator('.activity-window').count(), 1);
+  await launch('transfer'); await page.locator('#downloadsPanel').waitFor(); await page.locator('#closeDownloads').click();
+  await launch('htop'); await page.locator('.terminal-window[data-program=htop]').waitFor();
+  assert.equal(await page.evaluate(() => window.messages.filter(message => message.type === 'openTerminal' && message.program === 'htop').length), 1);
+  await launch('editor'); assert.ok(await page.evaluate(() => window.calls.some(call => call.type === 'openDocument' && call.path === null)));
+  await launch('image'); await page.locator('.image-window').waitFor();
+}));
+
 test('connection_failure_and_disconnect_never_display_demo', () => scenario('connection', async page => {
   assert.equal(await page.locator('#icons .icon').count(),0);
   await page.screenshot({path:path.join(root,'artifacts','standalone-connect.png')});
@@ -199,7 +256,7 @@ test('image_viewer_library_zoom_pan_rotate_flip_and_window_lifecycle', () => sce
 }));
 
 test('image_launcher_remote_picker_errors_keyboard_focus_and_disconnect_cleanup', () => scenario('image-launcher', async page => {
-  await connect(page);await page.locator('#imageShortcut').click();const win=page.locator('.image-window');
+  await connect(page);await page.locator('#applicationsButton').click();await page.locator('[data-application=image]').click();const win=page.locator('.image-window');
   await win.locator('.image-empty').waitFor();assert.equal(await win.locator('[data-image-action="in"]').isDisabled(),true);
   await win.locator('.image-controls [data-image-action="open"]').click();
   const picker=page.locator('.server-picker-window');await picker.locator('.window-picker-path').fill(desktop+'/picture.png');await picker.locator('.window-picker-select').click();
@@ -299,7 +356,7 @@ test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => s
 
 test('builtin_home_and_settings_remain_available_without_connection_or_pins', () => scenario('builtin-shortcuts', async page => {
   await page.locator('#closeConnection').click();
-  assert.equal(await page.locator('#builtinApps button').count(),2);
+  assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(),0);
   assert.deepEqual(await page.locator('.toolbar-actions button').evaluateAll(nodes => nodes.map(node => node.id).filter(id => ['browserButton', 'homeShortcut', 'desktopSettings'].includes(id))), ['browserButton', 'homeShortcut', 'desktopSettings']);
   assert.equal(await page.locator('#dock #homeShortcut, #dock #browserButton, #dock #desktopSettings').count(), 0);
   await page.locator('#desktopSettings').click();
@@ -320,11 +377,11 @@ test('builtin_home_and_settings_remain_available_without_connection_or_pins', ()
   await win.locator('[data-window-action="minimize"]').click(); await page.locator('#homeShortcut').click();
   assert.equal(await page.locator('.window').count(),1); assert.equal(await win.isVisible(),true);
   await page.evaluate(()=>window.receive({type:'configUpdated',config:{pinnedApps:[]}}));
-  assert.equal(await page.locator('#builtinApps button').count(),2);
+  assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(),0);
   await page.locator('#homeShortcut').click({button:'right'});
   assert.equal(await page.locator('#appContext').isVisible(),false);
   await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
-  assert.equal(await page.locator('#builtinApps button').count(),2);
+  assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(),0);
   await page.locator('#desktopSettings').click(); await page.locator('#settingsDialog[open]').waitFor();
 }));
 
@@ -572,7 +629,7 @@ test('monaco_default_readonly_and_fixed_launcher_have_no_vim_file_route', () => 
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&value.readOnly));
   await page.evaluate(()=>{window.readOnlyFile=null;});await icon(page,'notes.txt').click({button:'right'});
   assert.equal(await page.locator('#context [data-action=vim]').count(),0);
-  await page.keyboard.press('Escape');await page.locator('#editorShortcut').click();
+  await page.keyboard.press('Escape');await page.locator('#applicationsButton').click();await page.locator('[data-application=editor]').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&value.path===null));
 }));
 
@@ -645,7 +702,7 @@ test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_dir
 
 test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenario('browser-window', async page => {
   await connect(page);
-  assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), ['editorShortcut','imageShortcut']);
+  assert.equal(await page.locator('#applicationsButton').count(), 1);
   await page.locator('#browserButton').click();
   const win = page.locator('.browser-window'); await win.waitFor();
   const browserIcon = win.locator('.browser-app-icon');

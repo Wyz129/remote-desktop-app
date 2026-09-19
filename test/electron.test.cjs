@@ -72,7 +72,8 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/Desktop`);
   await page.waitForFunction(() => document.getElementById('serverClock').textContent.includes('Asia/Shanghai (UTC+08:00)'));
   assert.equal(await page.locator('#newWindow').count(), 0);
-  assert.equal(await page.locator('#builtinApps button').count(), 2);
+  assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(), 0);
+  assert.equal(await page.locator('#applicationsButton').count(), 1);
   await page.locator('#browserButton').click();
   await page.locator('.browser-window').waitFor();
   const browserViews = () => application.evaluate(({ BrowserWindow }) => {
@@ -81,6 +82,15 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   });
   for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 2; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.deepEqual({ ...(await browserViews()), bounds: undefined }, { windows: 1, count: 2, visible: 2, bounds: undefined });
+  await page.locator('#applicationsButton').click();
+  await page.locator('#applicationsPanel').waitFor();
+  for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 0; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal((await browserViews()).visible, 0, 'native browser views must not cover the applications overview');
+  await page.locator('[data-application=browser]').click();
+  for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 2; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal((await browserViews()).visible, 2);
+  assert.equal(await page.locator('.browser-window').count(), 1);
+  assert.equal(await page.locator('.browser-window .window-title').textContent(), '浏览器');
   const browserBounds = await page.locator('.browser-surface').boundingBox();
   assert.ok(Math.abs((await browserViews()).bounds.x - browserBounds.x) <= 1);
   await page.locator('.browser-window [data-window-action="minimize"]').click();
@@ -186,7 +196,12 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
     finally {untrusted.destroy();}
   }, downloadedTask.id);
   assert.match(deniedSender, /不受信任|非应用窗口|未经授权|untrusted|trusted/i);
-  const documentOpened = application.waitForEvent('window');
+  // The preceding security check creates a short-lived about:blank window.
+  // Its Playwright event can arrive after that check has already destroyed it.
+  const documentOpened = application.waitForEvent('window', { predicate: async candidate => {
+    try { await candidate.waitForURL('**/app/workbench.html', { timeout: 12000 }); return true; }
+    catch { return false; }
+  } });
   await page.locator(`#icons [data-path="${fixture.home}/Desktop/notes.txt"]`).dblclick();
   const editor = await documentOpened; editor.setDefaultTimeout(12000);
   await editor.waitForFunction(() => window.monaco?.editor.getModels().length > 0);

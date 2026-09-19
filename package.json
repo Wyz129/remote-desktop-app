@@ -1,8 +1,8 @@
 {
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
-  "description": "独立 SSH Monaco Editor、服务器浏览器、传输中心与命令行实例",
-  "version": "1.1.5",
+  "description": "独立 SSH Monaco Editor、浏览器、传输中心与命令行实例",
+  "version": "1.1.6",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -45,7 +45,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.1.5"
+      "output": "artifacts/electron-1.1.6"
     },
     "files": [
       "main.cjs",

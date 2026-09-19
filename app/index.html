@@ -13,18 +13,27 @@
   <header class="toolbar">
     <div class="brand"><strong id="accountName">未连接 SSH</strong></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
-    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听 · 命令行活动" title="实时监听 · 命令行活动"></button><button id="browserButton" class="toolbar-icon" aria-label="服务器网页浏览器" title="通过服务器网络浏览网页"></button><button id="homeShortcut" class="toolbar-icon" title="Home · 远程主目录" aria-label="Home · 远程主目录"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
+    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听 · 命令行活动" title="实时监听 · 命令行活动"></button><button id="browserButton" class="toolbar-icon" aria-label="浏览器" title="通过服务器网络浏览网页"></button><button id="homeShortcut" class="toolbar-icon" title="Home · 远程主目录" aria-label="Home · 远程主目录"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
-      <div id="builtinApps" class="pinned-apps" aria-label="应用快捷方式"><button id="editorShortcut" class="pinned-app" title="Monaco Editor" aria-label="Monaco Editor"></button><button id="imageShortcut" class="pinned-app" title="图片查看器" aria-label="图片查看器"></button></div>
       <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
       <div id="windowTabs" class="window-tabs"></div>
+      <button id="applicationsButton" class="applications-button" type="button" title="显示应用" aria-label="显示应用" aria-expanded="false" aria-controls="applicationsPanel"><span class="applications-dots" aria-hidden="true"></span></button>
     </aside>
     <main class="desktop" id="desktop" aria-label="远程桌面">
       <div class="desktop-caption"><span class="caption-icon" aria-hidden="true">▦</span><span id="desktopPath">桌面</span></div>
       <div id="icons" class="icons" aria-label="桌面文件"></div>
       <div id="windows"></div>
+      <section id="applicationsPanel" class="applications-panel" role="dialog" aria-labelledby="applicationsTitle" aria-describedby="applicationsHint" hidden>
+        <div class="applications-content">
+          <header class="applications-heading"><h2 id="applicationsTitle">应用</h2><button id="closeApplications" type="button" aria-label="关闭应用面板" title="关闭">×</button></header>
+          <label class="applications-search"><span aria-hidden="true">⌕</span><input id="applicationsSearch" type="search" aria-label="搜索应用" placeholder="搜索应用…" autocomplete="off" spellcheck="false"></label>
+          <p id="applicationsHint" class="applications-hint">选择应用，在当前虚拟桌面中打开。</p>
+          <div id="applicationsGrid" class="applications-grid" aria-label="可用应用"></div>
+          <p id="applicationsEmpty" class="applications-empty" role="status" hidden>没有匹配的应用</p>
+        </div>
+      </section>
       <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle" tabindex="-1">
         <header class="titlebar"><span class="settings-app-icon" aria-hidden="true">⚙</span><h2 id="settingsTitle" class="window-title">设置 · 控制面板</h2><div class="window-controls" aria-label="设置窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化设置" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化设置" title="最大化">□</button><button type="button" id="closeSettings" class="window-control close" data-window-action="close" aria-label="关闭设置" title="关闭">×</button></div></header>
         <nav class="settings-tabs" role="tablist" aria-label="控制面板分类">

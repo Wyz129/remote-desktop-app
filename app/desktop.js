@@ -328,6 +328,100 @@ function openHome() {
 function updateBuiltinShortcuts() {
   $('homeShortcut').title = remoteMode && homePath ? `Home · ${homePath}` : 'Home · 连接 SSH 后打开远程主目录';
   $('refreshSystemInfo').disabled = !remoteMode || systemInfoLoading;
+  updateApplicationAvailability();
+}
+
+const APPLICATIONS = [
+  { id: 'browser', label: '浏览器', icon: 'Globe', keywords: 'browser web 网页 网络', description: '使用服务器网络浏览网页', remote: true, launch: openServerBrowser },
+  { id: 'transfer', label: '传输中心', icon: 'ArrowDownUp', keywords: 'transfer upload download 上传 下载', description: '上传、下载与传输历史', launch: () => showTransferCenter(true) },
+  { id: 'activity', label: '实时监听', icon: 'Activity', keywords: 'monitor log 日志 命令', description: '查看命令与操作记录', launch: () => openActivityWindow() },
+  { id: 'htop', label: 'htop', icon: 'ChartNoAxesCombined', keywords: 'process cpu memory 进程 资源', description: '服务器进程与资源监视', remote: true, launch: () => openTerminal(desktopAvailable ? rootPath : homePath, 'htop') },
+  { id: 'editor', label: 'Monaco Editor', icon: 'FileCode2', keywords: 'code text script 编辑器 文本 脚本', description: '编辑远程文本与脚本', remote: true, launch: () => api.openDocument(null) },
+  { id: 'image', label: '图片查看器', icon: 'Image', keywords: 'image photo viewer 照片 图像', description: '浏览服务器上的图片', remote: true, launch: openImageLauncher }
+];
+function filterApplications() {
+  const words = $('applicationsSearch').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  for (const application of APPLICATIONS) {
+    const text = `${application.label} ${application.keywords}`.toLocaleLowerCase();
+    $('applicationsGrid').querySelector(`[data-application="${application.id}"]`).hidden = !words.every(word => text.includes(word));
+  }
+  $('applicationsEmpty').hidden = Boolean($('applicationsGrid').querySelector('button:not([hidden])'));
+}
+function updateApplicationAvailability() {
+  for (const application of APPLICATIONS) {
+    const button = $('applicationsGrid').querySelector(`[data-application="${application.id}"]`);
+    if (!button) continue;
+    button.disabled = Boolean(application.remote && !remoteMode);
+    button.title = button.disabled ? '连接 SSH 后可用' : application.description;
+  }
+  $('applicationsHint').textContent = remoteMode ? '选择应用，在当前虚拟桌面中打开。' : '连接 SSH 后可打开远程应用；传输历史与监听记录仍可查看。';
+}
+function closeApplications(restoreFocus = true) {
+  if ($('applicationsPanel').hidden) return;
+  $('applicationsPanel').hidden = true;
+  $('applicationsButton').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) $('applicationsButton').focus({ preventScroll: true });
+  scheduleBrowserLayout();
+}
+function openApplications() {
+  if (document.querySelector('dialog:modal')) return;
+  $('context').hidden = $('appContext').hidden = $('downloadsPanel').hidden = $('activityToast').hidden = true;
+  $('applicationsSearch').value = '';
+  updateApplicationAvailability(); filterApplications();
+  $('applicationsPanel').hidden = false;
+  $('applicationsButton').setAttribute('aria-expanded', 'true');
+  $('applicationsSearch').focus({ preventScroll: true });
+  scheduleBrowserLayout();
+}
+async function launchApplication(application) {
+  if (application.remote && !remoteMode) { notify('请先连接 SSH'); return; }
+  closeApplications(false);
+  try { await application.launch(); }
+  catch (error) { notify(error.message || String(error)); }
+}
+function initializeApplications() {
+  for (const application of APPLICATIONS) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'application-tile'; button.dataset.application = application.id;
+    const icon = document.createElement('span'); icon.className = 'application-icon'; icon.append(toolIcon(application.icon));
+    const label = document.createElement('span'); label.className = 'application-label'; label.textContent = application.label;
+    const description = document.createElement('span'); description.className = 'application-description'; description.textContent = application.description;
+    button.append(icon, label, description); button.addEventListener('click', () => { void launchApplication(application); }); $('applicationsGrid').append(button);
+  }
+  $('applicationsButton').addEventListener('click', () => $('applicationsPanel').hidden ? openApplications() : closeApplications());
+  $('closeApplications').addEventListener('click', () => closeApplications());
+  $('applicationsSearch').addEventListener('input', filterApplications);
+  $('applicationsPanel').addEventListener('click', event => { if (event.target === $('applicationsPanel')) closeApplications(); });
+  document.addEventListener('pointerdown', event => {
+    if (!$('applicationsPanel').hidden && !event.target.closest('#applicationsPanel, #applicationsButton')) closeApplications(false);
+  }, true);
+  document.addEventListener('keydown', event => {
+    if ($('applicationsPanel').hidden) return;
+    event.stopImmediatePropagation();
+    if (event.key === 'Escape') { event.preventDefault(); closeApplications(); return; }
+    const visible = [...$('applicationsGrid').querySelectorAll('button:not([hidden]):not(:disabled)')];
+    if (event.key === 'Tab') {
+      const controls = [$('applicationsSearch'), ...visible, $('closeApplications'), $('applicationsButton')];
+      const index = controls.indexOf(document.activeElement);
+      event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus(); return;
+    }
+    if (event.target === $('applicationsSearch')) {
+      if (event.key === 'ArrowDown') { event.preventDefault(); visible[0]?.focus(); }
+      if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); visible[0]?.click(); }
+      return;
+    }
+    const index = visible.indexOf(document.activeElement);
+    if (index < 0 || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const columns = getComputedStyle($('applicationsGrid')).gridTemplateColumns.split(' ').length;
+    const offset = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns }[event.key];
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? visible.length - 1 : Math.max(0, Math.min(visible.length - 1, index + offset));
+    visible[next].focus();
+  }, true);
+}
+function showTransferCenter(open) {
+  $('downloadsPanel').hidden = !open;
+  if (open) api.listTransfers?.().then(tasks => tasks.forEach(updateDownload)).catch(error => notify(error.message));
+  scheduleBrowserLayout();
 }
 function extensionSettingsBusy() {
   const busy = Boolean(extensionSettingsRequest || extensionSettingsRead || settingsRequest);
@@ -764,7 +858,7 @@ function scheduleBrowserLayout() {
   if (browserLayoutFrame !== null) return;
   browserLayoutFrame = requestAnimationFrame(() => {
     browserLayoutFrame = null;
-    const obscured = document.hidden || Boolean(document.querySelector('dialog:modal')) || ['downloadsPanel', 'context', 'appContext', 'activityToast'].some(id => !$(id).hidden);
+    const obscured = document.hidden || Boolean(document.querySelector('dialog:modal')) || ['applicationsPanel', 'downloadsPanel', 'context', 'appContext', 'activityToast'].some(id => !$(id).hidden);
     for (const win of state.windows.filter(current => current.kind === 'browser')) {
       const surface = windowElements.get(win.id)?.querySelector('.browser-surface');
       if (!surface) continue;
@@ -779,7 +873,7 @@ function scheduleBrowserLayout() {
   });
 }
 async function openServerBrowser() {
-  if (!remoteMode) { notify('请先连接 SSH，再打开服务器浏览器。'); return; }
+  if (!remoteMode) { notify('请先连接 SSH，再打开浏览器。'); return; }
   const existing = state.windows.find(win => win.kind === 'browser');
   if (existing) { focusWindow(existing.id); return; }
   if (browserOpening) return browserOpening;
@@ -790,7 +884,7 @@ async function openServerBrowser() {
       if (!remoteMode || generation !== connectionGeneration) { await api.closeBrowser(result.id); return; }
       const win = { id: `browser-${result.id}`, kind: 'browser', browserId: result.id, minimized: false, maximized: false, position: { x: 46, y: 24 }, size: { width: 1050, height: 700 }, z: ++nextLayer };
       const element = $('windowTemplate').content.firstElementChild.cloneNode(true);
-      element.classList.add('browser-window'); element.dataset.windowId = win.id; element.setAttribute('aria-label', '服务器浏览器');
+      element.classList.add('browser-window'); element.dataset.windowId = win.id; element.setAttribute('aria-label', '浏览器');
       for (const child of [...element.children]) if (!child.classList.contains('titlebar')) child.remove();
       // The browser is a virtual application window, so keep its titlebar icon
       // distinct from the folder icon used by the explorer template.
@@ -799,7 +893,7 @@ async function openServerBrowser() {
         appIcon.className = 'window-app-icon browser-app-icon';
         appIcon.replaceChildren(toolIcon('Globe'));
       }
-      element.querySelector('.window-title').textContent = '服务器浏览器';
+      element.querySelector('.window-title').textContent = '浏览器';
       element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭浏览器窗口');
       const surface = document.createElement('div'); surface.className = 'browser-surface';
       const resume = document.createElement('button'); resume.type = 'button'; resume.textContent = '点击继续浏览'; resume.addEventListener('click', () => focusWindow(win.id)); surface.append(resume); element.append(surface);
@@ -954,7 +1048,7 @@ function renderDock() {
   for (const win of state.windows) {
     const tab = document.createElement('button');
     tab.className = `window-tab${win.id === state.activeWindow && !win.minimized ? ' active' : ''}${win.minimized ? ' minimized' : ''}`;
-    const appTitle = { browser: '服务器浏览器', settings: '设置', activity: '实时监听' }[win.kind];
+    const appTitle = { browser: '浏览器', settings: '设置', activity: '实时监听' }[win.kind];
     const title = appTitle || (win.kind === 'terminal' ? `${PROGRAM_LABELS[win.program]} · ${win.folder}` : win.kind === 'image' ? win.imageName : win.folder);
     tab.dataset.windowId = win.id; tab.title = `${title}${win.minimized ? '（已最小化）' : ''}`;
     tab.setAttribute('aria-label', `${win.minimized ? '恢复' : '切换到'} ${title}`);
@@ -1621,6 +1715,7 @@ document.addEventListener('pointerdown', event => {
 // Capture before xterm, reserving
 // Ubuntu's terminal shortcut without sending Ctrl+Alt+T bytes to a TUI.
 document.addEventListener('keydown', event => {
+  if (!$('applicationsPanel').hidden) return;
   if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey || event.getModifierState('AltGraph') || (event.code !== 'KeyT' && event.key.toLowerCase() !== 't')) return;
   event.preventDefault(); event.stopImmediatePropagation();
   if (event.repeat || event.isComposing || !initialized || document.querySelector('dialog:modal')) return;
@@ -1652,13 +1747,7 @@ document.addEventListener('keydown', event => {
 $('desktopSettings').addEventListener('click', openSettings);
 $('homeShortcut').replaceChildren(toolIcon('House'));
 $('homeShortcut').addEventListener('click', openHome);
-$('editorShortcut').replaceChildren(toolIcon('FileCode2'));
-$('editorShortcut').addEventListener('click', async () => {
-  if (!remoteMode) { notify('请先连接 SSH'); return; }
-  try { await api.openDocument(null); } catch (error) { notify(error.message || String(error)); }
-});
-$('imageShortcut').replaceChildren(toolIcon('Image'));
-$('imageShortcut').addEventListener('click', () => { if (!remoteMode) { notify('请先连接 SSH'); return; } openImageLauncher(); });
+initializeApplications();
 $('activityButton').replaceChildren(toolIcon('Activity'));
 $('activityButton').addEventListener('click', () => openActivityWindow());
 $('openActivityToast').addEventListener('click', () => openActivityWindow(activity.toastSession));
@@ -1735,6 +1824,7 @@ function clearWindowViews(preserveTerminals = false) {
   state.windows = state.windows.filter(win => win.kind === 'settings' || win.kind === 'activity' || (preserveTerminals && win.kind === 'terminal'));
 }
 function clearRemoteDesktop(preserveTerminals = false) {
+  closeApplications();
   connectionGeneration++; fileAccessRequests.clear(); fileAccessChoice = null;
   transferWorkflow = null; setTransferBusy(false);
   closeDirectoryPicker(); $('fileAccessDialog').close();
@@ -1777,7 +1867,7 @@ async function initializeConnection() {
   });
   $('skipDesktop').addEventListener('click', () => $('missingDesktopDialog').close());
   $('createDesktop').addEventListener('click', () => { $('missingDesktopDialog').close(); host.postMessage({ type: 'createDesktop' }); });
-  $('downloadsButton').addEventListener('click', () => { $('downloadsPanel').hidden = !$('downloadsPanel').hidden; api.listTransfers?.().then(tasks => tasks.forEach(updateDownload)).catch(error => notify(error.message)); });
+  $('downloadsButton').addEventListener('click', () => showTransferCenter($('downloadsPanel').hidden));
   $('closeDownloads').addEventListener('click', () => { $('downloadsPanel').hidden = true; });
   api.onDownloadProgress(updateDownload);
   document.addEventListener('keydown', event => {

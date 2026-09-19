@@ -54,7 +54,7 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   if (!await page.locator('#downloadsPanel').isVisible()) await page.locator('#downloadsButton').click();await page.locator('#downloadItems').getByText(/cli-upload.txt/).first().waitFor();
   await page.locator('#closeDownloads').click();
   async function openDocument(name){const opened=application.waitForEvent('window');await page.locator(`#icons [data-path="${fixture.home}/Desktop/${name}"]`).dblclick();const work=await opened;work.setDefaultTimeout(15000);work.on('pageerror',error=>console.error('Workbench renderer:',error.message));work.on('console',message=>{if(message.type()==='error') console.error('Workbench console:',message.text());});try {await work.waitForFunction(()=>window.monaco?.editor.getModels().length>0);await work.waitForFunction(()=>document.getElementById('filePath').textContent.startsWith('/'));}catch(error){console.error('Workbench state:',await work.locator('body').innerText());throw error;}return work;}
-  const launched = application.waitForEvent('window'); await page.locator('#editorShortcut').click();
+  const launched = application.waitForEvent('window'); await page.locator('#applicationsButton').click(); await page.locator('[data-application=editor]').click();
   const untitled = await launched; untitled.setDefaultTimeout(15000);
   await untitled.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
   const editorTitle = () => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(win => win.webContents.getURL().endsWith('/app/workbench.html')).getTitle());
