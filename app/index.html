@@ -12,15 +12,10 @@
   <header class="toolbar">
     <div class="brand"><strong id="accountName">未连接 SSH</strong></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间">服务器时间 —</time>
-    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="browserButton" class="toolbar-icon" aria-label="服务器网页浏览器" title="通过服务器网络浏览网页"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
+    <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="SSH 连接" title="SSH 连接与断开"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听 · 命令行活动" title="实时监听 · 命令行活动"></button><button id="browserButton" class="toolbar-icon" aria-label="服务器网页浏览器" title="通过服务器网络浏览网页"></button><button id="homeShortcut" class="toolbar-icon" title="Home · 远程主目录" aria-label="Home · 远程主目录"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置 · 控制面板" title="设置 · 控制面板"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏视图" title="切换全屏视图 · F11 或 Ctrl+Alt+F 退出"></button></div>
   </header>
   <div class="workspace">
     <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
-      <div id="builtinApps" class="builtin-apps" aria-label="系统快捷方式">
-        <button id="homeShortcut" class="pinned-app" title="Home · 远程主目录" aria-label="Home · 远程主目录"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">Home</span></button>
-        <button id="browserShortcut" class="pinned-app" title="服务器浏览器" aria-label="服务器浏览器"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">浏览器</span></button>
-        <button id="settingsShortcut" class="pinned-app" title="设置 · 控制面板" aria-label="设置 · 控制面板"><span class="builtin-icon" aria-hidden="true"></span><span class="tab-label">设置</span></button>
-      </div>
       <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
       <div id="windowTabs" class="window-tabs"></div>
     </aside>
@@ -82,6 +77,12 @@
       <footer class="statusbar"><span class="operation-display" title="文件操作通过 SSH 完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
     </main>
   </div>
+  <aside id="activityToast" class="activity-toast" role="status" aria-live="polite" hidden>
+    <div class="activity-toast-heading"><strong>检测到本地命令行连接</strong><button type="button" id="closeActivityToast" aria-label="关闭连接提示">×</button></div>
+    <p id="activityToastIp"></p><p id="activityToastTime"></p>
+    <p class="activity-toast-note">监听已自动开启，操作历史正在写入日志。</p>
+    <button type="button" id="openActivityToast" class="primary">实时监听</button>
+  </aside>
   <template id="windowTemplate">
     <section class="window" aria-label="资源管理器窗口" tabindex="-1">
       <header class="titlebar"><span class="window-app-icon glyph folder" aria-hidden="true"></span><strong class="window-title">文件夹</strong><div class="window-controls" aria-label="窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化" title="最大化">□</button><button type="button" class="window-control close" data-window-action="close" aria-label="关闭文件夹窗口" title="关闭">×</button></div></header>

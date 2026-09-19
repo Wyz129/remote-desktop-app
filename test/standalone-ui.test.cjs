@@ -47,6 +47,8 @@ async function scenario(name, fn) {
     window.remoteDesktop = {
       onMessage(callback) { window.receive = callback; },
       onBrowserEvent(callback) { window.browserEvent = callback; },
+      onActivityEvent(callback) { window.activityEvent = callback; },
+      async getActivitySnapshot() { return { sessions: [], entries: [], systemLogPath: '', connected: false, error: null }; },
       async openBrowser() { window.calls.push({type:'openBrowser'}); if (window.deferBrowserOpen) return new Promise(resolve=>{window.resolveBrowserOpen=resolve;}); return {id:41,embedded:true}; },
       async layoutBrowser(id,bounds,hidden) { window.calls.push({type:'browserLayout',id,bounds,hidden}); },
       async closeBrowser(id) { window.calls.push({type:'closeBrowser',id}); window.browserEvent({type:'closed',id}); return true; },
@@ -259,8 +261,10 @@ test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => s
 
 test('builtin_home_and_settings_remain_available_without_connection_or_pins', () => scenario('builtin-shortcuts', async page => {
   await page.locator('#closeConnection').click();
-  assert.equal(await page.locator('#builtinApps button').count(),3);
-  await page.locator('#settingsShortcut').click();
+  assert.equal(await page.locator('#builtinApps button').count(),0);
+  assert.deepEqual(await page.locator('.toolbar-actions button').evaluateAll(nodes => nodes.map(node => node.id).filter(id => ['browserButton', 'homeShortcut', 'desktopSettings'].includes(id))), ['browserButton', 'homeShortcut', 'desktopSettings']);
+  assert.equal(await page.locator('#dock #homeShortcut, #dock #browserButton, #dock #desktopSettings').count(), 0);
+  await page.locator('#desktopSettings').click();
   await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
   assert.equal(await page.locator('#applySettings').isDisabled(),true);
   await page.locator('#settingsDownloadThreshold').fill('70'); await page.locator('#saveExtensionSettings').click();
@@ -278,17 +282,17 @@ test('builtin_home_and_settings_remain_available_without_connection_or_pins', ()
   await win.locator('[data-window-action="minimize"]').click(); await page.locator('#homeShortcut').click();
   assert.equal(await page.locator('.window').count(),1); assert.equal(await win.isVisible(),true);
   await page.evaluate(()=>window.receive({type:'configUpdated',config:{pinnedApps:[]}}));
-  assert.equal(await page.locator('#builtinApps button').count(),3);
+  assert.equal(await page.locator('#builtinApps button').count(),0);
   await page.locator('#homeShortcut').click({button:'right'});
   assert.equal(await page.locator('#appContext').isVisible(),false);
   await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
-  assert.equal(await page.locator('#builtinApps button').count(),3);
-  await page.locator('#settingsShortcut').click(); await page.locator('#settingsDialog[open]').waitFor();
+  assert.equal(await page.locator('#builtinApps button').count(),0);
+  await page.locator('#desktopSettings').click(); await page.locator('#settingsDialog[open]').waitFor();
 }));
 
 test('settings_single_window_preserves_input_and_supports_desktop_window_controls', () => scenario('settings-window', async page => {
   await connect(page);
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   const win = page.locator('#settingsDialog');
   await page.waitForFunction(() => document.getElementById('settingsDownloadThreshold').value === '50');
   assert.equal(await win.evaluate(element => element.matches(':modal')), false);
@@ -296,7 +300,7 @@ test('settings_single_window_preserves_input_and_supports_desktop_window_control
   await page.locator('#settingsDesktopPath').fill('/shared/pending-desktop');
   await page.locator('#settingsDownloadThreshold').fill('73');
   await page.locator('#desktopSettings').click();
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('.settings-dialog[open]').count(), 1);
   assert.equal(await page.locator('#settingsDesktopPath').inputValue(), '/shared/pending-desktop');
   assert.equal(await page.locator('#settingsDownloadThreshold').inputValue(), '73');
@@ -315,14 +319,14 @@ test('settings_single_window_preserves_input_and_supports_desktop_window_control
   await win.locator('[data-window-action="maximize"]').click();
   await win.locator('[data-window-action="minimize"]').click();
   assert.equal(await win.isVisible(), false);
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#windowTabs [data-window-id="settings-window"]').click();
   assert.equal(await win.isVisible(), true);
   assert.equal(await page.locator('#settingsDownloadThreshold').inputValue(), '73');
   await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-settings-window.png') });
   await page.locator('#closeSettings').click();
   assert.equal(await win.isVisible(), false);
   assert.equal(await page.locator('#windowTabs [data-window-id="settings-window"]').count(), 0);
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('#settingsDesktopPath').inputValue(), desktop);
   assert.equal(await page.locator('.settings-dialog[open]').count(), 1);
 }));
@@ -336,14 +340,14 @@ test('home_without_desktop_browses_real_home_without_creating_or_faking_desktop'
   await win.locator('[data-window-action="refresh"]').click();
   await win.getByText('profile.txt',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop'||m.type==='saveDesktopConfig'||m.type==='refreshRemote')),false);
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('#applySettings').isEnabled(),true);
   await page.locator('#systemSettingsTab').click();
   await page.locator('[data-system-info="os"]').getByText('Ubuntu 24.04 LTS',{exact:true}).waitFor();
 }));
 
 test('control_panel_system_info_refresh_failure_and_disconnect_rejects_stale_data', () => scenario('system-control-panel', async page => {
-  await connect(page); await page.locator('#settingsShortcut').click(); await page.locator('#systemSettingsTab').click();
+  await connect(page); await page.locator('#desktopSettings').click(); await page.locator('#systemSettingsTab').click();
   await page.locator('#systemInfoFields').waitFor();
   assert.equal(await page.locator('[data-system-info="home"]').textContent(),'/home/tester');
   assert.equal(await page.locator('[data-system-info="timeZone"]').textContent(),'Asia/Shanghai');
@@ -385,7 +389,7 @@ test('desktop_picker_accepts_arbitrary_public_path_and_preserves_running_editor'
   await connect(page);await icon(page,'notes.txt').dblclick();
   const terminal=await page.locator('.terminal-window').getAttribute('data-window-id');
   await page.evaluate(()=>{window.directories['/']=[{name:'shared',path:'/shared',type:'folder'}];window.directories['/shared']=[{name:'anything',path:'/shared/anything',type:'folder'}];window.directories['/shared/anything']=[{name:'public.txt',path:'/shared/anything/public.txt',type:'file'}];window.deniedDirectory='/locked';});
-  await page.locator('#settingsShortcut').click();await page.locator('#browseDesktopPath').click();
+  await page.locator('#desktopSettings').click();await page.locator('#browseDesktopPath').click();
   await page.locator('#desktopPickerPath').fill('/');await page.locator('#desktopPickerGo').click();
   await page.locator('#desktopPickerEntries [data-path="/shared"]').dblclick();
   await page.locator('#desktopPickerEntries [data-path="/shared/anything"]').waitFor();
@@ -404,7 +408,7 @@ test('desktop_picker_accepts_arbitrary_public_path_and_preserves_running_editor'
 }));
 
 test('desktop_switch_failure_preserves_desktop_and_form_then_handles_appearance_write_failure', () => scenario('desktop-location-errors', async page => {
-  await connect(page);await page.locator('#settingsShortcut').click();
+  await connect(page);await page.locator('#desktopSettings').click();
   await page.evaluate(()=>{window.deniedDirectory='/locked';window.directories['/public']=[];});
   await page.locator('#settingsDesktopPath').fill('/locked');await page.locator('#settingsWallpaper').selectOption('purple');await page.locator('#applySettings').click();
   await page.waitForFunction(()=>document.getElementById('settingsError').textContent.includes('无访问权限'));
@@ -423,13 +427,13 @@ test('desktop_switch_failure_preserves_desktop_and_form_then_handles_appearance_
 
 test('missing_desktop_can_choose_existing_location_and_late_switch_cannot_restore_disconnected_session', () => scenario('missing-desktop-location', async page => {
   await page.evaluate(()=>{window.missingDesktop=true;window.directories['/public']=[];});await connect(page);
-  await page.locator('#skipDesktop').click();await page.locator('#settingsShortcut').click();
+  await page.locator('#skipDesktop').click();await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('#settingsDesktopPath').inputValue(),'/home/tester/rdesktop');
   assert.equal(await page.locator('#applySettings').isEnabled(),true);
   await page.locator('#settingsDesktopPath').fill('/public');await page.locator('#applySettings').click();
   await page.locator('#settingsDialog').waitFor({state:'hidden'});
   assert.equal(await page.locator('#desktopPath').textContent(),'/public');
-  await page.locator('#settingsShortcut').click();await page.locator('#settingsDesktopPath').fill('/delayed');
+  await page.locator('#desktopSettings').click();await page.locator('#settingsDesktopPath').fill('/delayed');
   await page.evaluate(()=>{window.deferDesktop=true;});await page.locator('#applySettings').click();
   await page.waitForFunction(()=>typeof window.resolveDesktop==='function');
   await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveDesktop({rootPath:'/delayed',homePath:'/home/tester',entries:[{name:'stale.txt',path:'/delayed/stale.txt',type:'file'}],config:{}});});
@@ -457,7 +461,7 @@ test('file_permission_denied_and_read_only_confirmation_are_explicit_and_failed_
 }));
 
 test('desktop_switch_waits_for_backend_commit_without_abandoning_slow_persistence', () => scenario('desktop-location-delayed-commit', async page => {
-  await connect(page);await page.locator('#settingsShortcut').click();
+  await connect(page);await page.locator('#desktopSettings').click();
   await page.clock.install();await page.evaluate(()=>{window.deferDesktop=true;});
   await page.locator('#settingsDesktopPath').fill('/delayed');await page.locator('#applySettings').click();
   await page.waitForFunction(()=>typeof window.resolveDesktop==='function');
@@ -471,7 +475,7 @@ test('desktop_switch_waits_for_backend_commit_without_abandoning_slow_persistenc
 }));
 
 test('desktop_switch_backend_timeout_keeps_previous_location_and_releases_controls', () => scenario('desktop-location-backend-timeout', async page => {
-  await connect(page);await page.locator('#settingsShortcut').click();
+  await connect(page);await page.locator('#desktopSettings').click();
   await page.evaluate(()=>{window.deferDesktop=true;});
   await page.locator('#settingsDesktopPath').fill('/delayed');await page.locator('#applySettings').click();
   await page.waitForFunction(()=>typeof window.rejectDesktop==='function');
@@ -490,7 +494,7 @@ test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery',
   await page.locator('#homeShortcut').click();
   await page.locator('.window').getByText('profile.txt',{exact:true}).waitFor();
   assert.equal(await page.locator('#connectionDialog').isVisible(),false);
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('#applySettings').isEnabled(),true);
   assert.equal(await page.locator('#browseDesktopPath').isEnabled(),true);
   assert.match(await page.locator('#settingsError').textContent(),/\/shared\/previous.*Permission denied/);
@@ -499,7 +503,7 @@ test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery',
   assert.equal(await page.locator('#desktopPath').textContent(),'/shared/recovered');
   assert.equal(await page.locator('#connection').textContent(),'SSH · 已连接');
   assert.equal(await page.locator('#icons [data-path="/shared/recovered/restored.txt"]').count(),1);
-  await page.locator('#settingsShortcut').click();assert.equal(await page.locator('#settingsError').textContent(),'');
+  await page.locator('#desktopSettings').click();assert.equal(await page.locator('#settingsError').textContent(),'');
 }));
 
 test('late_file_permission_result_after_disconnect_does_not_open_editor', () => scenario('late-file-permissions', async page => {
@@ -593,8 +597,8 @@ test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_dir
 
 test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenario('browser-window', async page => {
   await connect(page);
-  assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), ['homeShortcut','browserShortcut','settingsShortcut']);
-  await page.locator('#browserShortcut').click();
+  assert.deepEqual(await page.locator('#builtinApps button').evaluateAll(nodes=>nodes.map(node=>node.id)), []);
+  await page.locator('#browserButton').click();
   const win = page.locator('.browser-window'); await win.waitFor();
   const browserIcon = win.locator('.browser-app-icon');
   assert.equal(await browserIcon.count(), 1, 'browser window titlebar uses a dedicated browser icon');
@@ -611,14 +615,14 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).bounds.width>1200);
   await win.locator('[data-window-action="minimize"]').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
-  await page.locator('#browserShortcut').click();
+  await page.locator('#windowTabs [data-window-id="browser-41"]').click();
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
-  await page.locator('#browserShortcut').click();
+  await page.locator('#browserButton').click();
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   assert.equal(await page.locator('#settingsDialog').isVisible(),true,'nonmodal settings may remain open behind active browser');
-  await page.locator('#settingsShortcut').click();
+  await page.locator('#desktopSettings').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   await page.locator('#closeSettings').click();
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
@@ -632,7 +636,7 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   await page.evaluate(()=>{document.getElementById('context').hidden=false;});
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
-  await page.locator('#browserShortcut').click();
+  await page.locator('#browserButton').click();
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   await win.locator('[data-window-action="minimize"]').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
@@ -642,10 +646,10 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   await page.evaluate(()=>window.browserEvent({type:'closed',id:41}));
   assert.equal(await win.count(),0);
   assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='closeBrowser').length),0,'closed event does not recursively close manager');
-  await page.locator('#browserShortcut').click(); await win.waitFor();
+  await page.locator('#browserButton').click(); await win.waitFor();
   await win.locator('[data-window-action="close"]').click();
   assert.equal(await win.count(),0); assert.ok(await page.evaluate(()=>window.calls.some(call=>call.type==='closeBrowser')));
-  await page.locator('#browserShortcut').click(); await win.waitFor();
+  await page.locator('#browserButton').click(); await win.waitFor();
   await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
   assert.equal(await win.count(),0);
   await page.evaluate(()=>window.browserEvent({type:'focus',id:41}));
@@ -654,12 +658,104 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
 
 test('embedded_browser_deduplicates_pending_open_and_disposes_late_connection_result', () => scenario('browser-window-opening', async page => {
   await connect(page); await page.evaluate(()=>{window.deferBrowserOpen=true;});
-  await page.locator('#browserShortcut').click(); await page.locator('#browserButton').click();
+  await page.locator('#browserButton').click(); await page.locator('#browserButton').click();
   await page.waitForFunction(()=>typeof window.resolveBrowserOpen==='function');
   assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='openBrowser').length),1);
   await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveBrowserOpen({id:88,embedded:true});});
   await page.waitForFunction(()=>window.calls.some(call=>call.type==='closeBrowser'&&call.id===88));
   assert.equal(await page.locator('.browser-window').count(),0);
+}));
+
+test('cli_activity_toast_stream_snapshot_dedup_and_monitor_window_lifecycle', () => scenario('activity-stream', async page => {
+  await connect(page);
+  await page.evaluate(() => {
+    window.activitySession = { id: 'cli-1', time: '2026-09-19T01:02:03.000Z', ip: '192.0.2.7', ipSource: 'ssh-local-address', action: 'exec', logPath: '/home/tester/Desktop/.log/cli-1.log', status: 'running' };
+    window.activityCommand = { id: 'entry-1', seq: 1, source: 'cli', sessionId: 'cli-1', type: 'command', time: window.activitySession.time, action: 'exec', args: { command: 'printf "你好\\n"' } };
+    window.activityEvent({ type: 'connection', session: window.activitySession });
+    window.activityEvent({ type: 'entry', entry: window.activityCommand });
+    window.activityEvent({ type: 'state', connected: true, sessions: [window.activitySession], entries: [window.activityCommand], systemLogPath: '/home/tester/Desktop/.log/system.log' });
+  });
+  await page.locator('#activityToast').waitFor();
+  assert.match(await page.locator('#activityToastIp').textContent(), /192\.0\.2\.7.*SSH 本机出口/);
+  assert.match(await page.locator('#activityToastTime').textContent(), /2026/);
+  assert.equal(await page.locator('.activity-window').count(), 0, 'recording does not depend on opening the monitor');
+  await page.locator('#openActivityToast').click();
+  const win = page.locator('.activity-window'); await win.waitFor();
+  assert.equal(await win.evaluate(element => element.parentElement.id), 'windows');
+  assert.equal(await win.locator('.activity-entry').count(), 1, 'live entry and snapshot are deduplicated');
+  assert.match(await win.locator('.activity-events').textContent(), /printf/);
+  assert.match(await win.locator('.activity-metadata').textContent(), /\.log\/cli-1\.log/);
+  await page.evaluate(() => window.activityEvent({ type: 'entry', entry: { id: 'entry-2', seq: 2, sessionId: 'cli-1', type: 'output', stream: 'stdout', data: '你好\n下一行', time: '2026-09-19T01:02:04.000Z' } }));
+  await page.waitForFunction(() => document.querySelector('.activity-events').textContent.includes('你好\n下一行'));
+  await page.evaluate(() => window.activityEvent({ type: 'session', session: { ...window.activitySession, logPath: '/home/tester/Desktop/.log/cli-1.2.log', logPaths: ['/home/tester/Desktop/.log/cli-1.log', '/home/tester/Desktop/.log/cli-1.2.log'] } }));
+  await page.waitForFunction(() => document.querySelector('.activity-metadata').textContent.includes('cli-1.2.log'));
+  assert.equal(await page.locator('#activityToast').isVisible(), false, 'log rotation updates metadata without a new connection notification');
+  await page.locator('#activityButton').click(); assert.equal(await win.count(), 1);
+  await win.locator('[data-window-action="maximize"]').click(); assert.ok((await win.getAttribute('class')).includes('maximized'));
+  await win.locator('[data-window-action="minimize"]').click(); assert.equal(await win.isVisible(), false);
+  await page.locator('#windowTabs [data-window-id="activity-window"]').click(); assert.equal(await win.isVisible(), true);
+  await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-activity-monitor.png') });
+  await win.locator('[data-window-action="close"]').click(); assert.equal(await win.count(), 0);
+  await page.evaluate(() => window.activityEvent({ type: 'entry', entry: { id: 'entry-3', seq: 3, sessionId: 'cli-1', type: 'end', exitCode: 0, time: '2026-09-19T01:02:05.000Z' } }));
+  await page.locator('#activityButton').click(); assert.equal(await win.locator('.activity-entry').count(), 3, 'closing monitor leaves incoming recording intact');
+}));
+
+test('cli_activity_permission_errors_ip_truthful_and_session_selection', () => scenario('activity-error', async page => {
+  await connect(page);
+  await page.evaluate(() => {
+    const sessions = [
+      { id: 'cli-a', time: '2026-09-19T01:01:01.000Z', action: 'exec', ip: null, logPath: '/desktop/.log/cli-a.log' },
+      { id: 'cli-b', time: '2026-09-19T01:02:01.000Z', action: 'upload', ip: null, error: 'Permission denied: /desktop/.log', logPath: '/desktop/.log/cli-b.log' }
+    ];
+    for (const session of sessions) window.activityEvent({ type: 'connection', session });
+    window.activityEvent({ type: 'state', sessions, entries: [
+      { id: 'a', seq: 1, sessionId: 'cli-a', type: 'command', command: 'whoami' },
+      { id: 'b', seq: 2, sessionId: 'cli-b', type: 'error', message: '<img src=x onerror="window.activityInjected=true">' }
+    ], connected: true, error: 'Permission denied: /desktop/.log' });
+  });
+  assert.match(await page.locator('#activityToastIp').textContent(), /本机命名管道（无网络 IP）/);
+  await page.waitForFunction(() => document.querySelector('.activity-toast-note').textContent.includes('Permission denied'));
+  await page.locator('#openActivityToast').click();
+  const win = page.locator('.activity-window');
+  assert.equal(await win.locator('.activity-session').inputValue(), 'cli-b');
+  assert.match(await win.locator('.activity-error').textContent(), /Permission denied/);
+  assert.equal(await win.locator('.activity-events img').count(), 0);
+  assert.equal(await page.evaluate(() => window.activityInjected), undefined);
+  await win.locator('.activity-session').selectOption('cli-a');
+  assert.match(await win.locator('.activity-events').textContent(), /whoami/);
+  assert.doesNotMatch(await win.locator('.activity-events').textContent(), /onerror/);
+  await page.evaluate(() => { window.activityEvent({ type: 'state', connected: false, error: 'SSH disconnected' }); window.receive({ type: 'remoteState', status: 'disconnected' }); });
+  await page.waitForFunction(() => document.querySelector('.activity-status').textContent.includes('已断开'));
+  assert.equal(await win.isVisible(), true, 'disconnect keeps recent monitor history available');
+}));
+
+test('cli_activity_toast_and_monitor_hide_native_browser_surface', () => scenario('activity-browser', async page => {
+  await connect(page); await page.locator('#browserButton').click();
+  await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1)?.hidden === false);
+  await page.evaluate(() => window.activityEvent({ type: 'connection', session: { id: 'cli-overlay', time: new Date().toISOString(), action: 'exec' } }));
+  await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1).hidden);
+  await page.locator('#closeActivityToast').click();
+  await page.waitForFunction(() => !window.calls.filter(call => call.type === 'browserLayout').at(-1).hidden);
+  await page.locator('#activityButton').click();
+  await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1).hidden);
+  await page.locator('.activity-window [data-window-action="minimize"]').click();
+  await page.waitForFunction(() => !window.calls.filter(call => call.type === 'browserLayout').at(-1).hidden);
+}));
+
+test('cli_activity_rendering_is_bounded_and_keeps_latest_entries', () => scenario('activity-bounded', async page => {
+  await connect(page);
+  await page.evaluate(() => {
+    window.activityEvent({ type: 'connection', session: { id: 'cli-bounded', action: 'exec', time: new Date().toISOString() } });
+    window.activityEvent({ type: 'state', connected: true, sessions: [], entries: Array.from({ length: 650 }, (_, index) => ({ id: `bounded-${index}`, seq: index + 1, sessionId: 'cli-bounded', type: 'output', data: `record-${index}` })) });
+  });
+  await page.locator('#openActivityToast').click();
+  const win = page.locator('.activity-window');
+  assert.equal(await win.locator('.activity-entry').count(), 600);
+  assert.match(await win.locator('.activity-entry').first().textContent(), /record-50/);
+  assert.match(await win.locator('.activity-entry').last().textContent(), /record-649/);
+  await page.evaluate(() => window.activityEvent({ type: 'entry', entry: { id: 'huge', seq: 651, sessionId: 'cli-bounded', type: 'output', data: 'a'.repeat(100000) } }));
+  await page.waitForFunction(() => document.querySelector('.activity-entry:last-child').textContent.includes('界面显示已截断'));
+  assert.ok((await win.locator('.activity-entry').last().textContent()).length < 34000);
 }));
 
 test('cancelled_pending_transfer_picker_can_be_reopened_in_reused_explorer', () => scenario('transfer-picker-pending-cancel', async page => {

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('remoteDesktop', {
   layoutBrowser: (id, bounds, hidden) => ipcRenderer.invoke('browser:layout', id, bounds, hidden),
   closeBrowser: id => ipcRenderer.invoke('browser:close', id),
   onBrowserEvent: callback => subscribe('browser:event', callback),
+  getActivitySnapshot: () => ipcRenderer.invoke('activity:snapshot'),
+  onActivityEvent: callback => subscribe('activity:event', callback),
   cancelDownload: id => ipcRenderer.invoke('ssh:cancel-download', id),
   openLocal: filePath => ipcRenderer.invoke('ssh:open-local', filePath),
   send: message => ipcRenderer.send('desktop:send', message),

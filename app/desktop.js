@@ -67,6 +67,9 @@ let directoryPicker = null;
 let fileAccessChoice = null;
 const fileAccessRequests = new Set();
 let transferDestination = null, transferPicker = null;
+const activity = { sessions: [], entries: [], systemLogPath: '', error: '', connected: false, selected: '', toastSession: '', revision: 0 };
+const ACTIVITY_ENTRY_LIMIT = 600, ACTIVITY_SESSION_LIMIT = 100, ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
+let activityFrame = null;
 
 function isCommandShortcut(value) { return value && typeof value.command === 'string' && value.command.trim(); }
 function toolIcon(name) {
@@ -747,7 +750,7 @@ function scheduleBrowserLayout() {
   if (browserLayoutFrame !== null) return;
   browserLayoutFrame = requestAnimationFrame(() => {
     browserLayoutFrame = null;
-    const obscured = document.hidden || Boolean(document.querySelector('dialog:modal')) || ['downloadsPanel', 'context', 'appContext'].some(id => !$(id).hidden);
+    const obscured = document.hidden || Boolean(document.querySelector('dialog:modal')) || ['downloadsPanel', 'context', 'appContext', 'activityToast'].some(id => !$(id).hidden);
     for (const win of state.windows.filter(current => current.kind === 'browser')) {
       const surface = windowElements.get(win.id)?.querySelector('.browser-surface');
       if (!surface) continue;
@@ -801,23 +804,149 @@ api.onBrowserEvent?.(event => {
   if (event.type === 'closed') void windowAction('close-confirmed', win);
   else if (event.type === 'focus') focusWindow(win.id);
 });
+function activityText(value) {
+  const text = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
+  return text.length > 32768 ? text.slice(0, 32768) + '\n[界面显示已截断；完整内容请查看日志文件]' : text;
+}
+function activityTime(value) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false, timeZoneName: 'short' }) : activityText(value || '未知');
+}
+function activityIp(session) {
+  return session?.ip ? `${session.ip}${session.ipSource === 'ssh-local-address' ? '（SSH 本机出口地址）' : ''}` : '本机命名管道（无网络 IP）';
+}
+function mergeActivitySessions(sessions, preferExisting = false) {
+  const merged = new Map(activity.sessions.map(session => [session.id, session]));
+  for (const session of sessions || []) {
+    if (!session || typeof session.id !== 'string') continue;
+    const safe = Object.fromEntries(Object.entries(session).map(([key, value]) => [key, typeof value === 'string' ? activityText(value) : key === 'logPaths' && Array.isArray(value) ? value.slice(-100).map(activityText) : value]));
+    merged.set(session.id, preferExisting ? { ...safe, ...merged.get(session.id) } : { ...merged.get(session.id), ...safe });
+  }
+  activity.sessions = [...merged.values()].slice(-ACTIVITY_SESSION_LIMIT);
+  if (!activity.selected || !activity.sessions.some(session => session.id === activity.selected)) activity.selected = activity.sessions.at(-1)?.id || '';
+}
+function mergeActivityEntries(entries) {
+  const merged = new Map(activity.entries.map(entry => [entry.key, entry]));
+  for (const record of entries || []) {
+    if (!record || typeof record !== 'object') continue;
+    const key = record.id != null ? String(record.id) : record.seq != null ? `seq-${record.seq}` : null;
+    if (!key || merged.has(key)) continue;
+    const content = Object.fromEntries(Object.entries(record).filter(([name]) => !['id', 'seq', 'sessionId', 'source', 'scope', 'time', 'type'].includes(name)));
+    const labels = { action: '操作', command: '指令', cwd: '工作目录', args: '参数', result: '结果', error: '错误', progress: '进度', exitCode: '退出码' };
+    const fields = Object.entries(content).flatMap(([name, value]) => name === 'args' && value && typeof value === 'object' ? Object.entries(value) : [[name, value]]);
+    const text = fields.filter(([name]) => name !== 'stream').map(([name, value]) => name === 'data' ? activityText(value) : `${labels[name] || name}: ${activityText(value)}`).join('\n');
+    const entry = { key, seq: record.seq, sessionId: record.sessionId, time: record.time, type: record.type, content: activityText(text), stream: record.stream };
+    entry.bytes = entry.content.length * 2 + 256;
+    merged.set(key, entry);
+  }
+  activity.entries = [...merged.values()].sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0)).slice(-ACTIVITY_ENTRY_LIMIT);
+  let size = activity.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  while (size > ACTIVITY_BYTE_LIMIT && activity.entries.length) size -= activity.entries.shift().bytes;
+}
+function receiveActivitySnapshot(snapshot, preferExisting = false) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  mergeActivitySessions(snapshot.sessions, preferExisting); mergeActivityEntries(snapshot.entries);
+  if (!preferExisting) {
+    activity.systemLogPath = activityText(snapshot.systemLogPath || '');
+    activity.error = activityText(snapshot.error || ''); activity.connected = Boolean(snapshot.connected);
+  }
+  scheduleActivityRender();
+}
+function scheduleActivityRender() {
+  if (activityFrame !== null) return;
+  activityFrame = requestAnimationFrame(() => { activityFrame = null; renderActivityWindow(); });
+}
+function renderActivityWindow() {
+  const toastSession = activity.sessions.find(session => session.id === activity.toastSession);
+  $('activityToast').querySelector('.activity-toast-note').textContent = activity.error || toastSession?.error ? `日志写入异常：${activity.error || toastSession.error}` : '监听已自动开启，操作历史自动保存到日志。';
+  const element = windowElements.get('activity-window');
+  if (!element) return;
+  const select = element.querySelector('.activity-session');
+  select.replaceChildren();
+  for (const session of activity.sessions.slice().reverse()) {
+    const option = document.createElement('option'); option.value = session.id;
+    option.textContent = `${activityTime(session.time)} · ${session.action || 'CLI'}`; select.append(option);
+  }
+  select.value = activity.selected; select.disabled = !activity.sessions.length;
+  const session = activity.sessions.find(current => current.id === activity.selected);
+  element.querySelector('.activity-status').textContent = activity.connected ? '监听已自动开启 · 关闭窗口不停止记录' : '当前连接已断开 · 可查看本次应用运行期间的记录';
+  const paths = session?.logPaths?.length ? session.logPaths.join('\n') : session?.logPath || '尚无命令行日志';
+  element.querySelector('.activity-metadata').textContent = session ? `IP：${activityIp(session)}\n连接时间：${activityTime(session.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `尚未检测到本地命令行操作。\n系统日志：${activity.systemLogPath || '尚未创建'}`;
+  const error = element.querySelector('.activity-error'); error.textContent = [activity.error, session?.error].filter(Boolean).join('\n'); error.hidden = !error.textContent;
+  const events = element.querySelector('.activity-events');
+  const follow = element.querySelector('.activity-follow').checked;
+  const scrollTop = events.scrollTop;
+  events.replaceChildren();
+  const entries = activity.entries.filter(entry => entry.sessionId === activity.selected);
+  if (!entries.length) {
+    const empty = document.createElement('p'); empty.className = 'activity-empty'; empty.textContent = session ? '等待指令与回复…' : '命令行连接后将在这里实时显示指令与回复。'; events.append(empty);
+  }
+  const labels = { command: '发送指令', start: '请求开始', request: '请求', stdout: '标准输出', stderr: '错误输出', output: '服务器回复', progress: '进度', result: '执行结果', end: '请求结束', error: '错误' };
+  for (const entry of entries) {
+    const row = document.createElement('section'); row.className = 'activity-entry'; row.dataset.entryId = entry.key;
+    const heading = document.createElement('div'); heading.className = 'activity-entry-heading'; heading.textContent = `${activityTime(entry.time)} · ${labels[entry.type] || entry.type || '活动'}`;
+    const text = document.createElement('pre'); text.textContent = entry.content; if (entry.type === 'error' || entry.type === 'stderr' || entry.stream === 'stderr') text.className = 'activity-error-output';
+    row.append(heading, text); events.append(row);
+  }
+  events.scrollTop = follow ? events.scrollHeight : scrollTop;
+}
+function openActivityWindow(sessionId) {
+  $('activityToast').hidden = true; $('downloadsPanel').hidden = true; $('context').hidden = true; $('appContext').hidden = true;
+  if (typeof sessionId === 'string' && activity.sessions.some(session => session.id === sessionId)) activity.selected = sessionId;
+  let win = getWindow('activity-window');
+  if (!win) {
+    win = { id: 'activity-window', kind: 'activity', minimized: false, maximized: false, position: { x: 84, y: 42 }, size: { width: 850, height: 620 }, z: ++nextLayer };
+    const element = $('windowTemplate').content.firstElementChild.cloneNode(true); element.dataset.windowId = win.id; element.classList.add('activity-window'); element.setAttribute('aria-label', '实时监听');
+    for (const child of [...element.children]) if (!child.classList.contains('titlebar') && !child.classList.contains('resize-handle')) child.remove();
+    const icon = element.querySelector('.window-app-icon'); icon.className = 'window-app-icon activity-app-icon'; icon.replaceChildren(toolIcon('Activity'));
+    element.querySelector('.window-title').textContent = '实时监听 · 本地命令行'; element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭实时监听窗口');
+    const toolbar = document.createElement('div'); toolbar.className = 'activity-toolbar';
+    const label = document.createElement('label'); label.append('连接 '); const select = document.createElement('select'); select.className = 'activity-session'; select.setAttribute('aria-label', '命令行连接'); label.append(select);
+    select.addEventListener('change', () => { activity.selected = select.value; renderActivityWindow(); });
+    const followLabel = document.createElement('label'), follow = document.createElement('input'); follow.type = 'checkbox'; follow.checked = true; follow.className = 'activity-follow'; followLabel.append(follow, '自动滚动');
+    const status = document.createElement('span'); status.className = 'activity-status'; toolbar.append(label, followLabel, status);
+    const metadata = document.createElement('div'); metadata.className = 'activity-metadata';
+    const error = document.createElement('p'); error.className = 'activity-error'; error.setAttribute('role', 'alert'); error.hidden = true;
+    const events = document.createElement('div'); events.className = 'activity-events'; events.setAttribute('aria-label', '实时指令与回复'); events.tabIndex = 0;
+    const footer = document.createElement('div'); footer.className = 'window-footer'; footer.textContent = '界面最多保留最近 600 条活动（约 2 MiB）；完整历史保存在服务器桌面的 .log 目录。';
+    element.append(toolbar, metadata, error, events, footer); renderToolIcons(element);
+    state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
+    element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
+    element.addEventListener('click', event => { const action = event.target.closest('[data-window-action]')?.dataset.windowAction; if (action) void windowAction(action, win); });
+    element.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); void windowAction('close', win); } });
+    bindWindowDrag(win, element); bindWindowResize(win, element);
+  }
+  renderActivityWindow(); focusWindow(win.id);
+}
+api.onActivityEvent?.(event => {
+  activity.revision++;
+  if (event?.type === 'connection' && event.session) {
+    mergeActivitySessions([event.session]); activity.toastSession = event.session.id; activity.connected = true;
+    $('activityToastIp').textContent = `IP：${activityIp(event.session)}`;
+    $('activityToastTime').textContent = `连接时间：${activityTime(event.session.time)}`;
+    $('activityToast').hidden = false; scheduleBrowserLayout();
+  } else if (event?.type === 'session' && event.session) mergeActivitySessions([event.session]);
+  else if (event?.type === 'entry') mergeActivityEntries([event.entry]);
+  else if (event?.type === 'state') receiveActivitySnapshot(event.snapshot || event);
+  scheduleActivityRender();
+});
+if (api.getActivitySnapshot) {
+  const revision = activity.revision;
+  api.getActivitySnapshot().then(snapshot => receiveActivitySnapshot(snapshot, activity.revision !== revision)).catch(error => { activity.error = `无法读取监听状态：${error.message || error}`; scheduleActivityRender(); });
+}
 function renderDock() {
   scheduleBrowserLayout();
-  for (const [id, kind] of [['browserShortcut', 'browser'], ['settingsShortcut', 'settings']]) {
-    const win = state.windows.find(current => current.kind === kind);
-    $(id).classList.toggle('active', Boolean(win && win.id === state.activeWindow && !win.minimized));
-    $(id).classList.toggle('minimized', Boolean(win?.minimized));
-  }
   $('windowTabs').replaceChildren();
   for (const win of state.windows) {
-    if (win.kind === 'browser' || win.kind === 'settings') continue;
     const tab = document.createElement('button');
     tab.className = `window-tab${win.id === state.activeWindow && !win.minimized ? ' active' : ''}${win.minimized ? ' minimized' : ''}`;
-    const title = win.kind === 'terminal' ? `${PROGRAM_LABELS[win.program]} · ${win.folder}` : win.kind === 'image' ? win.imageName : win.folder;
+    const appTitle = { browser: '服务器浏览器', settings: '设置', activity: '实时监听' }[win.kind];
+    const title = appTitle || (win.kind === 'terminal' ? `${PROGRAM_LABELS[win.program]} · ${win.folder}` : win.kind === 'image' ? win.imageName : win.folder);
     tab.dataset.windowId = win.id; tab.title = `${title}${win.minimized ? '（已最小化）' : ''}`;
     tab.setAttribute('aria-label', `${win.minimized ? '恢复' : '切换到'} ${title}`);
-    const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = win.kind === 'terminal' ? PROGRAM_LABELS[win.program] : win.kind === 'image' ? win.imageName : basename(win.folder);
-    tab.append(win.kind === 'image' ? toolIcon('Image') : win.kind === 'terminal' ? toolIcon('Terminal') : glyph({ type: 'folder', name: '' }), label);
+    const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = appTitle || (win.kind === 'terminal' ? PROGRAM_LABELS[win.program] : win.kind === 'image' ? win.imageName : basename(win.folder));
+    const appIcon = { browser: 'Globe', settings: 'Settings', activity: 'Activity', image: 'Image', terminal: 'Terminal' }[win.kind];
+    tab.append(appIcon ? toolIcon(appIcon) : glyph({ type: 'folder', name: '' }), label);
     tab.addEventListener('click', () => { win.minimized = false; focusWindow(win.id); save(); });
     if (win.kind === 'terminal') tab.addEventListener('contextmenu', event => showAppMenu(event, null, win));
     $('windowTabs').append(tab);
@@ -1507,13 +1636,12 @@ document.addEventListener('keydown', event => {
   if (action) { event.preventDefault(); performAction(action, context); }
 });
 $('desktopSettings').addEventListener('click', openSettings);
-$('homeShortcut').querySelector('.builtin-icon').append(toolIcon('House'));
-$('browserShortcut').querySelector('.builtin-icon').append(toolIcon('Globe'));
-$('browserShortcut').addEventListener('click', openServerBrowser);
-$('settingsShortcut').querySelector('.builtin-icon').append(toolIcon('Settings'));
+$('homeShortcut').replaceChildren(toolIcon('House'));
 $('homeShortcut').addEventListener('click', openHome);
-$('settingsShortcut').addEventListener('click', openSettings);
-$('builtinApps').addEventListener('contextmenu', event => { event.preventDefault(); $('appContext').hidden = true; $('context').hidden = true; });
+$('activityButton').replaceChildren(toolIcon('Activity'));
+$('activityButton').addEventListener('click', () => openActivityWindow());
+$('openActivityToast').addEventListener('click', () => openActivityWindow(activity.toastSession));
+$('closeActivityToast').addEventListener('click', () => { $('activityToast').hidden = true; scheduleBrowserLayout(); });
 for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')) {
   button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab));
   button.addEventListener('keydown', event => {
@@ -1578,12 +1706,12 @@ function clearWindowViews(preserveTerminals = false) {
   if (!preserveTerminals) for (const id of [...terminals.keys()]) disposeTerminal(id);
   for (const record of images.values()) record.observer?.disconnect(); images.clear();
   for (const win of state.windows) {
-    if (win.kind === 'settings') continue;
+    if (win.kind === 'settings' || win.kind === 'activity') continue;
     if (preserveTerminals && win.kind === 'terminal') continue;
     if (win.kind === 'browser') void api.closeBrowser?.(win.browserId).catch(error => notify(error.message));
     windowElements.get(win.id)?.remove(); windowElements.delete(win.id);
   }
-  state.windows = state.windows.filter(win => win.kind === 'settings' || (preserveTerminals && win.kind === 'terminal'));
+  state.windows = state.windows.filter(win => win.kind === 'settings' || win.kind === 'activity' || (preserveTerminals && win.kind === 'terminal'));
 }
 function clearRemoteDesktop(preserveTerminals = false) {
   connectionGeneration++; fileAccessRequests.clear(); fileAccessChoice = null;

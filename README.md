@@ -1,6 +1,6 @@
 # Remote Desktop App
 
-通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.2。应用使用 Electron 44.4.2，提供文档工作台、服务器网络浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
+通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.3。应用使用 Electron 44.4.2，提供文档工作台、服务器网络浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
 
 独立应用仓库为私有的 [Wyz129/remote-desktop-app](https://github.com/Wyz129/remote-desktop-app)。它由原扩展 0.0.7 的提交 `8c2e415f41759dca41d632c855347d539180e6ca` 克隆开发，保留迁移历史；插件仓库 `Wyz129/remote-desktop` 独立维护。本地工作目录为 `C:\0_myfiles\new_projects\remote-desktop-app`；旧 `upstream` 推送地址保持禁用，新仓库使用 `origin`。
 
@@ -16,7 +16,7 @@ npm.cmd start
 
 开发环境使用 Node.js 24 和 npm；首次安装/启动需要下载 Electron。启动脚本自动从子进程环境移除 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。`npm.cmd run dev` 启用 Electron 日志，不应将密码或私钥加入日志。
 
-本机可运行程序：`artifacts/electron-1.1.2/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。
+本机可运行程序：`artifacts/electron-1.1.3/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。
 
 启动后应用立即全屏，并显示 SSH 连接窗口。填写主机、端口（默认 22）、用户名和密码；也可使用“选择”按钮选取本地私钥，并按需要填写私钥口令。私钥由主进程读取，页面只提交所选路径。密码和私钥口令不写入应用设置。
 
@@ -47,11 +47,15 @@ Monaco 支持 Python、C/C++、Fortran 等语言的高亮、行号、折叠、�
 
 ## 服务器网络浏览器
 
-点击 Home 下方固定的浏览器图标（或顶栏浏览器按钮），在虚拟桌面内打开浏览器窗口，可拖动、缩放、最大化、最小化与关闭。重复点击恢复已有窗口。网页的新窗口链接、`window.open` 和弹出表单进入新标签页并聚焦；关闭最后一个标签会关闭浏览器。HTTP(S)/WebSocket 通过现有 SSH 连接访问网络，域名由服务器解析；`localhost` 指服务器，可访问 Jupyter 等远程 Web 服务。网页与可信工具栏分开，网页无应用 IPC、文件操作或 SSH 凭据接口。
+点击顶栏浏览器按钮，在虚拟桌面内打开浏览器窗口，可拖动、缩放、最大化、最小化与关闭。重复点击恢复已有窗口。网页的新窗口链接、`window.open` 和弹出表单进入新标签页并聚焦；关闭最后一个标签会关闭浏览器。HTTP(S)/WebSocket 通过现有 SSH 连接访问网络，域名由服务器解析；`localhost` 指服务器，可访问 Jupyter 等远程 Web 服务。网页与可信工具栏分开，网页无应用 IPC、文件操作或 SSH 凭据接口。
 
 浏览器工具栏选择网页下载保存到本机或服务器。下载沿用当前网页会话的登录态，进度、取消、错误同步至传输中心；服务器保存先在本机暂存再通过 SSH 上传。断开 SSH 清除该浏览器会话的登录态。支持范围与特殊下载限制见 [浏览器说明](docs/BROWSER.md)。
 
-左侧任务栏依次固定 **Home → 浏览器 → 设置**，窗口打开时固定图标显示活动状态。Home 打开当前登录用户的真实主目录，已有窗口会恢复并聚焦；即使没有桌面目录，也能浏览 Home，并通过地址栏或上一级按钮进入公共资源。
+顶栏右侧依次提供 **浏览器 → Home → 设置**。左侧任务栏保留已打开窗口的动态标签和用户固定的程序，移除了原来的三个固定入口。Home 打开当前登录用户的真实主目录，已有窗口会恢复并聚焦；即使没有桌面目录，也能浏览 Home，并通过地址栏或上一级按钮进入公共资源。
+
+## 实时监听与操作日志
+
+本地 CLI 实际操作会在右下角显示连接提示，监听自动开启。点击“实时监听”或顶栏活动图标可查看命令、流式回复和结果。服务器当前桌面的 `.log` 自动保存独立 CLI 日志与系统日志；系统日志对 CLI 仅保存连接时间、IP 来源和对应日志路径，同时记录 GUI 文件操作及手动终端的服务器输出转录。日志权限、轮换、显示范围及写入失败说明见 [监听与日志说明](docs/ACTIVITY_LOG.md)。
 
 ## 图片查看器
 
@@ -91,7 +95,7 @@ SVG 不在图片查看器支持范围内；可下载原文件后使用适当应�
 
 桌面设置含桌面位置、视图、背景、隐藏文件和应用下载阈值。仅选择路径不要求该目录可写；外观修改才写入远程配置，失败时明确保留已选路径并报告错误。桌面位置、应用设置和已知主机记录写入 Electron 当前用户的 `userData/settings.json`，不写入仓库。原 `remoteDesktopDemo.*` VS Code 设置不再作为独立应用的配置来源。
 
-任务栏“设置”打开控制面板，整合虚拟桌面、应用设置、SSH 连接管理，以及 Ubuntu/Linux 的系统版本、CPU、内存、主目录磁盘、网络地址、时间、时区和语言信息。系统页是可刷新的只读快照；系统级变更仍在有相应权限的远程终端完成，不会自动执行 sudo。显示和声音等 Ubuntu 图形会话设置不属于 SSH 虚拟桌面。
+顶栏“设置”打开控制面板，整合虚拟桌面、应用设置、SSH 连接管理，以及 Ubuntu/Linux 的系统版本、CPU、内存、主目录磁盘、网络地址、时间、时区和语言信息。系统页是可刷新的只读快照；系统级变更仍在有相应权限的远程终端完成，不会自动执行 sudo。显示和声音等 Ubuntu 图形会话设置不属于 SSH 虚拟桌面。
 
 设置使用与资源管理器一致的方形窗口，支持拖动、缩放、最小化和最大化；同一时刻只存在一个设置窗口，再次点击只恢复并聚焦，保留尚未应用的输入。
 
@@ -111,6 +115,6 @@ npm.cmd test
 npm.cmd run package
 ```
 
-`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.2/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Markdown、KaTeX 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
+`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.3/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Markdown、KaTeX 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
 
-结果和实际验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 与 Jupyter 协议夹具不能代表已验收用户服务器；本轮未获得用户服务器凭据，也未操作现有 VS Code/SSH 窗口。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。
+结果和实际验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 与 Jupyter 协议夹具不能代表已验收用户服务器；本轮仅使用隔离测试服务，未操作现有服务器会话。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。

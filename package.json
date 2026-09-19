@@ -2,7 +2,7 @@
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
   "description": "独立 SSH 文档工作台、服务器浏览器、传输中心与命令行实例",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -15,7 +15,7 @@
     "test:ui": "node --test test/standalone-ui.test.cjs",
     "test:vim": "node --test test/real-vim.test.cjs",
     "test:electron": "node --test test/electron.test.cjs",
-    "test:modules": "node --test test/upload-service.test.cjs test/instance-bridge.test.cjs test/document-service.test.cjs test/jupyter-client.test.cjs test/ssh-network.test.cjs test/preview-server.test.cjs",
+    "test:modules": "node --test test/upload-service.test.cjs test/instance-bridge.test.cjs test/document-service.test.cjs test/jupyter-client.test.cjs test/ssh-network.test.cjs test/preview-server.test.cjs test/activity-log.test.cjs test/activity-audit.test.cjs",
     "test:workbench": "node --test test/workbench-ui.test.cjs",
     "test:workspace": "node --test test/workspace-electron.test.cjs",
     "test:browser": "node --test test/browser-electron.test.cjs",
@@ -44,7 +44,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.1.2"
+      "output": "artifacts/electron-1.1.3"
     },
     "files": [
       "main.cjs",

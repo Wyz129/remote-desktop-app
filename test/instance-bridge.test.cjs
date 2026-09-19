@@ -10,13 +10,54 @@ const { runCli, parseArgs, readPassword, launchInstance } = require('../scripts/
 const { SshBackend } = require('../lib/ssh-backend.cjs');
 const { createUploadFixture } = require('./helpers/upload-ssh-fixture.cjs');
 const options = { timeout: 30000 };
-async function bridge(t, callbacks) {
+async function bridge(t, callbacks, onActivity) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'rdesktop-bridge-test-'));
-  const server = new InstanceBridge({ userDataDir: directory, callbacks: { status: async () => ({ connected: true, host: 'fixture' }), ...callbacks } });
+  const server = new InstanceBridge({ userDataDir: directory, onActivity, callbacks: { status: async () => ({ connected: true, host: 'fixture' }), ...callbacks } });
   t.after(async () => { await server.close(); if (path.dirname(directory) !== os.tmpdir() || !path.basename(directory).startsWith('rdesktop-bridge-test-')) throw new Error('Unsafe cleanup'); await fs.rm(directory, { recursive: true, force: true }); });
   await server.start(); return { server, directory, entry: (await listInstances(directory))[0] };
 }
 function capture() { let text = ''; return { write(value) { text += value; }, get text() { return text; } }; }
+
+test('authenticated activity excludes discovery and credentials and reports results once', options, async t => {
+  const events = [];
+  const { entry, server } = await bridge(t, {
+    exec: async (_args, context) => { context.onProgress({ kind: 'stdout', data: '回复' }); return { code: 0, stdout: '回复' }; },
+    connect: async input => { throw new Error(`Cannot authenticate ${input.password} ${input.passphrase}`); }
+  }, event => events.push(event));
+  await requestInstance(entry, 'status');
+  await assert.rejects(requestInstance({ ...entry, token: '0'.repeat(64) }, 'exec', { command: 'invalid' }));
+  assert.equal(events.length, 0);
+  await requestInstance(entry, 'exec', { command: 'quoted "$HOME"', ip: 'untrusted' });
+  assert.deepEqual(events.map(event => event.type), ['start', 'progress', 'finish']);
+  assert.ok(events.every(event => event.connection.id === events[0].connection.id));
+  assert.equal(events[0].connection.ip, null); assert.equal(events[0].args.ip, undefined);
+  const before = events.length;
+  await assert.rejects(requestInstance(entry, 'connect', { host: 'test', password: 'sensitive-password', passphrase: 'sensitive-passphrase', privateKeyPath: '/private/key' }));
+  assert.deepEqual(events.slice(before).map(event => event.type), ['start', 'error']);
+  const serialized = JSON.stringify(events);
+  assert.ok(!serialized.includes('sensitive-password') && !serialized.includes('sensitive-passphrase') && !serialized.includes('/private/key'));
+  server.onActivity = () => { throw new Error('observer failed'); };
+  assert.equal((await requestInstance(entry, 'exec', { command: 'still works' })).code, 0);
+});
+
+test('cancelled CLI connection emits one final activity and split UTF8 streams remain intact', options, async t => {
+  const { EventEmitter } = require('node:events');
+  const events = [], controller = new AbortController();
+  const { entry } = await bridge(t, { exec: (_args, context) => new Promise((_resolve, reject) => {
+    context.onProgress({ kind: 'stdout', data: 'started' });
+    context.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'ABORT_ERR' })), { once: true });
+  }) }, event => events.push(event));
+  await assert.rejects(requestInstance(entry, 'exec', { command: 'wait' }, { signal: controller.signal, onProgress: () => controller.abort() }), error => error.code === 'ABORT_ERR');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(events.filter(event => ['finish', 'error'].includes(event.type)).length, 1);
+  const stream = new EventEmitter(); stream.stderr = new EventEmitter(); stream.end = () => {};
+  const backend = { _requireConnected() {}, client: { exec(_command, callback) {
+    callback(null, stream); process.nextTick(() => { const bytes = Buffer.from('中文🌏'); for (const byte of bytes) stream.emit('data', Buffer.from([byte])); stream.emit('close', 0); });
+  } } };
+  let output = '';
+  const result = await executeRemote(backend, { command: 'test' }, { onProgress: value => { output += value.data; } });
+  assert.equal(output, '中文🌏'); assert.equal(result.stdout, output);
+});
 
 test('authenticated named pipe/socket bridge discovers instance and rejects wrong tokens', options, async t => {
   const { server, entry, directory } = await bridge(t);

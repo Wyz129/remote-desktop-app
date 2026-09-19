@@ -8,6 +8,9 @@ const { SshBackend, DEFAULT_THRESHOLD, normalizeRemote } = require('./lib/ssh-ba
 const { TerminalGuard } = require('./lib/terminal-guard.cjs');
 const { desktopIdentity, desktopLocations } = require('./lib/desktop-preferences.cjs');
 const crypto = require('node:crypto');
+const net = require('node:net');
+const { ActivityLog } = require('./lib/activity-log.cjs');
+const { createAuditor, safeUrl } = require('./lib/activity-audit.cjs');
 const { UploadService } = require('./lib/upload-service.cjs');
 const { InstanceBridge, executeRemote } = require('./lib/instance-bridge.cjs');
 const { TransferCenter } = require('./lib/transfer-center.cjs');
@@ -18,6 +21,9 @@ const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-di
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
 let windowRef, backend, desktopService, connecting = false;
 let uploader, instanceBridge, workbench, browserManager;
+const activityLog = new ActivityLog({ onEvent: value => send('activity:event', value) });
+const audit = createAuditor(activityLog);
+const cliActivity = new Map();
 const transferCenter = new TransferCenter(value => send('download:progress', value));
 const selectedLocalPaths = new Set(), selectedDownloadDirectories = new Set();
 let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'vim', knownHosts: {}, desktopLocations: {} };
@@ -29,6 +35,7 @@ const desktopPreferenceWrites = new Map();
 let sessionTransition = false, allowWindowClose = false, closingApplication = false;
 let connectionCleanup = Promise.resolve();
 const terminalGuard = new TerminalGuard({ getBackend: () => backend,
+  onAction: (record, source) => { if (currentSession(source)) activityLog.system(record); },
   ask: options => dialog.showMessageBox(windowRef, options), report: options => dialog.showMessageBox(windowRef, options),
   closed: id => { terminalStarts.delete(id); post({ type: 'terminalClosed', id }); } });
 const entryPath = path.join(__dirname, 'app', 'index.html');
@@ -60,6 +67,25 @@ function saveSettings(patch) {
 }
 function send(channel, payload) { if (windowRef && !windowRef.isDestroyed()) windowRef.webContents.send(channel, payload); }
 function post(payload) { send('desktop:message', payload); }
+function bridgeActivity(event) {
+  const id = event.connection.id;
+  if (event.type === 'start' && event.action === 'connect') return;
+  let session = cliActivity.get(id);
+  if (!session) {
+    const address = backend?.client?._sock?.localAddress;
+    session = activityLog.beginCli({ id, time: event.connection.connectedAt, transport: event.connection.transport, action: event.action,
+      ip: net.isIP(address || '') ? address : null, ipSource: 'ssh-local-address' });
+    cliActivity.set(id, session);
+    activityLog.cli(id, { type: 'command', action: event.action, args: event.args });
+  }
+  if (event.type === 'progress') {
+    const progress = event.progress;
+    activityLog.cli(id, ['stdout', 'stderr'].includes(progress?.kind) ? { type: progress.kind, data: progress.data } : { type: 'progress', progress });
+  } else if (event.type === 'finish' || event.type === 'error') {
+    const result = event.action === 'exec' && event.result ? { code: event.result.code, signal: event.result.signal } : event.result;
+    activityLog.cli(id, { type: 'end', result, error: event.error }); cliActivity.delete(id);
+  }
+}
 function createWindow() {
   windowRef = new BrowserWindow({ width: 1440, height: 900, minWidth: 820, minHeight: 560, fullscreen: true, autoHideMenuBar: true, backgroundColor: '#202222', show: !process.argv.includes('--smoke-test'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
@@ -92,6 +118,8 @@ function closeConnectionResources() {
     const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close()]);
     const failure = results.find(result => result.status === 'rejected');
     if (failure) throw failure.reason;
+    activityLog.system({ type: 'connection-closed' });
+    await activityLog.disconnect();
   });
   connectionCleanup = cleanup.catch(() => {});
   return cleanup;
@@ -119,6 +147,7 @@ async function inspect(create = false) {
   const source = requireBackend();
   const remote = await desktopService.inspect(create, create ? null : settings.desktopLocations[source.desktopIdentity]);
   if (!currentSession(source)) return { cancelled: true };
+  if (remote.status === 'ready') await activityLog.attach(source, source.desktop);
   post(remote);
   if (remote.configError) post({ type: 'desktopError', error: remote.configError });
   return { ...remote, found: remote.status === 'ready', path: remote.rootPath, home: remote.homePath };
@@ -135,7 +164,7 @@ async function setDesktop(remotePath) {
   const identity = source.desktopIdentity, token = {};
   let previousPath, persisted = false;
   try {
-    return await source.setDesktop(target, { beforeCommit: async () => {
+    const result = await source.setDesktop(target, { beforeCommit: async () => {
       if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，请重新选择桌面。');
       await saveSettings(current => {
         if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，请重新选择桌面。');
@@ -146,6 +175,11 @@ async function setDesktop(remotePath) {
       persisted = true;
       if (!currentSession(source)) throw new Error('SSH 连接已断开。');
     } });
+    if (currentSession(source)) {
+      activityLog.system({ type: 'desktop-changed', path: source.desktop });
+      await activityLog.attach(source, source.desktop);
+    }
+    return result;
   } catch (error) {
     // A disconnect while local storage is being written must not leave a
     // preference that was never committed by the active desktop transaction.
@@ -171,35 +205,38 @@ async function handleDesktopMessage(message) {
   if (type === 'toggleFullscreen') { windowRef.setFullScreen(!windowRef.isFullScreen()); post({ type: 'fullscreenResult', ok: true, message: '已切换全屏；Esc 退出全屏，F11 切换。' }); return; }
   if (type === 'getServerInfo') return serverInfo();
   requireBackend();
-  if (type === 'createDesktop') { await inspect(true); return; }
+  if (type === 'createDesktop') { const result = await inspect(true); activityLog.system({ type: 'desktop-created', path: result.path, status: result.status, protocol: 'SFTP MKDIR' }); return; }
   if (type === 'readDirectory') {
     const source = backend, service = desktopService;
     try {
-      const resolvedPath = normalizeRemote(await service.call('realpath', message.path));
-      const entries = await service.entries(resolvedPath);
+      const { resolvedPath, entries } = await audit('readDirectory', { protocol: 'SFTP REALPATH/READDIR', path: message.path }, async () => {
+        const resolvedPath = normalizeRemote(await service.call('realpath', message.path));
+        return { resolvedPath, entries: await service.entries(resolvedPath) };
+      });
       if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, resolvedPath, requestId: message.requestId, entries });
     }
     catch (error) { if (currentSession(source)) post({ type: 'remoteDirectory', path: message.path, requestId: message.requestId, error: accessMessage(error, message.path), accessDenied: accessDenied(error) }); }
   } else if (type === 'refreshRemote') {
     await inspect(); for (const remotePath of [...new Set(message.paths || [])]) await handleDesktopMessage({ type: 'readDirectory', path: remotePath });
   } else if (type === 'saveDesktopConfig') {
-    try { const config = await desktopService.saveConfig(message.config); post({ type: 'configSaved', ok: true, requestId: message.requestId, config }); }
+    try { const config = await audit('saveDesktopConfig', { protocol: 'SFTP write/rename', path: backend.desktop }, () => desktopService.saveConfig(message.config)); post({ type: 'configSaved', ok: true, requestId: message.requestId, config }); }
     catch (error) { post({ type: 'configSaved', ok: false, requestId: message.requestId, error: error.message }); }
   } else if (type === 'pinApp' || type === 'unpinApp') {
-    const config = await desktopService.updatePinned(type === 'pinApp' ? message.app : null, type === 'unpinApp' ? message.id : null);
+    const config = await audit(type, { protocol: 'SFTP write/rename', program: message.app?.program, id: message.id }, () => desktopService.updatePinned(type === 'pinApp' ? message.app : null, type === 'unpinApp' ? message.id : null));
     post({ type: 'configUpdated', config });
   } else if (type === 'fileOperation') {
     try {
-      const result = await desktopService.operate(message, async paths => {
+      const result = await audit('fileOperation', { protocol: 'SFTP', operation: message.operation, paths: message.paths || message.clipboard?.paths, mode: message.clipboard?.mode, parent: message.parent, name: message.name }, () => desktopService.operate(message, async paths => {
         const answer = await dialog.showMessageBox(windowRef, { type: 'warning', title: '永久删除远程文件', message: `永久删除 ${paths.length} 个项目？`, detail: `${paths.slice(0, 8).join('\n')}\n远程文件不进入回收站。符号链接只删除链接本身。`, buttons: ['取消', '永久删除'], defaultId: 0, cancelId: 0, noLink: true });
         return answer.response === 1;
-      });
+      }));
       post({ type: 'operationResult', requestId: message.requestId, ...result });
       post({ type: 'operationCommand', command: `# SFTP ${message.operation}`, status: result.cancelled ? 'cancelled' : 'success' });
     } catch (error) { post({ type: 'operationResult', requestId: message.requestId, success: false, error: error.message }); }
   } else if (type === 'openTerminal') {
     if (sessionTransition) throw new Error('正在关闭或切换连接，请稍后打开终端。');
     const token = {}, terminalBackend = backend, service = desktopService;
+    const terminalLog = record => { if (currentSession(terminalBackend)) activityLog.system(record); };
     if (terminalStarts.has(message.id)) throw new Error('终端 ID 已存在。');
     terminalStarts.set(message.id, token);
     try {
@@ -218,8 +255,21 @@ async function handleDesktopMessage(message) {
       }
       if (sessionTransition || terminalStarts.get(message.id) !== token || backend !== terminalBackend || !terminalBackend.connected) return;
       const decoder = new StringDecoder('utf8');
-      backend.openShell(message.id, cwd, data => post({ type: 'terminalData', id: message.id, data: decoder.write(data) }), error => { terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: 0 }); }, { program, filePath, readOnly, cols: message.cols, rows: message.rows, onReady: () => post({ type: 'terminalOpened', id: message.id }) });
+      const output = text => {
+        if (!text) return;
+        terminalLog({ type: 'terminal-output', terminalId: message.id, data: text });
+        post({ type: 'terminalData', id: message.id, data: text });
+      };
+      terminalLog({ type: 'terminal-open', terminalId: message.id, cwd, program, filePath, readOnly, protocol: 'SSH exec + PTY' });
+      backend.openShell(message.id, cwd, data => output(decoder.write(data)), (error, code) => {
+        output(decoder.end());
+        terminalLog({ type: 'terminal-exit', terminalId: message.id, code: code ?? null, error: error?.message });
+        terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: code ?? 0 });
+      }, { program, filePath, readOnly, cols: message.cols, rows: message.rows,
+        onCommand: command => terminalLog({ type: 'terminal-command', terminalId: message.id, command }),
+        onReady: () => post({ type: 'terminalOpened', id: message.id }) });
     } catch (error) {
+      terminalLog({ type: 'terminal-error', terminalId: message.id, error: error.message });
       if (terminalStarts.get(message.id) === token) {
         terminalStarts.delete(message.id);
         if (message.filePath && accessDenied(error)) post({ type: 'fileAccessError', id: message.id, path: message.filePath, error: accessMessage(error, message.filePath), accessDenied: true });
@@ -228,7 +278,7 @@ async function handleDesktopMessage(message) {
     }
   } else if (type === 'terminalInput') backend.writeShell(message.id, message.data);
   else if (type === 'terminalResize') backend.resizeShell(message.id, message.cols, message.rows);
-  else if (type === 'terminalClose') { await terminalGuard.request(message.id); }
+  else if (type === 'terminalClose') { await audit('terminalClose', { terminalId: message.id }, () => terminalGuard.request(message.id)); }
   else throw new Error('该功能未在独立应用中提供。');
 }
 async function connectSsh(input, trustedLocal = false) {
@@ -263,12 +313,33 @@ async function connectSsh(input, trustedLocal = false) {
       backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
       await saveSettings({ host, port, username, privateKeyPath: input.privateKeyPath || null, hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...settings.knownHosts, [hostKey]: result.hostFingerprint } });
       try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
+      if (!trustedLocal) activityLog.system({ type: 'ssh-connected', host, port, username, home: backend.home, desktop: backend.desktop });
       await serverInfo(); return result;
     } finally { connecting = false; sessionTransition = false; }
 }
 
 function registerIpc() {
-  const handle = (channel, action) => ipcMain.handle(channel, (event, ...args) => { requireSender(event); return action(...args); });
+  const audited = {
+    'app:save-settings': patch => ({ downloadThreshold: patch?.downloadThreshold }),
+    'terminal:close': id => ({ terminalId: id }),
+    'ssh:list': path => ({ path, protocol: 'SFTP READDIR' }),
+    'ssh:system-info': () => ({ protocol: 'SSH exec', command: 'read system information' }),
+    'ssh:set-desktop': path => ({ path, protocol: 'SFTP REALPATH/READDIR' }),
+    'ssh:file-access': path => ({ path, protocol: 'SSH test -r / test -w' }),
+    'ssh:image': path => ({ path, protocol: 'SFTP READ' }),
+    'ssh:download': (path, id, destination) => ({ path, id, destination, protocol: 'SSH cat / SFTP (automatic)' }),
+    'transfer:upload': (localPath, remoteDirectory, id) => ({ localPath, remoteDirectory, id, protocol: 'SSH cat / SFTP (automatic)' }),
+    'ssh:cancel-download': id => ({ id }),
+    'workbench:open': (path, options) => ({ path, readOnly: Boolean(options?.readOnly), protocol: 'SFTP READ' }),
+    'browser:open': url => ({ url: safeUrl(url || 'http://localhost:8888'), protocol: 'HTTP(S) over SSH' }),
+    'browser:close': id => ({ id }),
+    'ssh:open-local': path => ({ path })
+  };
+  const handle = (channel, action) => ipcMain.handle(channel, (event, ...args) => {
+    requireSender(event);
+    return audited[channel] ? audit(channel, audited[channel](...args), () => action(...args)) : action(...args);
+  });
+  handle('activity:snapshot', () => activityLog.snapshot());
   handle('app:get-settings', () => publicSettings());
   handle('app:save-settings', patch => {
     const threshold = Number(patch?.downloadThreshold);
@@ -340,11 +411,12 @@ function registerIpc() {
 }
 app.whenReady().then(async () => {
   await loadSettings();
-  workbench = createWorkbenchManager({ getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
-  browserManager = createBrowserManager({ embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
+  const logging = { audit, captureLog: source => (!source || currentSession(source)) ? activityLog.capture() : null, log: (record, context) => activityLog.system(record, context) };
+  workbench = createWorkbenchManager({ ...logging, getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
+  browserManager = createBrowserManager({ ...logging, embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
     uploadFile: ({ localPath, remoteDirectory, id, signal, onProgress }) => { requireBackend(); if (!uploader || sessionTransition) throw new Error('SSH 连接正在切换。'); return uploader.upload(localPath, remoteDirectory, { id, signal, onProgress }); } });
   registerIpc(); createWindow();
-  instanceBridge = new InstanceBridge({ userDataDir: app.getPath('userData'), metadata: { pid: process.pid, executable: process.execPath }, callbacks: {
+  instanceBridge = new InstanceBridge({ userDataDir: app.getPath('userData'), onActivity: bridgeActivity, metadata: { pid: process.pid, executable: process.execPath }, callbacks: {
     status: async () => ({ connected: Boolean(backend?.connected), host: settings.host, port: settings.port, username: settings.username, privateKeyPath: settings.privateKeyPath, desktop: backend?.desktop, home: backend?.home }),
     focus: async () => { windowRef.show(); windowRef.focus(); return { ok: true }; },
     connect: input => connectSsh(input, true),

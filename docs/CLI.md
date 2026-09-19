@@ -68,3 +68,7 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 ## 已验证范围
 
 模块测试使用 Windows 命名管道、当前用户目录 ACL 和本机回环 SSH/SFTP 服务，验证实例认证、选择实例、上传协议选择、目录、同名冲突、取消、变化检测、命令 stdout/stderr/退出码及超时。启动路径与环境清理另有独立测试。真实用户服务器的网络、SSH 配置和文件权限取决于部署环境；完整应用与最终打包验证结果见项目 `TESTING.md`。
+
+## 桌面中的监听与日志
+
+1.1.3 起，认证后的实际 CLI 操作会自动触发右下角连接提示，并写入服务器桌面 `.log`。点击“实时监听”查看指令与回复；`list/status/focus` 不产生通知。Windows 命名管道无 TCP 来源 IP，界面明确标注取得的 SSH 本机出口地址。详细行为与记录范围见 [监听与日志说明](ACTIVITY_LOG.md)。

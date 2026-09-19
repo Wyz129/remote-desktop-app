@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-19。独立应用版本：1.1.2。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-19。独立应用版本：1.1.3。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.3 新增本地 CLI 自动通知、实时监听和服务器桌面 `.log`，分离 CLI/系统日志并记录 GUI 终端转录。Home 移到顶栏浏览器与设置之间，删除三个固定侧栏入口，保留动态窗口标签。新增 `lib/activity-log.cjs`（远程顺序写入、轮换、隔离与错误状态）、`lib/activity-audit.cjs`（系统操作摘要）。回退分支：`checkpoint/pre-audit-1.1.2`。说明见 `docs/ACTIVITY_LOG.md`，本轮交付见 `docs/RELEASE-1.1.3.md`。本轮不推送。
 
 1.1.2 修正浏览器标题栏图标，并在本机 `C:\Users\KunYu\.codex\AGENTS.md` 增加 `远程桌面命令行操作规范.md` 索引，指导后续 Codex 复用已连接实例执行远程命令。全局文档不在仓库内；仍不推送 GitHub。该轮测试与打包记录见 `docs/RELEASE-1.1.2.md`。
 

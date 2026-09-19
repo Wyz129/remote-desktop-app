@@ -34,8 +34,6 @@ button:disabled { opacity: .4; cursor: default; }
 .window-tabs { overflow: auto; display: flex; flex-direction: column; gap: 7px; }
 .pinned-apps { display: flex; flex-direction: column; flex: none; gap: 4px; max-height: 38%; overflow: auto; }
 .pinned-apps:not(:empty) { padding-bottom: 7px; border-bottom: 1px solid #ffffff26; }
-.builtin-apps { display: flex; flex-direction: column; flex: none; gap: 4px; padding-bottom: 7px; border-bottom: 1px solid #ffffff26; }
-.builtin-icon { display: flex; align-items: center; justify-content: center; }
 .pinned-app { display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 57px; padding: 7px 2px; flex: none; }
 .pinned-app .tool-icon, .window-tab > .tool-icon { height: 25px; width: 25px; color: #b6dfc7; }
 .pinned-app .tab-label { font-size: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -275,3 +273,23 @@ button:disabled { opacity: .4; cursor: default; }
 .transfer-help,#transferDestination { font-size:12px; color:#abbdb9; margin:0; }
 #transferError { color:#ffb5a9; white-space:pre-wrap; }
 .downloads-panel { width:min(480px,90vw); max-height:80vh; overflow:auto; }
+.activity-toast { position:fixed; right:18px; bottom:46px; z-index:2200; width:min(370px,calc(100vw - 36px)); padding:12px 14px; border:1px solid #709783; border-radius:5px; background:#29342f; box-shadow:0 8px 30px #0007; }
+.activity-toast-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.activity-toast-heading button { padding:2px 7px; }
+.activity-toast p { margin:7px 0; overflow-wrap:anywhere; }
+.activity-toast-note { color:var(--muted); font-size:12px; }
+.activity-window { border-radius:4px; }
+.activity-window .activity-app-icon { color:#b6dfc7; display:flex; align-items:center; }
+.activity-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line); }
+.activity-toolbar label { display:flex; gap:6px; align-items:center; }
+.activity-toolbar select { min-width:160px; max-width:280px; padding:5px; background:var(--surface-2); color:var(--text); border:1px solid var(--line); border-radius:3px; }
+.activity-status { flex:1; min-width:180px; color:var(--muted); font-size:12px; }
+.activity-metadata { padding:8px 12px; max-height:100px; overflow:auto; border-bottom:1px solid var(--line); font-size:12px; overflow-wrap:anywhere; white-space:pre-wrap; }
+.activity-error { margin:0; padding:8px 12px; color:#ffb5a9; background:#502820; white-space:pre-wrap; overflow-wrap:anywhere; }
+.activity-events { flex:1; min-height:0; overflow:auto; padding:10px 12px; user-select:text; background:#222826; }
+.activity-empty { color:var(--muted); }
+.activity-entry { padding:8px 0; border-bottom:1px solid #ffffff18; }
+.activity-entry-heading { font-size:12px; color:#afd5c0; overflow-wrap:anywhere; }
+.activity-entry pre { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-family:Consolas,"Cascadia Mono",monospace; font-size:12px; tab-size:4; }
+.activity-entry .activity-stderr,.activity-entry .activity-error-output { color:#ffb5a9; }
+.activity-window .window-footer { white-space:normal; height:auto; min-height:28px; }
