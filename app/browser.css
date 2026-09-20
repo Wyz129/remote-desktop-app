@@ -3,36 +3,43 @@
   font-family: "Ubuntu", "Segoe UI", system-ui, "Microsoft YaHei", sans-serif;
   font-size: 13px;
   color: #eeeeec;
-  background: #2d2d2d;
+  background: #303030;
   --accent: #dd825e;
   --line: #414141;
 }
 * { box-sizing: border-box; }
-body { margin: 0; }
-main { height: 148px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+body { margin: 0; overflow: hidden; }
+main { padding: 0 10px; border-bottom: 1px solid var(--line); }
 form, .settings { display: flex; align-items: center; gap: 7px; }
-form { height: 34px; }
+form { height: 44px; }
 input, select, button { font: inherit; border: 1px solid #555; border-radius: 7px; background: #3b3b3b; color: inherit; padding: 5px 9px; min-height: 28px; }
 input { background: #202020; }
 input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 button { cursor: pointer; }
 button:hover { background: #484848; border-color: #707070; }
 button:disabled { opacity: .4; cursor: default; }
-#address { flex: 1; min-width: 120px; }
-.settings { height: 37px; }
+#address { flex: 1; min-width: 80px; height: 32px; padding: 5px 14px; border-radius: 18px; border-color: #494949; }
+.navigation-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; font-size: 19px; line-height: 1; }
+#toggleDetails { font-size: 24px; }
+#toggleDetails span { transform: translateY(-3px); }
+#toggleDetails[aria-expanded="true"] { background: #48403c; color: #f1c2ae; }
+#toggleDetails[aria-expanded="true"] span { transform: rotate(180deg) translateY(-3px); }
+#browserDetails { border-top: 1px solid var(--line); padding-top: 4px; }
+.settings { min-height: 36px; flex-wrap: wrap; padding: 2px 0; }
 .settings label { white-space: nowrap; }
 .badge { font-size: 12px; color: #cfc9d4; background: #423c47; padding: 4px 7px; border-radius: 6px; }
-#serverDirectory { flex: 1; min-width: 120px; }
+#serverDirectory { display: block; width: 100%; margin: 3px 0 5px; }
 #clearSession { margin-left: auto; }
-#status { font-size: 12px; height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #b4b4b0; }
+#status { font-size: 12px; line-height: 18px; max-height: 108px; overflow: auto; overflow-wrap: anywhere; padding: 3px 0 5px; color: #b4b4b0; }
 #status.error { color: #ffa9a0; }
 [hidden] { display: none !important; }
-.tab-strip { height: 32px; display: flex; align-items: center; gap: 4px; }
-.tab-strip #tabs { min-width: 0; flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
-.browser-tab { display: flex; align-items: center; min-width: 120px; max-width: 230px; flex: 1; border: 1px solid #414141; border-bottom: 0; border-radius: 7px 7px 0 0; background: #292929; }
-.browser-tab.active { background: #3b3b3b; border-color: #5f5b59; box-shadow: inset 0 -2px var(--accent); }
-.browser-tab button { background: transparent; border: 0; border-radius: 0; min-height: 26px; padding: 3px 7px; }
+.tab-strip { height: 36px; display: flex; align-items: end; gap: 4px; }
+.tab-strip #tabs { min-width: 0; flex: 0 1 auto; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.browser-tab { display: flex; align-items: center; height: 31px; width: 210px; flex: 0 0 210px; border: 1px solid transparent; border-bottom: 0; border-radius: 10px 10px 0 0; background: #292929; }
+.browser-tab.active { background: #414141; border-color: #505050; }
+.browser-tab button { background: transparent; border: 0; min-height: 26px; padding: 3px 9px; }
 .browser-tab .tab-select { min-width: 0; flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browser-tab .tab-close { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; padding: 0; font-size: 20px; line-height: 1; border-radius: 50%; }
-.tab-close:hover { background: #a34237; }
-.tab-strip #newTab { width: 28px; min-height: 26px; padding: 0; font-size: 18px; }
+.browser-tab .tab-close { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 23px; height: 23px; min-height: 23px; margin-right: 4px; padding: 0; font-size: 19px; line-height: 1; border-radius: 50%; }
+.browser-tab .tab-close:hover { background: #63514c; }
+.tab-strip #newTab { flex: none; align-self: center; width: 28px; height: 28px; min-height: 28px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; font-size: 20px; line-height: 1; }
+.tab-strip #newTab:hover { background: #484848; border-color: #707070; }

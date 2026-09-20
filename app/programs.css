@@ -1,0 +1,43 @@
+/* Desktop-wide programs overview; favorites remain reachable in the left rail. */
+.favorite-apps { display: flex; flex-direction: column; gap: 5px; flex: none; max-height: 46%; overflow: auto; scrollbar-width: thin; }
+.favorite-apps:empty { display: none; }
+.favorite-app { display: flex; flex: none; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 57px; padding: 7px 2px; border-radius: 9px; }
+.favorite-app .tool-icon { width: 26px; height: 26px; color: #cbc2d0; }
+.favorite-app .tab-label { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.favorite-app[aria-disabled="true"] { opacity: .55; }
+.favorite-apps:not(:empty) + .pinned-apps:empty + .window-tabs:not(:empty) { border-top: 1px solid #ffffff1a; padding-top: 7px; }
+.applications-panel { padding: 22px 28px 14px; align-items: stretch; background: linear-gradient(145deg, #251326ee, #1c0e21f5); backdrop-filter: blur(18px); }
+.applications-content { width: 100%; height: 100%; max-height: none; display: flex; flex-direction: column; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: hidden; }
+.applications-heading { position: relative; flex: none; min-height: 34px; margin: 0 0 12px; }
+.applications-heading h2 { color: #d4cbd9; font-size: 14px; font-weight: 500; }
+.applications-search { flex: none; width: min(440px, 80%); padding: 10px 16px; border: 1px solid #bbb6c0; border-radius: 25px; background: #eeeaf0; color: #5b5260; }
+.applications-search input { color: #302833; font-size: 14px; }
+.applications-search input::placeholder { color: #716878; }
+.applications-search:focus-within { outline: 2px solid #a58aaf; border-color: #a58aaf; }
+.applications-hint { flex: none; min-height: 18px; margin: 12px 0 10px; color: #b1a5b8; }
+.applications-results { min-height: 0; flex: 1; overflow: auto; padding: 24px 10px; scrollbar-width: thin; }
+.applications-grid { width: min(1000px, 100%); margin: 0 auto; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 22px 28px; }
+button.application-tile { position: relative; gap: 13px; min-height: 145px; padding: 18px 6px 13px; border-radius: 14px; }
+.application-tile[aria-disabled="true"] .application-icon, .application-tile[aria-disabled="true"] .application-label { opacity: .5; }
+.application-icon { width: 66px; height: 66px; border-radius: 17px; box-shadow: inset 0 1px #ffffff18, 0 4px 10px #0002; }
+.application-icon .tool-icon { width: 40px; height: 40px; stroke-width: 1.6; }
+.application-tile[data-application="browser"] .application-icon { color: #d4edff; background: #396d92; }
+.application-tile[data-application="transfer"] .application-icon { color: #efddff; background: #70538f; }
+.application-tile[data-application="activity"] .application-icon { color: #d9f2dd; background: #457058; }
+.application-tile[data-application="htop"] .application-icon { color: #f2d9a9; background: #805934; }
+.application-tile[data-application="editor"] .application-icon { color: #d5edf9; background: #386779; }
+.application-tile[data-application="image"] .application-icon { color: #fae2ef; background: #874e72; }
+.application-tile[data-application="video"] .application-icon { color: #f6e5cb; background: #786143; }
+.application-tile[data-application="home"] .application-icon { color: #e0d9e8; background: #706479; }
+.application-tile[data-application="settings"] .application-icon { color: #e8e6ea; background: #66626d; }
+.application-tile[data-application="terminal"] .application-icon { color: #e4e0e9; background: #39333f; }
+.application-label { color: #f2edf4; font-size: 14px; }
+.application-description { display: none; }
+.applications-filters { display: flex; flex: none; justify-content: center; gap: 48px; padding: 15px 0 0; }
+.applications-filters button { min-width: 86px; padding: 10px 18px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 15px; color: #b9acbf; }
+.applications-filters button[aria-pressed="true"] { color: #f5ecf8; border-bottom-color: #dc855f; }
+#programContext { z-index: 2300; }
+@media (max-width:1100px) { .applications-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 20px; } }
+@media (max-width:850px) { .applications-panel { padding: 16px 18px 10px; } .applications-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width:600px) { .applications-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .applications-search { width: 92%; } }
+@media (max-height:700px) { .applications-heading { margin-bottom: 4px; } .applications-results { padding-top: 8px; } button.application-tile { min-height: 116px; padding: 10px 5px; gap: 9px; } .application-icon { width: 52px; height: 52px; } .application-icon .tool-icon { width: 33px; height: 33px; } .applications-filters { padding-top: 6px; } }

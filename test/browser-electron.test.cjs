@@ -118,7 +118,31 @@ test('embedded browser uses desktop child views, opens popup links and POST in f
     return { count: BrowserWindow.getAllWindows().length, embedded: state.embedded, view: state.view.getBounds(), toolbar: state.toolbar.getBounds(), children: state.window.contentView.children.length, visible: state.view.getVisible(), sameSession: state.toolbar.webContents.session === state.context.partition };
   });
   assert.equal(initial.count, 1); assert.equal(initial.embedded, true); assert.equal(initial.children, 2); assert.equal(initial.visible, true); assert.equal(initial.sameSession, false);
-  assert.deepEqual(initial.toolbar, { x: 40, y: 50, width: 600, height: 148 }); assert.deepEqual(initial.view, { x: 40, y: 198, width: 600, height: 302 });
+  assert.deepEqual(initial.toolbar, { x: 40, y: 50, width: 600, height: 81 }); assert.deepEqual(initial.view, { x: 40, y: 131, width: 600, height: 369 });
+  const compactChrome = JSON.parse(await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`JSON.stringify({ detailsHidden: document.getElementById('browserDetails').hidden, statusHidden: document.getElementById('status').hidden, expanded: document.getElementById('toggleDetails').getAttribute('aria-expanded'), tabsAboveAddress: document.querySelector('.tab-strip').getBoundingClientRect().bottom <= document.getElementById('navigation').getBoundingClientRect().top })`)));
+  assert.deepEqual(compactChrome, { detailsHidden: true, statusHidden: true, expanded: 'false', tabsAboveAddress: true });
+  await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`document.getElementById('toggleDetails').click()`));
+  await waitFor(application, () => [...browserManager.windows.values()][0].toolbarHeight > 81);
+  const expandedChrome = await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return { height: state.toolbarHeight, toolbar: state.toolbar.getBounds(), view: state.view.getBounds() }; });
+  assert.equal(expandedChrome.toolbar.height, expandedChrome.height);
+  assert.equal(expandedChrome.view.y, 50 + expandedChrome.height);
+  assert.equal(expandedChrome.view.height + expandedChrome.height, 450);
+  // Expanding server options can add another row; the page must move with it.
+  await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`const destination=document.getElementById('destination'); destination.value='server'; destination.dispatchEvent(new Event('change')); document.getElementById('serverDirectory').value='/srv/chrome-test'; document.getElementById('serverDirectory').dispatchEvent(new Event('change'));`));
+  await waitFor(application, () => { const state = [...browserManager.windows.values()][0]; return state.serverDirectory === '/srv/chrome-test' && state.toolbarHeight > 150; });
+  const screenshots = path.join(project, 'artifacts/browser-1.1.10'); await fs.mkdir(screenshots, { recursive: true });
+  await fs.writeFile(path.join(screenshots, 'expanded.png'), Buffer.from(await application.evaluate(async () => (await [...browserManager.windows.values()][0].toolbar.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG().toString('base64')), 'base64'));
+  await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`document.getElementById('toggleDetails').click()`));
+  await waitFor(application, () => [...browserManager.windows.values()][0].toolbarHeight === 81);
+  assert.deepEqual(await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return { destination: state.downloadDestination, directory: state.serverDirectory, view: state.view.getBounds() }; }), { destination: 'server', directory: '/srv/chrome-test', view: { x: 40, y: 131, width: 600, height: 369 } });
+  await fs.writeFile(path.join(screenshots, 'collapsed.png'), Buffer.from(await application.evaluate(async () => (await [...browserManager.windows.values()][0].toolbar.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG().toString('base64')), 'base64'));
+  // Navigation errors stay visible even while options are collapsed.
+  await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`document.getElementById('address').value='file:///C:/Windows/win.ini'; document.getElementById('navigation').requestSubmit();`));
+  await waitFor(application, () => [...browserManager.windows.values()][0].toolbarHeight > 81);
+  assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`!document.getElementById('status').hidden && document.getElementById('status').classList.contains('error')`)), true);
+  await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; state.downloadDestination = 'local'; browserManager.status(state); });
+  await waitFor(application, () => [...browserManager.windows.values()][0].toolbarHeight === 81);
+  assert.equal(await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`window.serverBrowser.call('toolbarLayout', { height: 10000 }).then(() => false, () => true)`)), true);
   assert.equal((await application.evaluate(() => browserManager.open())).id, opened.id);
   await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return state.view.webContents.executeJavaScript(`const link=document.createElement('a');link.href='/popup-link';link.target='_blank';document.body.append(link);link.click()`, true); });
   await waitFor(application, () => [...browserManager.windows.values()][0].tabs.size === 2 && [...browserManager.windows.values()][0].view.webContents.getURL().endsWith('/popup-link'));
@@ -155,7 +179,7 @@ test('embedded browser uses desktop child views, opens popup links and POST in f
     return { pixel: [...pixel], toolbarHeight: snapshot.toolbarHeight, width: snapshot.width, height: snapshot.height, toolbar: snapshot.toolbar.startsWith('data:image/png;base64,'), nativeVisible: state.view.getVisible(), timer: Boolean(state.captureTimer) };
   });
   assert.ok(firstSnapshot.pixel[2] > 180 && firstSnapshot.pixel[1] < 60, `Expected red background: ${firstSnapshot.pixel}`);
-  assert.deepEqual({ ...firstSnapshot, pixel: undefined }, { pixel: undefined, toolbarHeight: 148, width: 600, height: 450, toolbar: true, nativeVisible: false, timer: true });
+  assert.deepEqual({ ...firstSnapshot, pixel: undefined }, { pixel: undefined, toolbarHeight: 81, width: 600, height: 450, toolbar: true, nativeVisible: false, timer: true });
   await application.evaluate(async () => { const state = [...browserManager.windows.values()][0]; await state.view.webContents.executeJavaScript('document.body.style.background="rgb(16,192,48)"'); globalThis.snapshotGreenStart = Date.now(); });
   await waitFor(application, ({ nativeImage }) => {
     const snapshot = browserFixture.windowEvents.findLast(value => value.type === 'snapshot' && value.capturedAt > snapshotGreenStart);

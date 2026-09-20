@@ -40,6 +40,8 @@ let authenticatedProfile = null, connectionProfiles = null, connectionPanelMode 
 const workbenchFrames = new Map();
 let appContextId = null;
 let appContextWindowId = null;
+let programPreferences = { favorites: [], usage: {} }, programPreferencesReady = false;
+let programPreferenceQueue = Promise.resolve(), programFilter = 'all', programContextId = null, programContextSource = null;
 let selection = { scope: 'desktop', keys: new Set() };
 let menuContext = { scope: 'desktop', parent: rootPath };
 let nextWindow = 1;
@@ -248,7 +250,8 @@ function closeSettings(force = false) {
 function showSettingsWindow() {
   const element = $('settingsDialog');
   if (!settingsWindow) {
-    settingsWindow = { id: 'settings-window', kind: 'settings', title: '设置 · 控制面板', minimized: false, maximized: false, position: { x: 80, y: 28 }, size: { width: 620, height: 670 }, z: ++nextLayer };
+    settingsWindow = { id: 'settings-window', kind: 'settings', title: '设置', minimized: false, maximized: false, position: { x: 80, y: 28 }, size: { width: 900, height: 650 }, z: ++nextLayer };
+    element.querySelector('.settings-app-icon').replaceChildren(toolIcon('Settings'));
     element.dataset.windowId = settingsWindow.id;
     $('windows').append(element);
     element.addEventListener('pointerdown', () => { if (state.activeWindow !== settingsWindow.id) focusWindow(settingsWindow.id); });
@@ -282,11 +285,14 @@ function openSettings() {
   loadExtensionSettings();
 }
 function setSettingsTab(name) {
-  for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')) {
+  const tabs = [...$('settingsDialog').querySelectorAll('[data-settings-tab]')];
+  if (!tabs.some(button => button.dataset.settingsTab === name)) return;
+  for (const button of tabs) {
     const selected = button.dataset.settingsTab === name;
     button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
     $(button.getAttribute('aria-controls')).hidden = !selected;
   }
+  $('settingsDialog').querySelector('.settings-content').scrollTop = 0;
   if (name === 'system') loadSystemInfo();
 }
 function resetSystemInfo() {
@@ -339,27 +345,103 @@ const APPLICATIONS = [
   { id: 'htop', label: 'htop', icon: 'ChartNoAxesCombined', keywords: 'process cpu memory 进程 资源', description: '服务器进程与资源监视', remote: true, launch: () => openTerminal(desktopAvailable ? rootPath : homePath, 'htop') },
   { id: 'editor', label: 'Monaco Editor', icon: 'FileCode2', keywords: 'code text script 编辑器 文本 脚本', description: '编辑远程文本与脚本', remote: true, launch: () => api.openDocument(null) },
   { id: 'image', label: '图片查看器', icon: 'Image', keywords: 'image photo viewer 照片 图像', description: '浏览服务器上的图片', remote: true, launch: openImageLauncher },
-  { id: 'video', label: '视频播放器', icon: 'Film', keywords: 'video movie 视频 电影 播放', description: '播放服务器上的视频', remote: true, launch: openVideoLauncher }
+  { id: 'video', label: '视频播放器', icon: 'Film', keywords: 'video movie 视频 电影 播放', description: '播放服务器上的视频', remote: true, launch: openVideoLauncher },
+  { id: 'home', label: 'Home', icon: 'House', keywords: 'home files 文件 目录 主目录', description: '浏览服务器主目录', remote: true, launch: openHome },
+  { id: 'settings', label: '设置', icon: 'Settings', keywords: 'settings preferences 配置 外观 系统', description: '桌面外观、文件传输与远程系统', launch: openSettings },
+  { id: 'terminal', label: '终端', icon: 'Terminal', keywords: 'shell terminal 命令行', description: '打开服务器终端', remote: true, launch: () => openTerminal(desktopAvailable ? rootPath : homePath, 'shell') }
 ];
 function filterApplications() {
+  const grid = $('applicationsGrid'), focused = grid.contains(document.activeElement) ? document.activeElement : null;
   const words = $('applicationsSearch').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  for (const application of APPLICATIONS) {
+  const ordered = programFilter === 'frequent' ? [...APPLICATIONS].sort((a, b) => (programPreferences.usage[b.id] || 0) - (programPreferences.usage[a.id] || 0)) : APPLICATIONS;
+  for (const [index, application] of ordered.entries()) {
     const text = `${application.label} ${application.keywords}`.toLocaleLowerCase();
-    $('applicationsGrid').querySelector(`[data-application="${application.id}"]`).hidden = !words.every(word => text.includes(word));
+    const button = $('applicationsGrid').querySelector(`[data-application="${application.id}"]`);
+    button.hidden = !words.every(word => text.includes(word)) || (programFilter === 'frequent' && !programPreferences.usage[application.id]);
+    if (grid.children[index] !== button) grid.insertBefore(button, grid.children[index] || null);
   }
+  if (focused && !focused.hidden && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  else if (focused?.hidden) $('applicationsSearch').focus({ preventScroll: true });
   $('applicationsEmpty').hidden = Boolean($('applicationsGrid').querySelector('button:not([hidden])'));
+  $('applicationsEmpty').textContent = words.length ? '没有匹配的程序' : programFilter === 'frequent' ? '启动过的程序会显示在这里。' : '没有可用程序';
+  for (const button of document.querySelectorAll('[data-program-filter]')) button.setAttribute('aria-pressed', String(button.dataset.programFilter === programFilter));
 }
 function updateApplicationAvailability() {
   for (const application of APPLICATIONS) {
     const button = $('applicationsGrid').querySelector(`[data-application="${application.id}"]`);
     if (!button) continue;
-    button.disabled = Boolean(application.remote && !remoteMode);
-    button.title = button.disabled ? '连接 SSH 后可用' : application.description;
+    button.setAttribute('aria-disabled', String(Boolean(application.remote && !remoteMode)));
+    button.title = application.remote && !remoteMode ? '连接 SSH 后可用；右键可添加到收藏夹' : application.description;
   }
-  $('applicationsHint').textContent = remoteMode ? '选择应用，在当前虚拟桌面中打开。' : '连接 SSH 后可打开远程应用；传输历史与监听记录仍可查看。';
+  $('applicationsHint').textContent = remoteMode ? '右键程序图标可添加到收藏夹' : '连接 SSH 后可打开远程程序；设置、传输历史与监听记录仍可查看。';
+  renderFavorites();
+}
+function applyProgramPreferences(value) {
+  const valid = id => APPLICATIONS.some(application => application.id === id);
+  programPreferences = { favorites: [...new Set((Array.isArray(value?.favorites) ? value.favorites : []).filter(valid))], usage: Object.fromEntries(Object.entries(value?.usage || {}).filter(([id, count]) => valid(id) && Number.isSafeInteger(count) && count > 0)) };
+  renderFavorites(); filterApplications();
+}
+function updateProgramPreference(change) {
+  const task = programPreferenceQueue.then(async () => {
+    const result = await api.updateProgramPreferences(change.action, change.id);
+    applyProgramPreferences(result);
+  });
+  programPreferenceQueue = task.catch(error => notify('程序偏好保存失败：' + (error.message || error)));
+  return task;
+}
+function hideProgramMenu(restoreFocus = false) {
+  $('programContext').hidden = true;
+  if (restoreFocus && programContextSource?.isConnected) programContextSource.focus();
+  programContextId = null; programContextSource = null;
+  scheduleBrowserLayout();
+}
+function showProgramMenu(event, application, source = event.currentTarget) {
+  event.preventDefault(); event.stopPropagation();
+  $('context').hidden = $('appContext').hidden = true;
+  programContextId = application.id; programContextSource = source;
+  const button = $('toggleFavorite');
+  button.textContent = programPreferences.favorites.includes(application.id) ? '从收藏夹移除' : '添加到收藏夹';
+  button.disabled = !programPreferencesReady;
+  const menu = $('programContext'); menu.hidden = false;
+  const bounds = programContextSource.getBoundingClientRect();
+  menu.style.left = `${clamp(event.clientX || bounds.right, innerWidth - menu.offsetWidth - 6)}px`;
+  menu.style.top = `${clamp(event.clientY || bounds.top, innerHeight - menu.offsetHeight - 6)}px`;
+  button.focus(); scheduleBrowserLayout();
+}
+function bindProgramMenu(button, application) {
+  button.addEventListener('contextmenu', event => showProgramMenu(event, application));
+  button.addEventListener('keydown', event => {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) showProgramMenu(event, application);
+  });
+}
+function renderFavorites() {
+  const container = $('favoriteApps'), focused = container.contains(document.activeElement) ? document.activeElement : null;
+  const focusedId = focused?.dataset.favorite, focusedIndex = focused ? [...container.children].indexOf(focused) : -1;
+  const contextId = container.contains(programContextSource) ? programContextSource.dataset.favorite : null;
+  container.replaceChildren();
+  for (const id of programPreferences.favorites) {
+    const application = APPLICATIONS.find(item => item.id === id); if (!application) continue;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'favorite-app'; button.dataset.favorite = id;
+    button.title = application.label; button.setAttribute('aria-label', application.label);
+    button.setAttribute('aria-disabled', String(Boolean(application.remote && !remoteMode)));
+    const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = application.label;
+    button.append(toolIcon(application.icon), label);
+    bindProgramMenu(button, application);
+    button.addEventListener('click', () => { void launchApplication(application, true); });
+    $('favoriteApps').append(button);
+  }
+  if (focusedId) {
+    const target = container.querySelector(`[data-favorite="${focusedId}"]`) || container.children[Math.min(focusedIndex, container.children.length - 1)] || $('applicationsButton');
+    target.focus({ preventScroll: true });
+  }
+  if (contextId) {
+    programContextSource = container.querySelector(`[data-favorite="${contextId}"]`);
+    if (!programContextSource) hideProgramMenu();
+  }
 }
 function closeApplications(restoreFocus = true) {
   if ($('applicationsPanel').hidden) return;
+  hideProgramMenu();
   $('applicationsPanel').hidden = true;
   $('applicationsButton').setAttribute('aria-expanded', 'false');
   if (restoreFocus) $('applicationsButton').focus({ preventScroll: true });
@@ -369,16 +451,25 @@ function openApplications() {
   if (document.querySelector('dialog:modal')) return;
   $('context').hidden = $('appContext').hidden = $('downloadsPanel').hidden = $('activityToast').hidden = true;
   $('applicationsSearch').value = '';
+  programFilter = 'all';
   updateApplicationAvailability(); filterApplications();
   $('applicationsPanel').hidden = false;
   $('applicationsButton').setAttribute('aria-expanded', 'true');
   $('applicationsSearch').focus({ preventScroll: true });
   scheduleBrowserLayout();
 }
-async function launchApplication(application) {
+async function launchApplication(application, restoreExisting = false) {
   if (application.remote && !remoteMode) { notify('请先连接 SSH'); return; }
   closeApplications(false);
-  try { await application.launch(); }
+  try {
+    const existing = restoreExisting && [...state.windows].reverse().find(win => {
+      if (application.id === 'home') return !win.kind && win.folder === homePath;
+      if (['terminal', 'htop'].includes(application.id)) return win.kind === 'terminal' && win.program === (application.id === 'htop' ? 'htop' : 'shell');
+      return win.kind === ({ editor: 'workbench' }[application.id] || application.id);
+    });
+    if (existing) focusWindow(existing.id); else await application.launch();
+    if (programPreferencesReady) void updateProgramPreference({ action: 'launch', id: application.id }).catch(() => {});
+  }
   catch (error) { notify(error.message || String(error)); }
 }
 function initializeApplications() {
@@ -387,22 +478,40 @@ function initializeApplications() {
     const icon = document.createElement('span'); icon.className = 'application-icon'; icon.append(toolIcon(application.icon));
     const label = document.createElement('span'); label.className = 'application-label'; label.textContent = application.label;
     const description = document.createElement('span'); description.className = 'application-description'; description.textContent = application.description;
-    button.append(icon, label, description); button.addEventListener('click', () => { void launchApplication(application); }); $('applicationsGrid').append(button);
+    button.append(icon, label, description); button.addEventListener('click', () => { void launchApplication(application); }); bindProgramMenu(button, application); $('applicationsGrid').append(button);
   }
+  for (const button of document.querySelectorAll('[data-program-filter]')) button.addEventListener('click', () => { hideProgramMenu(); programFilter = button.dataset.programFilter; filterApplications(); });
+  $('toggleFavorite').addEventListener('click', async () => {
+    const id = programContextId; if (!id || !programPreferencesReady) return;
+    const action = programPreferences.favorites.includes(id) ? 'remove' : 'add';
+    hideProgramMenu(true);
+    try { await updateProgramPreference({ action, id }); notify(action === 'add' ? '已添加到收藏夹' : '已从收藏夹移除'); } catch {}
+  });
   $('applicationsButton').addEventListener('click', () => $('applicationsPanel').hidden ? openApplications() : closeApplications());
   $('closeApplications').addEventListener('click', () => closeApplications());
   $('applicationsSearch').addEventListener('input', filterApplications);
   $('applicationsPanel').addEventListener('click', event => { if (event.target === $('applicationsPanel')) closeApplications(); });
   document.addEventListener('pointerdown', event => {
-    if (!$('applicationsPanel').hidden && !event.target.closest('#applicationsPanel, #applicationsButton')) closeApplications(false);
+    if (!event.target.closest('#programContext')) hideProgramMenu();
+    if (!$('applicationsPanel').hidden && !event.target.closest('#applicationsPanel, #applicationsButton, #programContext')) closeApplications(false);
   }, true);
   document.addEventListener('keydown', event => {
+    if (!$('programContext').hidden) {
+      event.stopImmediatePropagation();
+      if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); hideProgramMenu(true); }
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('toggleFavorite').click(); }
+      return;
+    }
     if ($('applicationsPanel').hidden) return;
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      const button = event.target.closest('[data-application]'), application = APPLICATIONS.find(item => item.id === button?.dataset.application);
+      if (application) { showProgramMenu(event, application, button); return; }
+    }
     event.stopImmediatePropagation();
     if (event.key === 'Escape') { event.preventDefault(); closeApplications(); return; }
-    const visible = [...$('applicationsGrid').querySelectorAll('button:not([hidden]):not(:disabled)')];
+    const visible = [...$('applicationsGrid').querySelectorAll('button:not([hidden])')];
     if (event.key === 'Tab') {
-      const controls = [$('applicationsSearch'), ...visible, $('closeApplications'), $('applicationsButton')];
+      const controls = [$('applicationsSearch'), ...visible, $('frequentApplications'), $('allApplications'), $('closeApplications'), $('applicationsButton')];
       const index = controls.indexOf(document.activeElement);
       event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus(); return;
     }
@@ -861,7 +970,7 @@ function scheduleBrowserLayout() {
   if (browserLayoutFrame !== null) return;
   browserLayoutFrame = requestAnimationFrame(() => {
     browserLayoutFrame = null;
-    const obscured = document.hidden || Boolean(document.querySelector('dialog:modal')) || ['applicationsPanel', 'downloadsPanel', 'context', 'appContext', 'activityToast'].some(id => !$(id).hidden);
+    const obscured = document.hidden || Boolean(document.querySelector('dialog:modal')) || ['applicationsPanel', 'downloadsPanel', 'context', 'appContext', 'programContext', 'activityToast'].some(id => !$(id).hidden);
     for (const win of state.windows.filter(current => current.kind === 'browser')) {
       const surface = windowElements.get(win.id)?.querySelector('.browser-surface');
       if (!surface) continue;
@@ -927,7 +1036,7 @@ api.onBrowserEvent?.(event => {
     const surface = windowElements.get(win.id)?.querySelector('.browser-surface');
     if (!surface) return;
     for (const part of ['toolbar', 'page']) { const image = surface.querySelector(`.browser-snapshot-${part}`); if (typeof event[part] === 'string' && /^data:image\/(png|jpeg);base64,/.test(event[part])) image.src = event[part]; }
-    surface.style.setProperty('--browser-toolbar-height', `${event.toolbarHeight || 148}px`);
+    surface.style.setProperty('--browser-toolbar-height', `${event.toolbarHeight || 81}px`);
     surface.classList.add('has-snapshot');
   }
 });
@@ -1111,7 +1220,7 @@ function renderPinnedApps() {
   for (const app of state.pinnedApps) {
     const button = document.createElement('button');
     button.className = 'pinned-app'; button.dataset.appId = app.id; button.dataset.program = app.program;
-    button.title = `启动 ${app.label} · 右键取消固定`; button.setAttribute('aria-label', `启动 ${app.label}`);
+    button.title = `启动 ${app.label} · 右键从收藏夹移除`; button.setAttribute('aria-label', `启动 ${app.label}`);
     const label = document.createElement('span'); label.textContent = app.label; label.className = 'tab-label';
     button.append(toolIcon(app.program === 'htop' ? 'Activity' : app.program === 'vim' ? 'FilePenLine' : 'Terminal'), label);
     button.addEventListener('click', () => openTerminal(rootPath, app.program));
@@ -1124,7 +1233,7 @@ function showAppMenu(event, app, win) {
   appContextId = app?.id || null; appContextWindowId = win?.id || null;
   const toggle = $('togglePinApp'), unpin = $('unpinApp');
   toggle.hidden = !win; unpin.hidden = Boolean(win);
-  if (win) toggle.textContent = state.pinnedApps.some(current => current.program === win.program) ? '从任务栏取消固定' : '固定到任务栏';
+  if (win) toggle.textContent = state.pinnedApps.some(current => current.program === win.program) ? '从收藏夹移除' : '添加到收藏夹';
   const menu = $('appContext'); menu.hidden = false;
   menu.style.left = `${clamp(event.clientX, innerWidth - menu.offsetWidth - 6)}px`;
   menu.style.top = `${clamp(event.clientY, innerHeight - menu.offsetHeight - 6)}px`;
@@ -1641,6 +1750,7 @@ function restoreWindows() {
   if (active) focusWindow(active.id);
 }
 function receiveHostMessage(message) { if (!message || typeof message.type !== 'string') return;
+  if (message.type === 'programPreferences') { applyProgramPreferences(message.preferences); return; }
   if (message.type === 'connectionInfo') { authenticatedProfile = message.profile || null; renderServerInfo(); if (authenticatedProfile && !connecting && $('connectionDialog').open) $('connectionDialog').close(); return; }
   if (message.type === 'fullscreenResult') {
     clearTimeout(fullscreenTimer); $('fullscreen').disabled = false;
@@ -1785,6 +1895,7 @@ document.addEventListener('keydown', event => {
 }, true);
 document.addEventListener('keydown', event => {
   if (document.querySelector('dialog:modal')) return;
+  if (event.target.closest('#dock, #programContext')) return;
   if (event.target.closest('input, textarea, .terminal-window, .browser-window, .settings-dialog, [contenteditable="true"]')) return;
   const context = contextFor(selection.scope), selected = selectedItems();
   let action;
@@ -1812,11 +1923,16 @@ $('activityButton').addEventListener('click', () => openActivityWindow());
 $('openActivityToast').addEventListener('click', () => openActivityWindow(activity.toastSession));
 $('closeActivityToast').addEventListener('click', () => { $('activityToast').hidden = true; scheduleBrowserLayout(); });
 for (const button of $('settingsDialog').querySelectorAll('[data-settings-tab]')) {
+  button.querySelector('.settings-nav-icon').replaceChildren(toolIcon(button.dataset.settingsIcon));
+  button.title = button.textContent.trim();
   button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab));
   button.addEventListener('keydown', event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const next = event.key === 'Home' ? $('desktopSettingsTab') : event.key === 'End' ? $('systemSettingsTab') : button.id === 'desktopSettingsTab' ? $('systemSettingsTab') : $('desktopSettingsTab');
+    const tabs = [...$('settingsDialog').querySelectorAll('[data-settings-tab]')];
+    const direction = ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1;
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (tabs.indexOf(button) + direction + tabs.length) % tabs.length;
+    const next = tabs[nextIndex];
     setSettingsTab(next.dataset.settingsTab); next.focus();
   });
 }
@@ -1990,7 +2106,7 @@ async function initializeConnection() {
     if (event.key === 'F11' || (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'f')) { event.preventDefault(); requestFullscreen(); }
   }, true);
   clearRemoteDesktop(); setConnectionBusy(true); showConnectionPanel(); $('connectionHint').textContent = '正在读取服务器配置…';
-  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; profiles.refresh(saved); if (!authenticatedProfile) setConnectionPanelMode('login'); }
+  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; applyProgramPreferences(saved.programPreferences); programPreferencesReady = true; profiles.refresh(saved); if (!authenticatedProfile) setConnectionPanelMode('login'); }
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
   finally { setConnectionBusy(false); }
   if ($('connectionDialog').open && connectionPanelMode === 'login') ($('sshUsername').value ? $('sshPassword') : $('sshUsername')).focus();

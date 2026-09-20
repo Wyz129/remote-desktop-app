@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="../media/workbench/viewer.css">
   <link rel="stylesheet" href="desktop.css">
   <link rel="stylesheet" href="login.css">
+  <link rel="stylesheet" href="programs.css">
+  <link rel="stylesheet" href="settings.css">
   <link rel="stylesheet" href="../media/workbench/video.css">
   <link rel="stylesheet" href="video-player.css">
   <link rel="stylesheet" href="../media/xterm.css">
@@ -19,10 +21,11 @@
     <div class="toolbar-actions"><span class="connection" id="connection">未连接</span><button id="connectButton" class="toolbar-icon" aria-label="切换账号" title="切换账号"></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听" title="实时监听"></button><button id="browserButton" class="toolbar-icon" aria-label="浏览器" title="浏览器"></button><button id="homeShortcut" class="toolbar-icon" title="Home" aria-label="Home"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置" title="设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏" title="全屏"></button></div>
   </header>
   <div class="workspace">
-    <aside class="dock" id="dock" aria-label="应用与窗口任务栏">
+    <aside class="dock" id="dock" aria-label="收藏夹" title="收藏夹">
+      <div id="favoriteApps" class="favorite-apps" aria-label="收藏的程序"></div>
       <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
       <div id="windowTabs" class="window-tabs"></div>
-      <button id="applicationsButton" class="applications-button" type="button" title="工具箱" aria-label="工具箱" aria-expanded="false" aria-controls="applicationsPanel"><span class="applications-dots" aria-hidden="true"></span></button>
+      <button id="applicationsButton" class="applications-button" type="button" title="程序" aria-label="程序" aria-expanded="false" aria-controls="applicationsPanel"><span class="applications-dots" aria-hidden="true"></span></button>
     </aside>
     <main class="desktop" id="desktop" aria-label="远程桌面">
       <div class="desktop-caption"><span class="caption-icon" aria-hidden="true">▦</span><span id="desktopPath">桌面</span></div>
@@ -30,47 +33,56 @@
       <div id="windows"></div>
       <section id="applicationsPanel" class="applications-panel" role="dialog" aria-labelledby="applicationsTitle" aria-describedby="applicationsHint" hidden>
         <div class="applications-content">
-          <header class="applications-heading"><h2 id="applicationsTitle">工具箱</h2><button id="closeApplications" type="button" aria-label="关闭工具箱" title="关闭">×</button></header>
-          <label class="applications-search"><span aria-hidden="true">⌕</span><input id="applicationsSearch" type="search" aria-label="搜索工具" placeholder="搜索工具…" autocomplete="off" spellcheck="false"></label>
+          <header class="applications-heading"><h2 id="applicationsTitle">程序</h2><button id="closeApplications" type="button" aria-label="关闭程序" title="关闭">×</button></header>
+          <label class="applications-search"><span aria-hidden="true">⌕</span><input id="applicationsSearch" type="search" aria-label="搜索程序" placeholder="搜索程序…" autocomplete="off" spellcheck="false"></label>
           <p id="applicationsHint" class="applications-hint">选择应用，在当前虚拟桌面中打开。</p>
-          <div id="applicationsGrid" class="applications-grid" aria-label="可用工具"></div>
-          <p id="applicationsEmpty" class="applications-empty" role="status" hidden>没有匹配的工具</p>
+          <div class="applications-results"><div id="applicationsGrid" class="applications-grid" aria-label="可用程序"></div><p id="applicationsEmpty" class="applications-empty" role="status" hidden>没有匹配的程序</p></div>
+          <nav class="applications-filters" aria-label="程序分类"><button id="frequentApplications" type="button" data-program-filter="frequent" aria-pressed="false">常用</button><button id="allApplications" type="button" data-program-filter="all" aria-pressed="true">全部</button></nav>
         </div>
       </section>
       <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle" tabindex="-1">
-        <header class="titlebar"><span class="settings-app-icon" aria-hidden="true">⚙</span><h2 id="settingsTitle" class="window-title">设置 · 控制面板</h2><div class="window-controls" aria-label="设置窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化设置" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化设置" title="最大化">□</button><button type="button" id="closeSettings" class="window-control close" data-window-action="close" aria-label="关闭设置" title="关闭">×</button></div></header>
-        <nav class="settings-tabs" role="tablist" aria-label="控制面板分类">
-          <button type="button" id="desktopSettingsTab" role="tab" aria-selected="true" aria-controls="desktopSettingsPanel" data-settings-tab="desktop">虚拟桌面与应用</button>
-          <button type="button" id="systemSettingsTab" role="tab" aria-selected="false" aria-controls="systemSettingsPanel" data-settings-tab="system" tabindex="-1">远程系统</button>
+        <header class="titlebar"><span class="settings-app-icon" aria-hidden="true">⚙</span><h2 id="settingsTitle" class="window-title">设置</h2><div class="window-controls" aria-label="设置窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化设置" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化设置" title="最大化">□</button><button type="button" id="closeSettings" class="window-control close" data-window-action="close" aria-label="关闭设置" title="关闭">×</button></div></header>
+        <div class="settings-layout">
+        <nav class="settings-tabs" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+          <button type="button" id="desktopSettingsTab" role="tab" aria-selected="true" aria-controls="desktopSettingsPanel" data-settings-tab="desktop" data-settings-icon="Monitor"><span class="settings-nav-icon" aria-hidden="true"></span><span>桌面与外观</span></button>
+          <button type="button" id="filesSettingsTab" role="tab" aria-selected="false" aria-controls="filesSettingsPanel" data-settings-tab="files" data-settings-icon="Files" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>文件与传输</span></button>
+          <button type="button" id="systemSettingsTab" role="tab" aria-selected="false" aria-controls="systemSettingsPanel" data-settings-tab="system" data-settings-icon="Server" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>远程系统</span></button>
         </nav>
         <div class="settings-content">
-        <section id="desktopSettingsPanel" role="tabpanel" aria-labelledby="desktopSettingsTab">
+        <section id="desktopSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="desktopSettingsTab">
+        <h3 class="settings-page-title">桌面与外观</h3>
         <form id="settingsForm">
-          <div class="settings-fields">
-            <h3 class="settings-section-title">桌面外观</h3>
-            <label for="settingsDesktopPath">桌面位置</label><div class="desktop-path-picker"><input type="text" id="settingsDesktopPath" spellcheck="false" autocomplete="off" placeholder="例如 /home/用户名/.rdesktop/desktop"><button type="button" id="browseDesktopPath">浏览…</button></div>
-            <p class="settings-description">可选择服务器上任意有访问权限的目录作为桌面，名称不限；位置会为当前服务器账号保存。</p>
-            <label for="settingsViewMode">资源管理器视图</label><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select>
-            <label for="settingsWallpaper">桌面背景</label><select id="settingsWallpaper"><option value="teal">Ubuntu</option><option value="purple">暮紫</option><option value="slate">石墨</option></select>
-            <label class="settings-check"><input type="checkbox" id="settingsHidden">显示隐藏文件和文件夹</label>
-            <p class="settings-description" id="settingsLocation"></p><p id="settingsError" role="alert"></p>
+          <div class="settings-card">
+            <div class="settings-row settings-row-stacked"><div class="settings-row-copy"><label for="settingsDesktopPath">桌面位置</label><p>选择服务器上有访问权限的目录，名称不限。</p></div><div class="desktop-path-picker"><input type="text" id="settingsDesktopPath" spellcheck="false" autocomplete="off" placeholder="例如 /home/用户名/.rdesktop/desktop"><button type="button" id="browseDesktopPath">浏览…</button></div></div>
           </div>
+          <div class="settings-card">
+            <div class="settings-row"><div class="settings-row-copy"><label for="settingsWallpaper">桌面背景</label><p>选择虚拟桌面的背景配色。</p></div><select id="settingsWallpaper"><option value="teal">Ubuntu</option><option value="purple">暮紫</option><option value="slate">石墨</option></select></div>
+            <div class="settings-row"><div class="settings-row-copy"><label for="settingsViewMode">资源管理器视图</label><p>文件夹窗口的默认显示方式。</p></div><select id="settingsViewMode"><option value="details">详情</option><option value="icons">图标</option></select></div>
+            <div class="settings-row"><div class="settings-row-copy"><label for="settingsHidden">显示隐藏文件和文件夹</label><p>包含名称以点开头的项目。</p></div><input type="checkbox" id="settingsHidden" class="settings-switch" role="switch"></div>
+          </div>
+          <p class="settings-description" id="settingsLocation"></p><p id="settingsError" role="alert"></p>
           <footer class="settings-footer"><button type="button" id="cancelSettings">取消</button><button type="submit" id="applySettings" class="primary">应用</button></footer>
         </form>
-        <form id="extensionSettingsForm">
-<div class="settings-fields"><h3 class="settings-section-title">应用设置</h3>
-<label for="settingsDownloadThreshold">大文件 SFTP 阈值（MiB）</label><input type="number" id="settingsDownloadThreshold" min="1" max="1024" step="1" required>
-<label for="settingsScriptEditor">文件编辑器</label><select id="settingsScriptEditor" disabled><option value="monaco">Monaco Editor</option></select>
-<p class="settings-description" id="downloadsLocation"></p><p class="settings-description">小文件通过 SSH 命令流下载，达到阈值使用 SFTP；SFTP 同样基于 SSH。文件只在编辑器中打开，不会自动运行。</p>
-<p class="settings-description" id="migrationNotice">原 VS Code 命令快捷方式会被跳过；文件符号链接和固定终端继续可用。</p>
-<p id="extensionSettingsStatus" role="status" aria-live="polite"></p><p id="extensionSettingsError" role="alert"></p></div>
-<footer class="settings-footer"><button type="button" id="reloadExtensionSettings">重新读取</button><button type="submit" id="saveExtensionSettings" class="primary">保存应用设置</button></footer></form>
         </section>
-        <section id="systemSettingsPanel" class="system-settings-panel" role="tabpanel" aria-labelledby="systemSettingsTab" hidden>
+        <section id="filesSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="filesSettingsTab" hidden>
+        <h3 class="settings-page-title">文件与传输</h3>
+        <form id="extensionSettingsForm">
+          <div class="settings-card">
+            <div class="settings-row"><div class="settings-row-copy"><label for="settingsDownloadThreshold">大文件 SFTP 阈值</label><p>达到此大小时通过 SFTP 下载。</p></div><div class="settings-unit-input"><input type="number" id="settingsDownloadThreshold" min="1" max="1024" step="1" required><span>MiB</span></div></div>
+            <div class="settings-row"><div class="settings-row-copy"><label for="settingsScriptEditor">文件编辑器</label><p>文本和脚本在编辑器中打开，不会自动运行。</p></div><select id="settingsScriptEditor" disabled><option value="monaco">Monaco Editor</option></select></div>
+          </div>
+          <p class="settings-description" id="downloadsLocation"></p><p class="settings-description">小文件通过 SSH 命令流下载，达到阈值使用 SFTP；两种方式均通过当前 SSH 连接传输。</p>
+          <p class="settings-description" id="migrationNotice">原 VS Code 命令快捷方式会被跳过；文件符号链接和固定终端继续可用。</p>
+          <p id="extensionSettingsStatus" role="status" aria-live="polite"></p><p id="extensionSettingsError" role="alert"></p>
+          <footer class="settings-footer"><button type="button" id="reloadExtensionSettings">重新读取</button><button type="submit" id="saveExtensionSettings" class="primary">保存应用设置</button></footer>
+        </form>
+        </section>
+        <section id="systemSettingsPanel" class="settings-page system-settings-panel" role="tabpanel" aria-labelledby="systemSettingsTab" hidden>
+          <h3 class="settings-page-title">远程系统</h3>
           <div class="system-actions"><button type="button" id="refreshSystemInfo">刷新系统信息</button><button type="button" id="settingsConnection">SSH 连接管理</button></div>
           <p id="systemInfoStatus" class="settings-description" role="status" aria-live="polite">连接 SSH 后查看远程系统信息。</p>
           <p id="systemInfoError" role="alert"></p>
-          <dl id="systemInfoFields" class="system-info" hidden>
+          <dl id="systemInfoFields" class="system-info settings-card" hidden>
             <dt>用户 / 主机</dt><dd><span data-system-info="username"></span><span aria-hidden="true"> @ </span><span data-system-info="hostname"></span></dd>
             <dt>主目录</dt><dd data-system-info="home"></dd>
             <dt>操作系统</dt><dd data-system-info="os"></dd>
@@ -86,6 +98,7 @@
           </dl>
           <p class="settings-description system-settings-note">这里通过 SSH 读取 Ubuntu / Linux 的常用系统信息。时间、语言、网络等系统设置的修改需要相应权限，请在远程终端或服务器管理工具中操作。Ubuntu 桌面会话的显示、声音等图形设置不会通过本应用的 SSH 连接生效。</p>
         </section>
+        </div>
         </div>
       </dialog>
       <footer class="statusbar"><span class="operation-display" title="文件操作通过 SSH 完成；这里显示对应的 Linux 指令"><span class="operation-label">等效命令</span><code id="operationCommand">—</code><span id="operationStatus"></span></span><span id="notice" role="status" aria-live="polite">正在读取桌面…</span><span id="cacheStatus"></span></footer>
@@ -179,7 +192,8 @@
     <button data-action="refresh" role="menuitem">刷新</button>
     <button data-action="arrange" role="menuitem">整理桌面</button>
   </div>
-  <div id="appContext" class="context" role="menu" aria-label="任务栏操作" hidden><button id="togglePinApp" role="menuitem">固定到任务栏</button><button id="unpinApp" role="menuitem">从任务栏取消固定</button></div>
+  <div id="appContext" class="context" role="menu" aria-label="收藏夹操作" hidden><button id="togglePinApp" role="menuitem">添加到收藏夹</button><button id="unpinApp" role="menuitem">从收藏夹移除</button></div>
+  <div id="programContext" class="context" role="menu" aria-label="程序操作" hidden><button id="toggleFavorite" type="button" role="menuitem">添加到收藏夹</button></div>
   <script src="../media/lucide.js"></script>
   <script src="../media/xterm.js"></script>
   <script src="../media/xterm-addon-fit.js"></script>

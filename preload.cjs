@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const subscribe = (channel, callback) => { const listener = (_, value) => callback(value); ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener); };
 contextBridge.exposeInMainWorld('remoteDesktop', {
   getSettings: () => ipcRenderer.invoke('app:get-settings'),
+  updateProgramPreferences: (action, id) => ipcRenderer.invoke('app:program-preferences', action, id),
   saveServer: input => ipcRenderer.invoke('app:save-server', input),
   getSystemInfo: () => ipcRenderer.invoke('ssh:system-info'),
   setDesktop: remotePath => ipcRenderer.invoke('ssh:set-desktop', remotePath),

@@ -84,6 +84,16 @@ async function scenario(name, fn, options = {}) {
       async setDesktop(path) { window.calls.push({type:'setDesktop',path}); if(window.deferDesktop) return new Promise((resolve,reject)=>{window.resolveDesktop=resolve;window.rejectDesktop=reject;}); if(window.deniedDirectory === path) throw new Error('无访问权限：Permission denied (EACCES)'); if(!window.directories[path]) throw new Error('目录不存在'); return {status:'ready',rootPath:path,homePath:'/home/tester',entries:window.directories[path],config:{wallpaper:'slate',viewMode:'details',showHiddenFiles:true}}; },
       async checkFileAccess(path) { window.calls.push({type:'checkFileAccess',path}); if(window.deferFileAccess) return new Promise(resolve=>{window.resolveFileAccess=resolve;}); return {path,readable:window.deniedFile !== path,writable:window.readOnlyFile !== path,error:window.deniedFile === path ? 'Permission denied (EACCES)' : undefined}; },
       async getSettings() { return window.initialSettings || window.settings; },
+      async updateProgramPreferences(action, id) {
+        window.calls.push({ type: 'programPreference', action, id });
+        if (window.failProgramPreference) throw new Error('disk write failed');
+        const prefs = window.settings.programPreferences ||= { favorites: [], usage: {} };
+        if (action === 'add' && !prefs.favorites.includes(id)) prefs.favorites.push(id);
+        if (action === 'remove') prefs.favorites = prefs.favorites.filter(item => item !== id);
+        if (action === 'launch') prefs.usage[id] = (prefs.usage[id] || 0) + 1;
+        window.receive({ type: 'programPreferences', preferences: prefs });
+        return structuredClone(prefs);
+      },
       async getSystemInfo() { window.calls.push({type:'getSystemInfo'}); if (window.failSystemInfo) throw new Error('SSH connection closed'); if (window.deferSystemInfo) return new Promise(resolve=>{window.resolveSystemInfo=resolve;}); return {...window.systemInfo}; },
       async saveSettings(patch) { Object.assign(window.settings,patch); return window.settings; },
       async choosePrivateKey() { return 'D:\\keys\\id_ed25519'; },
@@ -196,8 +206,8 @@ test('applications_overview_bottom_dock_search_keyboard_and_offline_access', () 
   assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(), 0);
   await toggle.click(); await panel.waitFor();
   assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(await panel.locator('.application-label').allTextContents(), ['浏览器','传输中心','实时监听','htop','Monaco Editor','图片查看器','视频播放器']);
-  assert.equal(await panel.locator('button.application-tile:disabled').count(), 5);
+  assert.deepEqual(await panel.locator('.application-label').allTextContents(), ['浏览器','传输中心','实时监听','htop','Monaco Editor','图片查看器','视频播放器','Home','设置','终端']);
+  assert.equal(await panel.locator('button.application-tile[aria-disabled=true]').count(), 7);
   assert.equal(await page.locator('#applicationsSearch').evaluate(el => el === document.activeElement), true);
   const toggleBounds = await toggle.boundingBox(), dockBounds = await page.locator('#dock').boundingBox();
   assert.ok(dockBounds.y + dockBounds.height - toggleBounds.y - toggleBounds.height <= 14, 'applications stays at dock bottom');
@@ -211,20 +221,20 @@ test('applications_overview_bottom_dock_search_keyboard_and_offline_access', () 
   assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
   await toggle.click(); await toggle.click(); assert.equal(await panel.isVisible(), false);
   await page.locator('#connectButton').click(); await connect(page);
-  await toggle.click(); assert.equal(await panel.locator('button.application-tile:disabled').count(), 0);
+  await toggle.click(); assert.equal(await panel.locator('button.application-tile[aria-disabled=true]').count(), 0);
   await page.keyboard.press('Control+Alt+t'); assert.equal(await page.locator('.terminal-window').count(), 0, 'overview consumes desktop shortcuts');
   await page.keyboard.press('ArrowDown');
   assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'browser');
   await page.keyboard.press('ArrowRight');
   assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'transfer');
   await page.keyboard.press('End');
-  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'video');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.application), 'terminal');
   await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-applications.png') });
   await page.locator('#homeShortcut').click(); assert.equal(await panel.isVisible(), false);
   await page.locator('.window').first().waitFor();
   await toggle.click(); await page.evaluate(() => window.receive({type:'remoteState',status:'disconnected'}));
   assert.equal(await panel.isVisible(), false);
-  await toggle.click(); assert.equal(await panel.locator('button.application-tile:disabled').count(), 5);
+  await toggle.click(); assert.equal(await panel.locator('button.application-tile[aria-disabled=true]').count(), 7);
 }));
 
 test('applications_launch_existing_apps_and_hide_native_browser_views', () => scenario('applications-launch', async page => {
@@ -245,6 +255,71 @@ test('applications_launch_existing_apps_and_hide_native_browser_views', () => sc
   assert.equal(await page.evaluate(() => window.messages.filter(message => message.type === 'openTerminal' && message.program === 'htop').length), 1);
   await launch('editor'); assert.ok(await page.evaluate(() => window.calls.some(call => call.type === 'openDocument' && call.path === null)));
   await launch('image'); await page.locator('.image-window').waitFor();
+}));
+
+test('program_favorites_context_menu_keyboard_persistence_errors_and_frequent_view', () => scenario('program-favorites', async page => {
+  await page.locator('#closeConnection').click();
+  await page.locator('#applicationsButton').click();
+  assert.equal(await page.locator('#dock').getAttribute('aria-label'), '收藏夹');
+  await page.locator('#frequentApplications').click(); await page.locator('#applicationsEmpty').waitFor();
+  await page.locator('#allApplications').click();
+  const editor = page.locator('[data-application=editor]');
+  const editorMenu = async () => { await editor.hover(); const rect = await editor.boundingBox(); await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2, { button: 'right' }); };
+  await editor.focus(); await page.keyboard.press('Shift+F10');
+  assert.equal(await page.locator('#toggleFavorite').textContent(), '添加到收藏夹');
+  await page.keyboard.press('Enter'); await page.locator('[data-favorite=editor]').waitFor();
+  assert.equal(await page.locator('#applicationsPanel').isVisible(), true);
+  assert.equal(await page.locator('#programContext').isVisible(), false);
+  assert.equal(await editor.evaluate(el => el === document.activeElement), true, 'keyboard add preserves focus on the program tile after saving');
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('[data-application=image]').evaluate(el => el === document.activeElement), true, 'arrow navigation still works after adding a favorite');
+  await editor.focus(); await page.keyboard.press('Shift+F10');
+  assert.equal(await page.locator('#toggleFavorite').textContent(), '从收藏夹移除');
+  await page.keyboard.press('Escape'); assert.equal(await editor.evaluate(el => el === document.activeElement), true);
+  await page.evaluate(() => { window.failProgramPreference = true; });
+  await editorMenu(); await page.locator('#toggleFavorite').click();
+  await page.waitForFunction(() => document.getElementById('notice').textContent.includes('保存失败'));
+  assert.equal(await page.locator('[data-favorite=editor]').count(), 1, 'failed save retains favorite');
+  await page.evaluate(() => { window.failProgramPreference = false; });
+  await editor.focus(); await page.keyboard.press('Shift+F10'); await page.keyboard.press('Enter');
+  await page.locator('[data-favorite=editor]').waitFor({ state: 'detached' });
+  assert.equal(await editor.evaluate(el => el === document.activeElement), true, 'keyboard remove preserves focus on the program tile after saving');
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('[data-application=image]').evaluate(el => el === document.activeElement), true, 'arrow navigation still works after removing a favorite');
+  const settings = page.locator('[data-application=settings]');
+  await settings.click({ button: 'right' }); await page.locator('#toggleFavorite').click();
+  await page.locator('[data-favorite=settings]').waitFor();
+  await settings.click(); await page.locator('#settingsDialog').waitFor();
+  await page.waitForFunction(() => window.settings.programPreferences.usage.settings === 1);
+  await page.locator('#settingsDialog [data-window-action=minimize]').click();
+  await page.locator('[data-favorite=settings]').click();
+  assert.equal(await page.locator('#settingsDialog').isVisible(), true); assert.equal(await page.locator('#settingsDialog').count(), 1);
+  await page.waitForFunction(() => window.settings.programPreferences.usage.settings === 2);
+  await page.locator('#applicationsButton').click(); await page.locator('#frequentApplications').click();
+  assert.deepEqual(await page.locator('.application-tile:visible .application-label').allTextContents(), ['设置']);
+  await page.locator('#allApplications').click();
+  await page.setViewportSize({ width: 820, height: 560 });
+  await page.screenshot({ path: path.join(root, 'artifacts', 'programs-compact-1.1.10.png') });
+  const bounds = await page.locator('.applications-content').evaluate(el => ({ client: el.clientWidth, content: el.scrollWidth }));
+  assert.ok(bounds.content <= bounds.client + 1);
+  await page.keyboard.press('Escape');
+  await page.locator('[data-favorite=settings]').click({ button: 'right' });
+  await page.keyboard.press('Enter'); await page.locator('[data-favorite=settings]').waitFor({ state: 'detached' });
+  assert.equal(await page.locator('#applicationsPanel').isVisible(), false);
+  assert.equal(await page.locator('#favoriteApps [data-favorite]').count(), 0);
+  assert.equal(await page.locator('#applicationsButton').evaluate(el => el === document.activeElement), true, 'removing the final favorite returns keyboard focus to the programs button');
+}));
+
+test('window_controls_show_background_only_on_hover_or_keyboard_focus', () => scenario('window-hover-controls', async page => {
+  await connect(page); await page.locator('#homeShortcut').click();
+  const win = page.locator('.window').first();
+  await page.mouse.move(5, 5);
+  const controls = win.locator('.window-control');
+  assert.deepEqual(await controls.evaluateAll(nodes => nodes.map(node => getComputedStyle(node).backgroundColor)), Array(3).fill('rgba(0, 0, 0, 0)'));
+  for (const button of await controls.all()) {
+    await button.hover(); assert.notEqual(await button.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+    await page.mouse.move(5, 5); assert.equal(await button.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)');
+  }
 }));
 
 test('connection_failure_and_disconnect_never_display_demo', () => scenario('connection', async page => {
@@ -373,7 +448,7 @@ test('settings_threshold_key_picker_and_fullscreen_shortcut', () => scenario('se
   await connect(page);
   const credentials = await page.evaluate(()=>window.calls.find(call=>call.type==='connect').input);
   assert.match(credentials.privateKeyPath,/id_ed25519$/);assert.equal(Object.hasOwn(credentials,'privateKey'),false,'renderer forwards a local path, never key contents');
-  await page.locator('#desktopSettings').click();await page.locator('#settingsDownloadThreshold').waitFor();
+  await page.locator('#desktopSettings').click();await page.locator('#filesSettingsTab').click();await page.locator('#settingsDownloadThreshold').waitFor();
   await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
   await page.locator('#settingsDownloadThreshold').fill('80');await page.locator('#saveExtensionSettings').click();
   await page.waitForFunction(()=>window.settings.downloadThreshold===80*1024*1024);
@@ -439,7 +514,7 @@ test('builtin_home_and_settings_remain_available_without_connection_or_pins', ()
   await page.locator('#desktopSettings').click();
   await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
   assert.equal(await page.locator('#applySettings').isDisabled(),true);
-  await page.locator('#settingsDownloadThreshold').fill('70'); await page.locator('#saveExtensionSettings').click();
+  await page.locator('#filesSettingsTab').click(); await page.locator('#settingsDownloadThreshold').fill('70'); await page.locator('#saveExtensionSettings').click();
   await page.waitForFunction(()=>window.settings.downloadThreshold===70*1024*1024);
   await page.locator('#systemSettingsTab').click();
   assert.match(await page.locator('#systemInfoStatus').textContent(),/连接 SSH/);
@@ -462,6 +537,27 @@ test('builtin_home_and_settings_remain_available_without_connection_or_pins', ()
   await page.locator('#desktopSettings').click(); await page.locator('#settingsDialog[open]').waitFor();
 }));
 
+test('settings_sidebar_keyboard_cards_and_compact_layout_preserve_unsaved_fields', () => scenario('settings-sidebar', async page => {
+  await connect(page); await page.locator('#desktopSettings').click();
+  await page.locator('#settingsDesktopPath').fill('/shared/pending');
+  await page.screenshot({ path: path.join(root, 'artifacts', 'settings-1.1.10-desktop.png') });
+  await page.locator('#desktopSettingsTab').focus(); await page.keyboard.press('ArrowDown');
+  assert.equal(await page.locator('#filesSettingsTab').getAttribute('aria-selected'), 'true');
+  await page.locator('#settingsDownloadThreshold').fill('77');
+  await page.screenshot({ path: path.join(root, 'artifacts', 'settings-1.1.10-files.png') });
+  await page.locator('#filesSettingsTab').focus(); await page.keyboard.press('End');
+  await page.locator('#systemInfoFields').waitFor();
+  assert.equal(await page.locator('#systemSettingsTab').getAttribute('aria-selected'), 'true');
+  await page.screenshot({ path: path.join(root, 'artifacts', 'settings-1.1.10-system.png') });
+  await page.keyboard.press('Home');
+  assert.equal(await page.locator('#settingsDesktopPath').inputValue(), '/shared/pending');
+  await page.setViewportSize({ width: 820, height: 560 });
+  assert.equal(await page.locator('#settingsDialog').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  await page.screenshot({ path: path.join(root, 'artifacts', 'settings-1.1.10-compact.png') });
+  await page.locator('#filesSettingsTab').click();
+  assert.equal(await page.locator('#settingsDownloadThreshold').inputValue(), '77');
+}));
+
 test('settings_single_window_preserves_input_and_supports_desktop_window_controls', () => scenario('settings-window', async page => {
   await connect(page);
   await page.locator('#desktopSettings').click();
@@ -470,7 +566,7 @@ test('settings_single_window_preserves_input_and_supports_desktop_window_control
   assert.equal(await win.evaluate(element => element.matches(':modal')), false);
   assert.equal(await win.evaluate(element => element.parentElement.id), 'windows');
   await page.locator('#settingsDesktopPath').fill('/shared/pending-desktop');
-  await page.locator('#settingsDownloadThreshold').fill('73');
+  await page.locator('#filesSettingsTab').click(); await page.locator('#settingsDownloadThreshold').fill('73');
   await page.locator('#desktopSettings').click();
   await page.locator('#desktopSettings').click();
   assert.equal(await page.locator('.settings-dialog[open]').count(), 1);

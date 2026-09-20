@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-20。独立应用版本：1.1.9。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-21。独立应用版本：1.1.10。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.10：全桌面“程序”网格替代工具箱，十个内建入口、搜索、常用/全部、右键添加或移除收藏；左栏语义为收藏夹，按用户最终要求不显示栏标题和九点图标下方小字，保留悬停提示与可访问名称。收藏及使用次数由 lib/program-preferences.cjs 规范化，通过 app:program-preferences 固定 IPC 串行保存到本机 settings.json，不与远程 pinnedApps 混合；旧固定终端和动态窗口仍保留。更新偏好与重排网格时保持键盘焦点，移除最后一个收藏回到程序按钮。新增 app/programs.css、app/settings.css；设置分 desktop/files/system 三类，文件阈值表单移到 filesSettingsPanel，切换保留输入。窗口按钮默认透明、悬停显底色，保留 focus-visible。浏览器标签在地址栏之上，辅助选项默认折叠；可信工具栏上报 81–360px 的整数高度，主进程同步网页 bounds 与后台图像。回退分支 checkpoint/pre-programs-favorites-1.1.9；本地提交、打包，不推送。验证和交付入口见 docs/RELEASE-1.1.10.md。
 
 1.1.9：炭灰/灰紫窗口主题，最小化/最大化/关闭 SVG 在 28px 控件中居中，符号尺寸分别 16/12/20px。登录样式迁至 app/login.css，普通登录保留头像与用户名/密码两框；切换账号进入 advanced，配置可保存返回登录或直接连接。connectionAdvanced 现为 section，不再是 details；测试应通过 switchAccountButton 进入高级界面，使用 advancedConnectSubmit 提交，普通登录仍用 connectSubmit。connected/reconnect 身份保护及不落盘密码保持。小高度窗口隐藏高级页重复标题并允许内部滚动。回退分支 checkpoint/pre-dark-login-1.1.8；本地提交与打包，仍不推送 GitHub。验证见 docs/RELEASE-1.1.9.md。
 

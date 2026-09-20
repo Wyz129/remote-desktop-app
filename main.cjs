@@ -21,6 +21,7 @@ const { createBrowserManager } = require('./lib/browser-manager.cjs');
 const { ensureRemoteStorage } = require('./lib/remote-storage.cjs');
 const { VideoService } = require('./lib/video-service.cjs');
 const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle } = require('./lib/server-profiles.cjs');
+const { normalizeProgramPreferences, updateProgramPreferences } = require('./lib/program-preferences.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
@@ -31,7 +32,7 @@ const audit = createAuditor(activityLog);
 const cliActivity = new Map();
 const transferCenter = new TransferCenter(value => send('download:progress', value));
 const selectedLocalPaths = new Set(), selectedDownloadDirectories = new Set();
-let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {}, storageVersion: 2, serverProfiles: [], selectedServerId: '' };
+let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {}, storageVersion: 2, serverProfiles: [], selectedServerId: '', programPreferences: normalizeProgramPreferences() };
 let settingsQueue = Promise.resolve();
 const selectedKeys = new Set();
 const completedDownloads = new Set();
@@ -53,7 +54,7 @@ function currentSession(source) { return Boolean(source && source === backend &&
 function accessDenied(error) { return [3, 'EACCES', 'EPERM'].includes(error?.code); }
 function accessMessage(error, remotePath) { return `${accessDenied(error) ? '无访问权限：' : ''}${remotePath ? `${remotePath} — ` : ''}${error.message}${error.code !== undefined ? ` (${error.code})` : ''}`; }
 async function loadSettings() {
-  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), serverProfiles: profilesFromSettings(loaded) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
+  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), serverProfiles: profilesFromSettings(loaded), programPreferences: normalizeProgramPreferences(loaded.programPreferences) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
   settings.scriptEditor = 'monaco';
@@ -361,6 +362,11 @@ function registerIpc() {
   });
   handle('activity:snapshot', () => activityLog.snapshot());
   handle('app:get-settings', () => publicSettings());
+  handle('app:program-preferences', async (action, id) => {
+    const saved = await saveSettings(current => ({ programPreferences: updateProgramPreferences(current.programPreferences, action, id) }));
+    post({ type: 'programPreferences', preferences: saved.programPreferences });
+    return saved.programPreferences;
+  });
   handle('app:save-server', async input => {
     const profile = serverProfile(input);
     if (profile.privateKeyPath && !selectedKeys.has(profile.privateKeyPath) && !settings.serverProfiles.some(saved => saved.privateKeyPath === profile.privateKeyPath && saved.host === profile.host && saved.port === profile.port && saved.username === profile.username)) throw new Error('请使用“选择私钥”按钮选择本地文件。');

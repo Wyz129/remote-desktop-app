@@ -1,6 +1,23 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>浏览器</title><link rel="stylesheet" href="browser.css"></head>
-<body><main><div class="tab-strip" role="tablist" aria-label="浏览器标签页"><div id="tabs"></div><button id="newTab" type="button" title="新建标签页" aria-label="新建标签页">+</button></div><form id="navigation"><button id="back" type="button" title="后退">←</button><button id="forward" type="button" title="前进">→</button><button id="reload" type="button" title="重新载入">↻</button><input id="address" aria-label="网址" placeholder="https://example.com 或 http://localhost:8888" autocomplete="off"><button type="submit">访问</button></form>
-<div class="settings"><span class="badge">SSH 网络与 DNS</span><label>下载保存到 <select id="destination"><option value="local">本机</option><option value="server">服务器</option></select></label><input id="serverDirectory" aria-label="服务器保存目录" placeholder="服务器绝对路径，例如 /home/user/Downloads" hidden><button id="clearSession" type="button" title="清除本次 SSH 连接中所有浏览器的 Cookie 与缓存">清除登录态</button><button id="help" type="button">说明</button></div>
-<div id="status" role="status">网页使用隔离环境；正在连接服务器网络。</div></main>
-<script src="browser.js"></script></body></html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>浏览器</title><link rel="stylesheet" href="browser.css"></head>
+<body>
+<main id="browserChrome">
+  <div class="tab-strip" role="tablist" aria-label="浏览器标签页"><div id="tabs"></div><button id="newTab" type="button" title="新建标签页" aria-label="新建标签页">+</button></div>
+  <form id="navigation">
+    <button id="back" class="navigation-icon" type="button" title="后退" aria-label="后退">←</button>
+    <button id="forward" class="navigation-icon" type="button" title="前进" aria-label="前进">→</button>
+    <button id="reload" class="navigation-icon" type="button" title="重新载入" aria-label="重新载入">↻</button>
+    <input id="address" aria-label="网址" placeholder="https://example.com 或 http://localhost:8888" autocomplete="off">
+    <button id="navigate" type="submit">访问</button>
+    <button id="toggleDetails" class="navigation-icon" type="button" title="浏览器选项" aria-label="浏览器选项" aria-expanded="false" aria-controls="browserDetails"><span aria-hidden="true">⌄</span></button>
+  </form>
+  <section id="browserDetails" aria-label="浏览器选项" hidden>
+    <div class="settings"><span class="badge">SSH 网络与 DNS</span><label>下载保存到 <select id="destination"><option value="local">本机</option><option value="server">服务器</option></select></label><button id="clearSession" type="button" title="清除本次 SSH 连接中所有浏览器的 Cookie 与缓存">清除登录态</button><button id="help" type="button">说明</button></div>
+    <input id="serverDirectory" aria-label="服务器保存目录" placeholder="服务器绝对路径，例如 /home/user/Downloads" hidden>
+  </section>
+  <div id="status" role="status" hidden>网页使用隔离环境；正在连接服务器网络。</div>
+</main>
+<script src="browser.js"></script>
+</body>
+</html>

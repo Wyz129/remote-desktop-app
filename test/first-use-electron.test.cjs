@@ -122,8 +122,8 @@ test('first connection creates private storage, resets old desktop preference, s
   assert.ok(!afterReconnect.includes(fixture.password));
 
   await page.locator('#applicationsButton').click();
-  assert.equal(await page.locator('#applicationsPanel').getByRole('heading', { name: '工具箱' }).count(), 1);
-  assert.equal(await page.locator('#applicationsGrid [data-application]').count(), 7);
+  assert.equal(await page.locator('#applicationsPanel').getByRole('heading', { name: '程序' }).count(), 1);
+  assert.equal(await page.locator('#applicationsGrid [data-application]').count(), 10);
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-toolbox.png' : 'electron-toolbox.png') });
   await page.locator('[data-application=video]').click();
   await page.locator('.video-window').waitFor();

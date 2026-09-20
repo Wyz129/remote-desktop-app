@@ -1,0 +1,73 @@
+/* Settings uses the same desktop window shell, with a persistent category rail. */
+.settings-dialog.window { container-type: inline-size; background: #242424; }
+.settings-dialog .titlebar { position: relative; height: 45px; background: #303030; }
+.settings-dialog .settings-app-icon { display: inline-flex; align-items: center; color: #b9b6bc; }
+.settings-dialog .settings-app-icon .tool-icon { width: 18px; height: 18px; }
+.settings-dialog .window-title { position: absolute; left: 50%; transform: translateX(-50%); max-width: calc(100% - 240px); color: #efeeec; font-size: 14px; }
+.settings-dialog .window-controls { margin-left: auto; }
+.settings-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.settings-dialog .settings-tabs { display: flex; flex-direction: column; flex: 0 0 198px; gap: 4px; padding: 14px 9px; border: 0; border-right: 1px solid #424242; background: #2b2b2b; overflow-y: auto; }
+.settings-dialog .settings-tabs button { display: flex; align-items: center; flex: none; gap: 11px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; border-radius: 8px; color: #e4e2e1; background: transparent; text-align: left; font-size: 13px; line-height: 1.4; }
+.settings-dialog .settings-tabs button:hover { background: #3a3a3a; }
+.settings-dialog .settings-tabs button[aria-selected="true"] { color: #faf0e8; background: #654234; border: 0; }
+.settings-nav-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; color: #bfbcc1; }
+.settings-nav-icon .tool-icon { width: 17px; height: 17px; }
+.settings-dialog .settings-tabs button[aria-selected="true"] .settings-nav-icon { color: #e4c9b9; }
+.settings-dialog .settings-content { flex: 1; min-width: 0; min-height: 0; padding: 24px 26px; background: #242424; overflow: auto; scrollbar-gutter: stable; }
+.settings-page { min-width: 0; max-width: 880px; margin: 0 auto; padding: 0; }
+.settings-page-title { margin: 0 0 18px; color: #f0efec; font-size: 17px; font-weight: 650; line-height: 1.4; }
+.settings-card { overflow: hidden; margin: 0 0 16px; border: 1px solid #424242; border-radius: 11px; background: #2d2d2d; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 22px; min-width: 0; min-height: 67px; padding: 13px 16px; }
+.settings-row + .settings-row { border-top: 1px solid #404040; }
+.settings-row-copy { flex: 1; min-width: 0; }
+.settings-row-copy label { display: block; width: fit-content; color: #eae8e5; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.settings-row-copy p { margin: 2px 0 0; color: #b7b4b1; font-size: 12px; line-height: 1.5; }
+.settings-row-stacked { align-items: stretch; flex-direction: column; gap: 12px; }
+.settings-dialog .settings-row input:not([type="checkbox"]), .settings-dialog .settings-row select { min-width: 0; max-width: 100%; border: 1px solid #4b4b4b; border-radius: 7px; padding: 8px 10px; color: #eeeae7; background: #3b3b3b; font: inherit; font-size: 12px; }
+.settings-row > select { flex: 0 1 164px; }
+.settings-dialog .settings-row select:disabled { color: #c7c4c0; opacity: 1; background: #333; }
+.settings-dialog .desktop-path-picker { gap: 8px; }
+.settings-dialog .desktop-path-picker input { flex: 1; width: 100%; font-family: Consolas, monospace; }
+.settings-dialog .desktop-path-picker button { padding: 7px 12px; border-radius: 7px; }
+.settings-unit-input { display: flex; align-items: center; gap: 8px; flex: none; font-size: 12px; color: #bcb8b5; }
+.settings-unit-input input { width: 76px; text-align: right; }
+.settings-switch { appearance: none; flex: none; position: relative; width: 43px; height: 24px; margin: 0; border: 1px solid #626262; border-radius: 14px; background: #545454; cursor: pointer; transition: background .15s; }
+.settings-switch::before { content: ''; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #ecebe8; box-shadow: 0 1px 2px #0005; transition: transform .15s; }
+.settings-switch:checked { background: #a96645; border-color: #b77855; }
+.settings-switch:checked::before { transform: translateX(19px); }
+.settings-switch:disabled { cursor: default; opacity: .45; }
+.settings-dialog .settings-description, .settings-dialog #settingsError, .settings-dialog #extensionSettingsStatus, .settings-dialog #extensionSettingsError { margin: 10px 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.settings-dialog #extensionSettingsForm { border: 0; }
+.settings-dialog .settings-footer { margin-top: 22px; padding: 0; border: 0; flex-wrap: wrap; }
+.settings-dialog .settings-footer button, .settings-dialog .system-actions button { min-height: 33px; padding: 7px 14px; border-radius: 7px; font-size: 12px; }
+.settings-dialog .system-actions { margin-bottom: 16px; }
+.settings-dialog .system-info { grid-template-columns: minmax(100px, 28%) minmax(0, 1fr); gap: 0; margin: 16px 0; }
+.settings-dialog .system-info dt, .settings-dialog .system-info dd { padding: 12px 15px; border-bottom: 1px solid #404040; }
+.settings-dialog .system-info dt { color: #d6d2ce; font-weight: 600; }
+.settings-dialog .system-info dd { color: #dedbd7; }
+.settings-dialog .system-info dt:last-of-type, .settings-dialog .system-info dd:last-of-type { border-bottom: 0; }
+.settings-dialog .system-settings-note { padding: 0; }
+@container (max-width: 650px) {
+  .settings-dialog .settings-tabs { flex-basis: 164px; padding: 12px 6px; }
+  .settings-dialog .settings-tabs button { gap: 8px; padding: 10px 9px; font-size: 12px; }
+  .settings-dialog .settings-content { padding: 20px 17px; }
+  .settings-row { align-items: stretch; flex-direction: column; gap: 9px; padding: 12px; }
+  .settings-row > select { flex: none; width: 100%; }
+  .settings-row:has(.settings-switch) { align-items: center; flex-direction: row; }
+  .settings-unit-input { align-self: flex-start; }
+  .settings-dialog .system-info { grid-template-columns: 1fr; }
+  .settings-dialog .system-info dt { padding-bottom: 3px; border: 0; }
+  .settings-dialog .system-info dd { padding-top: 0; }
+}
+@container (max-width: 460px) {
+  .settings-dialog .settings-tabs { flex-basis: 50px; padding: 10px 5px; }
+  .settings-dialog .settings-tabs button { justify-content: center; padding: 10px 4px; }
+  .settings-dialog .settings-tabs button > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .settings-dialog .settings-content { padding: 16px 12px; }
+  .settings-dialog .window-title { max-width: calc(100% - 180px); }
+  .settings-dialog .desktop-path-picker { flex-wrap: wrap; }
+  .settings-dialog .desktop-path-picker input { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-switch, .settings-switch::before { transition: none; }
+}

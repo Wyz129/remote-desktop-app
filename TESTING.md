@@ -1,8 +1,10 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-20。对象为 `remote-desktop-app` 1.1.9，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.10，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.10 的程序全屏网格、搜索/常用、右键收藏、保存失败与重启恢复、键盘焦点、设置分类与紧凑布局、窗口按钮悬停、浏览器折叠及动态视图尺寸见 [1.1.10 交付记录](docs/RELEASE-1.1.10.md)。执行完整 `npm test`，最终界面修改后再跑完整 UI 与打包 EXE 集成。测试使用隔离 Chrome/Electron、临时设置与回环 SSH，不操作用户现有实例或生产服务器。
 
 1.1.9 的登录/高级配置切换、必填与端口校验、密码清理、Enter 登录、紧凑布局和窗口 SVG 几何对齐见 [1.1.9 交付记录](docs/RELEASE-1.1.9.md)。本轮执行完整 `npm test`，并单独复测打包 EXE；截图来自隔离测试环境，没有连接用户服务器。
 
@@ -58,8 +60,8 @@ npm.cmd run test:electron
 
 ```powershell
 npm.cmd run package
-$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.7\win-unpacked\Remote Desktop.exe').Path
-npm.cmd run test:electron
+$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.10\win-unpacked\Remote Desktop.exe').Path
+node --test test/electron.test.cjs test/first-use-electron.test.cjs test/programs-electron.test.cjs test/video-app-electron.test.cjs test/workspace-electron.test.cjs test/browser-electron.test.cjs test/cli-packaged.test.cjs
 Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 ```
 
