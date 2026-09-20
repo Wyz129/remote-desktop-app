@@ -1904,15 +1904,18 @@ function clearRemoteDesktop(preserveTerminals = false) {
 }
 function setConnectionPanelMode(mode) {
   connectionPanelMode = mode;
-  const connected = mode === 'connected' && Boolean(authenticatedProfile);
+  const connected = mode === 'connected' && Boolean(authenticatedProfile), advanced = mode === 'advanced';
   $('connectionDialog').dataset.mode = connected ? 'connected' : mode;
-  $('connectionTitle').textContent = connected ? 'SSH 已连接' : mode === 'reconnect' ? '重新连接 SSH' : 'SSH 登录';
-  $('serverSwitcher').hidden = connected || mode === 'reconnect';
+  $('connectionTitle').textContent = connected ? 'SSH 已连接' : advanced ? '切换账号' : mode === 'reconnect' ? '重新连接 SSH' : 'SSH 登录';
+  $('serverSwitcher').hidden = !advanced;
+  $('backToLogin').hidden = !advanced;
   $('loginCredentials').hidden = connected;
   $('connectedAccount').hidden = !connected;
-  $('connectionAdvanced').hidden = connected || mode === 'reconnect';
-  $('connectSubmit').hidden = connected;
-  for (const id of ['disconnectButton', 'reconnectButton', 'switchAccountButton']) $(id).hidden = !connected;
+  $('connectionAdvanced').hidden = !advanced;
+  $('connectSubmit').hidden = connected || advanced;
+  $('saveServer').hidden = $('advancedConnectSubmit').hidden = !advanced;
+  $('disconnectButton').hidden = $('reconnectButton').hidden = !connected;
+  $('switchAccountButton').hidden = advanced;
   $('connectionError').textContent = '';
   if (connected) {
     connectionProfiles?.clearSecrets();
@@ -1920,15 +1923,22 @@ function setConnectionPanelMode(mode) {
     $('serverDisplayAddress').textContent = authenticatedProfile.host + ':' + authenticatedProfile.port;
     $('connectedUsername').textContent = authenticatedProfile.username;
     $('connectedAddress').textContent = authenticatedProfile.username + '@' + (authenticatedProfile.address || authenticatedProfile.host) + ':' + authenticatedProfile.port;
-    $('connectionHint').textContent = '当前 SSH 会话已连接。';
+    $('connectionHint').textContent = 'SSH 已连接';
   } else {
-    $('connectSubmit').textContent = mode === 'reconnect' ? '重新连接' : '登录';
+    connectionProfiles?.updateHeading();
+    const label = mode === 'reconnect' ? '重新连接' : '登录';
+    $('connectSubmit').setAttribute('aria-label', label); $('connectSubmit').title = label;
     $('sshUsername').readOnly = mode === 'reconnect';
-    $('connectionHint').textContent = mode === 'reconnect' ? '请重新输入密码；使用私钥时可填写口令。密码与口令仅用于本次登录。' : '首次连接需要核验 SSH 主机指纹。';
-    // Reconnection still permits a private-key passphrase without exposing profile editing.
-    $('reconnectKeyCredentials').hidden = mode !== 'reconnect' || !$('sshPrivateKey').value;
+    $('connectionHint').textContent = advanced ? '选择已保存的服务器，或新建一个连接。' : mode === 'reconnect' ? '重新输入密码以连接当前服务器。' : $('sshHost').value ? '使用用户名和密码登录服务器' : '点击“切换账号”添加服务器。';
   }
-  if (connected) $('reconnectKeyCredentials').hidden = true;
+  $('reconnectKeyCredentials').hidden = connected || advanced || !$('sshPrivateKey').value;
+}
+function setConnectionBusy(busy) {
+  $('connectionForm').setAttribute('aria-busy', String(busy));
+  for (const element of $('connectionForm').querySelectorAll('button, input, select')) element.disabled = busy;
+  $('advancedConnectSubmit').textContent = busy ? '正在连接…' : '连接服务器';
+  $('connectSubmit').classList.toggle('connecting', busy);
+  $('connectSubmit').replaceChildren(toolIcon(busy ? 'LoaderCircle' : 'ArrowRight'));
 }
 function showConnectionPanel() {
   if (connecting) return;
@@ -1937,28 +1947,33 @@ function showConnectionPanel() {
   if (!$('connectionDialog').open) $('connectionDialog').showModal();
 }
 async function initializeConnection() {
-  const profiles = connectionProfiles = RemoteConnectionProfiles.mount(api);
-  document.querySelector('.login-avatar').replaceChildren(toolIcon('Server'));
+  const profiles = connectionProfiles = RemoteConnectionProfiles.mount(api, { onSaved: () => { setConnectionPanelMode('login'); $('sshPassword').focus(); } });
+  $('loginUserIcon').replaceChildren(toolIcon('UserRound')); $('loginPasswordIcon').replaceChildren(toolIcon('LockKeyhole'));
+  $('connectSubmit').replaceChildren(toolIcon('ArrowRight')); $('backToLogin').replaceChildren(toolIcon('ArrowLeft')); $('closeConnection').replaceChildren(toolIcon('X'));
+  $('closeDownloads').replaceChildren(toolIcon('X')); $('closeApplications').replaceChildren(toolIcon('X'));
   $('connectButton').replaceChildren(toolIcon('Users'));
   $('downloadsButton').replaceChildren(toolIcon('ArrowUpDown'));
   $('browserButton').replaceChildren(toolIcon('Globe'));
   $('browserButton').addEventListener('click', openServerBrowser);
   $('connectButton').addEventListener('click', showConnectionPanel);
-  $('switchAccountButton').addEventListener('click', () => { profiles.fill(authenticatedProfile || {}); setConnectionPanelMode('login'); $('sshPassword').focus(); });
+  $('switchAccountButton').addEventListener('click', () => { if (connectionPanelMode === 'connected') profiles.fill(authenticatedProfile); else profiles.clearSecrets(); setConnectionPanelMode('advanced'); $('serverProfile').focus(); });
+  $('backToLogin').addEventListener('click', () => { profiles.clearSecrets(); setConnectionPanelMode('login'); $('sshUsername').focus(); });
   $('reconnectButton').addEventListener('click', () => { profiles.fill(authenticatedProfile || {}); setConnectionPanelMode('reconnect'); $('sshPassword').focus(); });
   $('closeConnection').addEventListener('click', () => $('connectionDialog').close());
   $('connectionDialog').addEventListener('close', () => { $('reconnectPassphrase').value = ''; });
   $('connectionForm').addEventListener('submit', async event => {
     event.preventDefault(); if (connecting || connectionPanelMode === 'connected') return;
-    connecting = true; $('connectSubmit').disabled = true; $('connectSubmit').textContent = '正在连接…'; $('connectionError').textContent = '';
+    if (!$('sshHost').checkValidity() || !$('sshPort').checkValidity()) setConnectionPanelMode('advanced');
+    if (!$('connectionForm').reportValidity()) return;
+    connecting = true; setConnectionBusy(true); $('connectionError').textContent = ''; $('connectionHint').textContent = '正在连接服务器…';
     const input = profiles.input();
     if ($('sshPassword').value) input.password = $('sshPassword').value;
     if ($('sshPrivateKey').value) input.privateKeyPath = $('sshPrivateKey').value;
-    if (connectionPanelMode === 'reconnect' && $('reconnectPassphrase').value) input.passphrase = $('reconnectPassphrase').value;
+    if (connectionPanelMode !== 'advanced' && $('reconnectPassphrase').value) input.passphrase = $('reconnectPassphrase').value;
     else if ($('sshPassphrase').value) input.passphrase = $('sshPassphrase').value;
     try { const result = await api.connect(input); if (result?.cancelled) { $('connectionError').textContent = '已取消切换连接，当前会话与编辑内容已保留。'; return; } authenticatedProfile ||= { ...profiles.input(), username: result.username || input.username, address: result.address }; renderServerInfo(); $('connectionDialog').close(); profiles.refresh(await api.getSettings(), false); $('connectionHint').textContent = '已连接 ' + (result.username || input.username) + '@' + (result.host || input.host); }
     catch(error) { $('connectionError').textContent = error.message || String(error); notify('连接失败：' + (error.message || error)); }
-    finally { profiles.clearSecrets(); $('reconnectPassphrase').value = ''; connecting = false; $('connectSubmit').disabled = false; $('connectSubmit').textContent = connectionPanelMode === 'reconnect' ? '重新连接' : '登录'; }
+    finally { profiles.clearSecrets(); connecting = false; setConnectionBusy(false); if ($('connectionDialog').open) $('connectionHint').textContent = '密码不会保存，请重新输入后重试。'; }
   });
   $('chooseKey').addEventListener('click', async () => { try { const value = await api.choosePrivateKey(); if (value) $('sshPrivateKey').value = value; } catch(error) { $('connectionError').textContent = error.message; } });
   $('clearKey').addEventListener('click', () => { $('sshPrivateKey').value = ''; $('sshPassphrase').value = ''; });
@@ -1974,9 +1989,11 @@ async function initializeConnection() {
   document.addEventListener('keydown', event => {
     if (event.key === 'F11' || (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'f')) { event.preventDefault(); requestFullscreen(); }
   }, true);
-  clearRemoteDesktop(); showConnectionPanel();
-  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; profiles.refresh(saved); }
+  clearRemoteDesktop(); setConnectionBusy(true); showConnectionPanel(); $('connectionHint').textContent = '正在读取服务器配置…';
+  try { const saved = await api.getSettings(); extensionSettings = { ...extensionSettings, ...saved }; profiles.refresh(saved); if (!authenticatedProfile) setConnectionPanelMode('login'); }
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
+  finally { setConnectionBusy(false); }
+  if ($('connectionDialog').open && connectionPanelMode === 'login') ($('sshUsername').value ? $('sshPassword') : $('sshUsername')).focus();
   try { for (const descriptor of await api.listDocuments?.() || []) mountWorkbench(descriptor); }
   catch (error) { notify('无法恢复 Monaco Editor：' + error.message); }
 }

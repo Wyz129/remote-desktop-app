@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-20。独立应用版本：1.1.8。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-20。独立应用版本：1.1.9。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.9：炭灰/灰紫窗口主题，最小化/最大化/关闭 SVG 在 28px 控件中居中，符号尺寸分别 16/12/20px。登录样式迁至 app/login.css，普通登录保留头像与用户名/密码两框；切换账号进入 advanced，配置可保存返回登录或直接连接。connectionAdvanced 现为 section，不再是 details；测试应通过 switchAccountButton 进入高级界面，使用 advancedConnectSubmit 提交，普通登录仍用 connectSubmit。connected/reconnect 身份保护及不落盘密码保持。小高度窗口隐藏高级页重复标题并允许内部滚动。回退分支 checkpoint/pre-dark-login-1.1.8；本地提交与打包，仍不推送 GitHub。验证见 docs/RELEASE-1.1.9.md。
 
 1.1.8：Monaco 改为虚拟桌面内的 opaque iframe，通过固定 IPC 桥接保存与关闭，断连保留草稿。lib/workbench-assets.cjs 为仅静态本地资源服务，iframe 允许脚本/表单但无同源权限，远程预览仍只有 allow-scripts。浏览器无遮挡时保持实时原生页面，遮挡时每 750ms 捕获背景图像，最小化停止；不能把该预览称为全帧率后台视频。已连接账号面板显示账号文本及断开/重连/切换账号，重连重新认证，不存密码。顶栏身份右移、传输双向图标、删除终端启动栏、Ubuntu 配色统一。回退分支 checkpoint/pre-embedded-workbench-1.1.7；本地提交与打包，仍不推送 GitHub。实际测试见 docs/RELEASE-1.1.8.md。
 

@@ -30,17 +30,18 @@ after(async () => {
   fs.writeFileSync(path.join(root, 'artifacts', 'standalone-ui-results.json'), JSON.stringify({ boundary: '真实渲染器、无头 Chrome、替身 Electron/SSH API', results }, null, 2));
 });
 
-async function scenario(name, fn) {
+async function scenario(name, fn, options = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.setDefaultTimeout(6000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.addInitScript(() => {
+  await page.addInitScript(({ deferSettings }) => {
     const root = '/home/tester/Desktop';
     const entry = (name, type = 'file', base = root) => ({ name, type, path: `${base}/${name}`, size: '12 B' });
     window.messages = []; window.calls = []; window.downloadPending = new Map();
     window.fetch = (...args) => { throw new Error('Renderer must not fetch local files: ' + String(args[0])); };
     window.settings = { downloadThreshold: 50 * 1024 * 1024, scriptEditor: 'vim', downloadsPath: 'D:\\Downloads' };
+    if (deferSettings) window.initialSettings = new Promise(resolve => { window.resolveInitialSettings = () => resolve(window.settings); });
     window.directories = { '/home/tester': [entry('Documents', 'folder', '/home/tester'), entry('profile.txt', 'file', '/home/tester')], [root]: [entry('projects', 'folder'), entry('results', 'folder'), entry('notes.txt'), entry('picture.png'), entry('archive.zip')], [`${root}/projects`]: [entry('nested','folder',`${root}/projects`), entry('source.txt','file',`${root}/projects`)], [`${root}/projects/nested`]: [], [`${root}/results`]: [] };
     window.systemInfo = { username:'tester',hostname:'remote-server',home:'/home/tester',os:'Ubuntu 24.04 LTS',kernel:'Linux 6.8',architecture:'x86_64',cpu:'4 CPUs',memory:'16 GiB',disk:'40% used',dateTime:'2026-09-18 13:00:00 CST',timeZone:'Asia/Shanghai',locale:'LANG=zh_CN.UTF-8',shell:'/bin/bash',network:'192.0.2.12' };
     window.connectedState = () => window.receive({ type:'remoteState', status:'ready', rootPath:root, homePath:'/home/tester', entries:window.directories[root], config:{viewMode:'details', shortcuts:[{command:'workbench.action.showCommands',label:'Legacy'}]} });
@@ -82,7 +83,7 @@ async function scenario(name, fn) {
       async list(path) { window.calls.push({type:'list',path}); if(window.deniedDirectory === path) throw new Error('Permission denied (EACCES)'); if(!window.directories[path]) throw new Error('目录不存在'); return window.directories[path]; },
       async setDesktop(path) { window.calls.push({type:'setDesktop',path}); if(window.deferDesktop) return new Promise((resolve,reject)=>{window.resolveDesktop=resolve;window.rejectDesktop=reject;}); if(window.deniedDirectory === path) throw new Error('无访问权限：Permission denied (EACCES)'); if(!window.directories[path]) throw new Error('目录不存在'); return {status:'ready',rootPath:path,homePath:'/home/tester',entries:window.directories[path],config:{wallpaper:'slate',viewMode:'details',showHiddenFiles:true}}; },
       async checkFileAccess(path) { window.calls.push({type:'checkFileAccess',path}); if(window.deferFileAccess) return new Promise(resolve=>{window.resolveFileAccess=resolve;}); return {path,readable:window.deniedFile !== path,writable:window.readOnlyFile !== path,error:window.deniedFile === path ? 'Permission denied (EACCES)' : undefined}; },
-      async getSettings() { return window.settings; },
+      async getSettings() { return window.initialSettings || window.settings; },
       async getSystemInfo() { window.calls.push({type:'getSystemInfo'}); if (window.failSystemInfo) throw new Error('SSH connection closed'); if (window.deferSystemInfo) return new Promise(resolve=>{window.resolveSystemInfo=resolve;}); return {...window.systemInfo}; },
       async saveSettings(patch) { Object.assign(window.settings,patch); return window.settings; },
       async choosePrivateKey() { return 'D:\\keys\\id_ed25519'; },
@@ -98,7 +99,7 @@ async function scenario(name, fn) {
       onDownloadProgress(callback) { window.progress = callback; },
       async quitFullscreen() { window.calls.push({type:'quitFullscreen'}); }
     };
-  });
+  }, options);
   try {
     await page.goto(origin + '/app/index.html');
     await page.locator('#connectionDialog[open]').waitFor();
@@ -112,13 +113,82 @@ async function scenario(name, fn) {
   } finally { await page.close(); }
 }
 async function connect(page) {
+  if (!await page.locator('#connectionAdvanced').isVisible()) await page.locator('#switchAccountButton').click();
   await page.locator('#sshHost').fill('ssh.example.test');
   await page.locator('#sshUsername').fill('tester');
   await page.locator('#sshPassword').fill('memory-only');
-  await page.locator('#connectSubmit').click();
+  await page.locator('#advancedConnectSubmit').click();
   await page.locator('#connectionDialog').waitFor({state:'hidden'});
 }
 const icon = (page,name) => page.locator(`#icons [data-path="${desktop}/${name}"]`);
+
+test('initial_profile_loading_cannot_clear_an_entered_password', () => scenario('login-loading', async page => {
+  for (const id of ['sshUsername', 'sshPassword', 'connectSubmit', 'switchAccountButton']) assert.equal(await page.locator('#' + id).isEnabled(), false, id);
+  await page.evaluate(() => { Object.assign(window.settings, { host: 'ssh.example.test', port: 22, username: 'tester' }); window.resolveInitialSettings(); });
+  await page.locator('#sshPassword').fill('entered-after-loading');
+  await page.locator('#connectSubmit').click();
+  await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => window.calls.find(call => call.type === 'connect').input.password), 'entered-after-loading');
+}, { deferSettings: true }));
+
+test('login_validation_keyboard_and_compact_layout', () => scenario('login-layout', async page => {
+  assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'login');
+  assert.equal(await page.locator('#connectionDialog input:visible').count(), 2);
+  await page.locator('#sshUsername').fill('tester');
+  await page.locator('#sshPassword').fill('memory-only');
+  await page.locator('#sshPassword').press('Enter');
+  await page.locator('#sshHost').waitFor();
+  assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'advanced');
+  assert.equal(await page.evaluate(() => window.calls.some(call => call.type === 'connect')), false, 'invalid target never reaches SSH');
+  await page.locator('#sshHost').fill('ssh.example.test');
+  await page.locator('#sshPort').fill('65536');
+  await page.locator('#advancedConnectSubmit').click();
+  assert.equal(await page.evaluate(() => window.calls.some(call => call.type === 'connect')), false);
+  await page.setViewportSize({ width: 560, height: 650 });
+  const geometry = await page.locator('#connectionDialog').evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, client: element.clientWidth, content: element.scrollWidth };
+  });
+  assert.ok(geometry.left >= 0 && geometry.right <= 560 && geometry.top >= 0 && geometry.bottom <= 650);
+  assert.ok(geometry.content <= geometry.client + 1, 'advanced fields do not overflow horizontally');
+  await page.locator('#sshPort').fill('22');
+  await page.locator('#sshAlias').focus();
+  await page.screenshot({ path: path.join(root, 'artifacts', 'login-advanced-compact-1.1.9.png') });
+  await page.locator('#backToLogin').click();
+  assert.equal(await page.locator('#sshPassword').inputValue(), '');
+  await page.screenshot({ path: path.join(root, 'artifacts', 'login-compact-1.1.9.png') });
+  await page.locator('#sshPassword').fill('memory-only');
+  await page.locator('#sshPassword').press('Enter');
+  await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => window.calls.filter(call => call.type === 'connect').length), 1);
+}));
+
+test('window_control_symbols_remain_centered_after_maximize_and_scale', () => scenario('window-control-layout', async page => {
+  await connect(page);
+  await page.locator('#homeShortcut').click();
+  const launch = async id => { await page.locator('#applicationsButton').click(); await page.locator(`[data-application="${id}"]`).click(); };
+  for (const id of ['browser', 'activity', 'htop', 'image', 'video']) await launch(id);
+  await page.locator('#desktopSettings').click();
+  async function checkControls() {
+    const controls = await page.locator('.window-control:visible').evaluateAll(buttons => buttons.map(button => {
+      const icon = button.querySelector('svg'), rect = button.getBoundingClientRect(), glyph = icon?.getBoundingClientRect();
+      return { action: button.dataset.windowAction, dx: glyph ? glyph.x + glyph.width / 2 - rect.x - rect.width / 2 : null, dy: glyph ? glyph.y + glyph.height / 2 - rect.y - rect.height / 2 : null, size: glyph?.width, scale: rect.width / 28 };
+    }));
+    assert.ok(controls.length >= 21, 'seven window kinds expose their controls');
+    for (const control of controls) {
+      assert.notEqual(control.dx, null);
+      assert.ok(Math.abs(control.dx) <= 0.6 && Math.abs(control.dy) <= 0.6, JSON.stringify(control));
+      const size = { minimize: 16, maximize: 12, close: 20 }[control.action];
+      assert.ok(Math.abs(control.size / control.scale - size) <= 0.6, JSON.stringify(control));
+    }
+  }
+  await checkControls();
+  await page.locator('#settingsDialog [data-window-action=maximize]').click();
+  await checkControls();
+  await page.locator('#settingsDialog [data-window-action=maximize]').click();
+  await page.evaluate(() => { document.documentElement.style.zoom = '1.25'; });
+  await checkControls();
+}));
 
 test('applications_overview_bottom_dock_search_keyboard_and_offline_access', () => scenario('applications-overview', async page => {
   await page.locator('#closeConnection').click();
@@ -181,7 +251,8 @@ test('connection_failure_and_disconnect_never_display_demo', () => scenario('con
   assert.equal(await page.locator('#icons .icon').count(),0);
   await page.screenshot({path:path.join(root,'artifacts','standalone-connect.png')});
   await page.evaluate(()=>{window.failConnection=true;});
-  await page.locator('#sshHost').fill('host');await page.locator('#sshUsername').fill('tester');await page.locator('#sshPassword').fill('secret');await page.locator('#connectSubmit').click();
+  await page.locator('#switchAccountButton').click();
+  await page.locator('#sshHost').fill('host');await page.locator('#sshUsername').fill('tester');await page.locator('#sshPassword').fill('secret');await page.locator('#advancedConnectSubmit').click();
   await page.waitForFunction(()=>document.getElementById('connectionError').textContent.includes('Authentication failed'));
   assert.equal(await page.locator('#icons .icon').count(),0);assert.equal(await page.locator('#sshPassword').inputValue(),'');
   await page.evaluate(()=>{window.failConnection=false;});await connect(page);
@@ -198,6 +269,11 @@ test('windows_navigation_resize_drag_minimize_maximize', () => scenario('windows
   await connect(page);await icon(page,'projects').dblclick();
   const win=page.locator('.window').first();await win.locator('.entry').first().waitFor();
   assert.equal(await win.locator('.window-path').inputValue(),`${desktop}/projects`);
+  await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-details-1.1.9.png') });
+  await win.locator('[data-window-action="icons"]').click();
+  await win.locator('.entry').first().click();
+  await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-icons-1.1.9.png') });
+  await win.locator('[data-window-action="details"]').click();
   await win.locator('.window-path').fill('~/Desktop/results');await win.locator('.window-path').press('Enter');
   await page.waitForFunction(()=>document.querySelector('.window-path').value==='/home/tester/Desktop/results');
   await win.locator('[data-window-action="back"]').click();await win.getByText('source.txt',{exact:true}).waitFor();
@@ -292,6 +368,7 @@ test('download_menu_directory_progress_cancel_and_completion', () => scenario('d
 }));
 
 test('settings_threshold_key_picker_and_fullscreen_shortcut', () => scenario('settings', async page => {
+  await page.locator('#switchAccountButton').click();
   await page.locator('#chooseKey').click();assert.match(await page.locator('#sshPrivateKey').inputValue(),/id_ed25519$/);
   await connect(page);
   const credentials = await page.evaluate(()=>window.calls.find(call=>call.type==='connect').input);

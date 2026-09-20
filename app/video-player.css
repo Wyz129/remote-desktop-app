@@ -1,12 +1,12 @@
-.video-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #080a0d; }
-.video-viewport .video-empty { display: grid; place-content: center; gap: 12px; height: 100%; padding: 28px; text-align: center; color: #adb8c7; }
+.video-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #181818; }
+.video-viewport .video-empty { display: grid; place-content: center; gap: 12px; height: 100%; padding: 28px; text-align: center; color: #b4b4b0; }
 .video-viewport .video-empty [data-icon] { width: 56px; height: 56px; margin: 0 auto; }
-.video-viewport .video-empty strong { color: #e7edf5; font-size: 19px; }
+.video-viewport .video-empty strong { color: #eeeeec; font-size: 19px; }
 .video-viewport .video-empty p { max-width: 440px; line-height: 1.7; }
 .video-viewport .video-js { position: absolute; inset: 0; width: 100%; height: 100%; font-family: Arial, 'Microsoft YaHei', sans-serif; }
 .video-viewport .video-js[hidden], .video-viewport .video-empty[hidden] { display: none; }
 .video-viewport .video-js .vjs-tech { object-fit: contain; }
 .video-viewport .video-js button { border-radius: 0; }
 .video-viewport .video-js .vjs-big-play-button { border-radius: .3em; }
-.video-viewport .video-js .vjs-control:focus-visible { outline: 2px solid #8cc3ff; outline-offset: -2px; }
+.video-viewport .video-js .vjs-control:focus-visible { outline: 2px solid #dd825e; outline-offset: -2px; }
 .video-window .video-status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

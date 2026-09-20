@@ -1,0 +1,84 @@
+/* Quiet, centered sign-in; server configuration is a separate view. */
+.login-dialog {
+  width:min(400px, calc(100vw - 40px)); max-height:calc(100vh - 40px);
+  padding:16px 24px 26px; border:0; border-radius:0; box-shadow:none;
+  background:transparent; color:#eeeeee; overflow:auto;
+}
+.login-dialog::backdrop {
+  background:radial-gradient(ellipse at 85% 12%, #49233044, transparent 56%),
+    linear-gradient(125deg, #200c21f8, #170d1afc 58%, #25101df8);
+  backdrop-filter:blur(16px);
+}
+.login-dialog form { display:flex; flex-direction:column; }
+.login-heading { display:flex; align-items:center; gap:10px; min-height:30px; margin-bottom:8px; }
+.login-heading h2 { flex:1; margin:0; font-size:14px; font-weight:500; color:#b7afb9; }
+.login-dialog:not([data-mode="advanced"]) .login-heading h2 { visibility:hidden; }
+.login-heading button { flex:none; display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; border-radius:50%; color:#d7d1d8; }
+.login-heading button .tool-icon { display:block; width:20px; height:20px; }
+.login-dialog #closeConnection { margin-left:auto; }
+.login-identity { text-align:center; }
+.login-avatar { display:grid; place-items:center; width:106px; height:106px; margin:8px auto 18px; border:3px solid #645567; border-radius:50%; overflow:hidden; background:linear-gradient(140deg,#71384c,#bd4a2c); }
+.login-avatar svg { width:100%; height:100%; display:block; fill:#f3efef; }
+#serverDisplayName { margin:0; font-size:22px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; }
+#serverDisplayAddress { margin:7px 0 24px; font-size:12px; color:#aaa0ae; overflow-wrap:anywhere; }
+.login-credentials { display:flex; flex-direction:column; gap:12px; }
+.login-dialog .login-input-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.login-input { display:flex; align-items:center; gap:10px; min-height:46px; padding:4px 6px 4px 15px; border:1px solid #6b5a6e; border-radius:25px; background:#493a4c; }
+.login-input:focus-within { border-color:#a998ad; box-shadow:0 0 0 1px #a998ad44; }
+.login-input > span { display:grid; place-items:center; color:#c0b5c3; }
+.login-input > span .tool-icon { width:16px; height:16px; }
+.login-dialog .login-input input { min-width:0; flex:1; width:100%; margin:0; padding:7px 0; border:0; border-radius:0; outline:0; box-shadow:none; background:transparent; color:#f2eef3; font:inherit; }
+.login-dialog input::placeholder { color:#c1b7c4; opacity:1; }
+.login-dialog #connectSubmit { display:grid; place-items:center; flex:none; width:34px; height:34px; padding:0; border:0; border-radius:50%; color:#302832; background:#f2eff2; }
+.login-dialog #connectSubmit:hover { background:#ffffff; }
+#connectSubmit .tool-icon { display:block; width:19px; height:19px; }
+#connectSubmit.connecting .tool-icon { animation:login-spin 1s linear infinite; }
+@keyframes login-spin { to { transform:rotate(360deg); } }
+.login-dialog #connectionHint, .login-dialog #connectionError { margin:14px 0 0; font-size:12px; line-height:1.55; text-align:center; white-space:pre-wrap; overflow-wrap:anywhere; }
+.login-dialog #connectionHint { color:#b2a6b8; }
+.login-dialog #connectionError { color:#efa59f; }
+.login-dialog #connectionError:empty { display:none; }
+.login-actions { display:flex; justify-content:center; flex-wrap:wrap; gap:10px; margin-top:18px; padding:0; border:0; }
+.login-dialog #switchAccountButton { min-height:34px; padding:7px 16px; color:#ded5e1; border:1px solid transparent; border-radius:18px; background:transparent; font-size:13px; }
+.login-dialog #switchAccountButton:hover { border-color:#68536d; background:#ffffff0b; }
+.connected-account { display:flex; align-items:center; flex-direction:column; gap:9px; margin:0; color:#bdb3c1; text-align:center; overflow-wrap:anywhere; }
+.connected-account strong { color:#eeeeee; font-size:22px; font-weight:500; }
+.connected-account > :last-child { font-size:12px; }
+.login-dialog[data-mode="connected"] .login-actions button { padding:8px 13px; border:1px solid #65576a; border-radius:18px; background:#413345; color:#e6dfe8; }
+.login-dialog[data-mode="connected"] #switchAccountButton { background:#554151; }
+.login-dialog #reconnectKeyCredentials { margin-top:12px; }
+.login-dialog #reconnectKeyCredentials label { font-size:12px; color:#bcb1c0; }
+.login-dialog #reconnectPassphrase { border:1px solid #6b5a6e; background:#493a4c; border-radius:22px; padding:12px 16px; color:#eeeeee; font:inherit; }
+
+/* The advanced view uses the same charcoal surfaces as the file manager. */
+.login-dialog[data-mode="advanced"] { width:min(530px, calc(100vw - 40px)); padding:20px 26px 24px; border:1px solid #414141; border-radius:14px; background:#252525; box-shadow:0 20px 70px #0008; }
+.login-dialog[data-mode="advanced"] .login-heading { margin-bottom:14px; }
+.login-dialog[data-mode="advanced"] .login-heading h2 { color:#e0e0e0; }
+.login-dialog[data-mode="advanced"] .login-avatar { display:none; }
+.login-dialog[data-mode="advanced"] #serverDisplayName { font-size:19px; }
+.login-dialog[data-mode="advanced"] #serverDisplayAddress { margin-bottom:18px; }
+.server-switcher { display:block; margin:0 0 18px; }
+.server-switcher > label { display:block; margin-bottom:7px; font-size:12px; color:#b7b7b7; }
+.server-switcher-controls { display:flex; gap:8px; }
+.server-switcher-controls select { min-width:0; flex:1; }
+.login-dialog[data-mode="advanced"] input, .login-dialog[data-mode="advanced"] select { padding:9px 10px; border:1px solid #505050; border-radius:6px; background:#303030; color:#e2e2e2; font:inherit; }
+.login-dialog[data-mode="advanced"] input:focus, .login-dialog[data-mode="advanced"] select:focus { outline:1px solid #927b94; outline-offset:1px; }
+.login-dialog[data-mode="advanced"] .login-credentials { display:grid; grid-template-columns:90px minmax(0,1fr); align-items:center; gap:10px; }
+.login-dialog[data-mode="advanced"] .login-input-label { position:static; width:auto; height:auto; clip-path:none; font-size:12px; color:#b7b7b7; }
+.login-dialog[data-mode="advanced"] .login-input { min-height:0; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.login-dialog[data-mode="advanced"] .login-input > span { display:none; }
+.login-dialog[data-mode="advanced"] .login-input input { padding:9px 10px; border:1px solid #505050; border-radius:6px; background:#303030; }
+.login-dialog #connectionAdvanced { margin-top:10px; }
+.login-dialog #connectionAdvanced .connection-fields { display:grid; grid-template-columns:90px minmax(0,1fr); gap:10px; align-items:center; margin:0; }
+.login-dialog .connection-fields label { font-size:12px; color:#b7b7b7; }
+.login-dialog .key-picker { display:flex; min-width:0; gap:5px; }
+.login-dialog .key-picker input { flex:1; min-width:0; }
+.login-dialog .key-picker button { flex:none; padding:7px; }
+.login-dialog[data-mode="advanced"] .settings-description { margin-top:14px; color:#a7a7a7; font-size:11px; }
+.login-dialog[data-mode="advanced"] .login-actions { justify-content:flex-end; border-top:1px solid #3b3b3b; padding-top:16px; }
+.login-dialog[data-mode="advanced"] .login-actions button, .login-dialog #newServer, .login-dialog .key-picker button { border:1px solid #525252; border-radius:6px; background:#393939; color:#e0e0e0; }
+.login-dialog #saveServer { padding:9px 14px; }
+.login-dialog #advancedConnectSubmit { padding:9px 17px; background:#674536; border-color:#946d58; }
+.login-dialog[data-mode="advanced"] .login-actions button:hover { filter:brightness(1.12); }
+@media (max-height:740px) { .login-dialog[data-mode="advanced"] { padding:12px 22px 16px; } .login-dialog[data-mode="advanced"] .login-heading { margin-bottom:8px; } .login-dialog[data-mode="advanced"] .login-identity { display:none; } .server-switcher { margin-bottom:12px; } }
+@media (prefers-reduced-motion:reduce) { #connectSubmit.connecting .tool-icon { animation:none; } }

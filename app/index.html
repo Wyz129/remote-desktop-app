@@ -7,6 +7,7 @@
   <title>Remote Desktop</title>
   <link rel="stylesheet" href="../media/workbench/viewer.css">
   <link rel="stylesheet" href="desktop.css">
+  <link rel="stylesheet" href="login.css">
   <link rel="stylesheet" href="../media/workbench/video.css">
   <link rel="stylesheet" href="video-player.css">
   <link rel="stylesheet" href="../media/xterm.css">
@@ -123,24 +124,27 @@
       <footer class="window-footer terminal-status" role="status">正在启动终端…</footer>
     </section>
   </template>
-<dialog id="connectionDialog" class="connection-dialog login-dialog" aria-labelledby="connectionTitle">
-<form id="connectionForm">
-<header class="login-heading"><h2 id="connectionTitle">SSH 登录</h2><button type="button" id="closeConnection" aria-label="关闭连接窗口">×</button></header>
-<div class="login-avatar" aria-hidden="true">⌘</div>
-<h3 id="serverDisplayName">添加服务器</h3><p id="serverDisplayAddress">配置服务器后登录</p>
-<div id="serverSwitcher" class="server-switcher"><select id="serverProfile" aria-label="已保存服务器"><option value="">选择服务器</option></select><button type="button" id="newServer" title="添加服务器">＋</button></div>
-<div id="loginCredentials" class="login-credentials"><label for="sshUsername">用户名</label><input id="sshUsername" autocomplete="username" required placeholder="用户名"><label for="sshPassword">密码</label><input id="sshPassword" type="password" autocomplete="current-password" placeholder="输入密码"></div>
-<div id="connectedAccount" class="connected-account" hidden><span>已登录账号</span><strong id="connectedUsername"></strong><span id="connectedAddress"></span></div>
-<details id="connectionAdvanced" open><summary>高级选项</summary><div class="connection-fields">
+<dialog id="connectionDialog" class="connection-dialog login-dialog" data-mode="login" aria-labelledby="serverDisplayName">
+<form id="connectionForm" novalidate>
+<header class="login-heading"><button type="button" id="backToLogin" aria-label="返回登录" title="返回登录" hidden></button><h2 id="connectionTitle">SSH 登录</h2><button type="button" id="closeConnection" aria-label="关闭连接窗口" title="关闭"></button></header>
+<div class="login-identity"><div class="login-avatar" aria-hidden="true"><svg viewBox="0 0 100 100" focusable="false"><circle cx="50" cy="35" r="16"></circle><path d="M19 86c0-20 13-32 31-32s31 12 31 32z"></path></svg></div>
+<h3 id="serverDisplayName">Remote Desktop</h3><p id="serverDisplayAddress">选择服务器以登录</p></div>
+<div id="serverSwitcher" class="server-switcher" hidden><label for="serverProfile">已保存的服务器</label><div class="server-switcher-controls"><select id="serverProfile" aria-label="已保存服务器"><option value="">选择服务器</option></select><button type="button" id="newServer" title="添加服务器">新建</button></div></div>
+<div id="loginCredentials" class="login-credentials">
+<label class="login-input-label" for="sshUsername">用户名</label><div class="login-input"><span id="loginUserIcon" aria-hidden="true"></span><input id="sshUsername" autocomplete="username" required placeholder="用户名" aria-label="用户名"></div>
+<label class="login-input-label" for="sshPassword">密码</label><div class="login-input password-input"><span id="loginPasswordIcon" aria-hidden="true"></span><input id="sshPassword" type="password" autocomplete="current-password" placeholder="密码" aria-label="密码"><button type="submit" id="connectSubmit" aria-label="登录" title="登录"></button></div>
+</div>
+<div id="connectedAccount" class="connected-account" hidden><span>当前账号</span><strong id="connectedUsername"></strong><span id="connectedAddress"></span></div>
+<section id="connectionAdvanced" aria-label="服务器配置" hidden><div class="connection-fields">
 <label for="sshHost">服务器地址</label><input id="sshHost" autocomplete="off" required placeholder="服务器 IP 或主机名">
 <label for="sshPort">端口</label><input id="sshPort" type="number" min="1" max="65535" value="22" required>
 <label for="sshAlias">服务器别名</label><input id="sshAlias" autocomplete="off" maxlength="100" placeholder="可选">
 <label for="sshPrivateKey">私钥文件</label><div class="key-picker"><input id="sshPrivateKey" readonly placeholder="可选"><button type="button" id="chooseKey">选择</button><button type="button" id="clearKey">清除</button></div>
 <label for="sshPassphrase">私钥口令</label><input id="sshPassphrase" type="password" autocomplete="off"></div>
-<p class="settings-description">配置使用上方的用户名。密码与私钥口令仅用于本次登录，不保存；切换服务器后请重新输入。</p><button type="button" id="saveServer">保存服务器配置</button></details>
-<div id="reconnectKeyCredentials" class="login-credentials" hidden><label for="reconnectPassphrase">私钥口令</label><input id="reconnectPassphrase" type="password" autocomplete="off"></div>
-<p id="connectionError" role="alert"></p><p id="connectionHint" role="status">首次连接需要核验 SSH 主机指纹。</p>
-<footer class="settings-footer"><button type="button" id="disconnectButton" hidden>断开</button><button type="button" id="reconnectButton" hidden>重新连接</button><button type="button" id="switchAccountButton" hidden>切换账号</button><button type="submit" id="connectSubmit" class="primary">登录</button></footer>
+<p class="settings-description">密码与私钥口令仅用于本次登录，不会保存在服务器配置中。</p></section>
+<div id="reconnectKeyCredentials" class="login-credentials" hidden><label for="reconnectPassphrase">私钥口令</label><input id="reconnectPassphrase" type="password" autocomplete="off" placeholder="私钥口令（可选）"></div>
+<p id="connectionError" role="alert"></p><p id="connectionHint" role="status">使用用户名和密码登录服务器</p>
+<footer class="login-actions"><button type="button" id="disconnectButton" hidden>断开</button><button type="button" id="reconnectButton" hidden>重新连接</button><button type="button" id="switchAccountButton">切换账号</button><button type="button" id="saveServer" hidden>保存配置</button><button type="submit" id="advancedConnectSubmit" class="primary" hidden>连接服务器</button></footer>
 </form></dialog>
 <dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>将在真实主目录中初始化 .rdesktop/desktop、log 和 download。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">重新初始化</button></footer></dialog>
 <dialog id="desktopPickerDialog" class="connection-dialog directory-picker" aria-labelledby="desktopPickerTitle"><h2 id="desktopPickerTitle">选择桌面目录</h2><form id="desktopPickerForm" class="directory-picker-address"><button type="button" id="desktopPickerUp" aria-label="上一级目录">↑</button><input id="desktopPickerPath" aria-label="选择目录地址" spellcheck="false" autocomplete="off"><button type="submit" id="desktopPickerGo">打开</button></form><p id="desktopPickerError" role="alert"></p><div id="desktopPickerEntries" class="directory-picker-entries" aria-label="可选目录"></div><footer class="settings-footer"><button type="button" id="desktopPickerCancel">取消</button><button type="button" id="desktopPickerSelect" class="primary">使用此目录</button></footer></dialog>

@@ -1,17 +1,17 @@
 'use strict';
 window.RemoteConnectionProfiles = Object.freeze({
-  mount(api) {
+  mount(api, options = {}) {
     const $ = id => document.getElementById(id);
     let profiles = [], selected = '';
-    const clearSecrets = () => { $('sshPassword').value = ''; $('sshPassphrase').value = ''; };
+    const clearSecrets = () => { $('sshPassword').value = ''; $('sshPassphrase').value = ''; $('reconnectPassphrase').value = ''; };
     const updateHeading = () => {
-      $('serverDisplayName').textContent = $('sshAlias').value.trim() || $('sshHost').value.trim() || '添加服务器';
-      $('serverDisplayAddress').textContent = $('sshHost').value ? `${$('sshHost').value}:${$('sshPort').value || 22}` : '配置服务器后登录';
+      $('serverDisplayName').textContent = $('sshAlias').value.trim() || $('sshHost').value.trim() || 'Remote Desktop';
+      $('serverDisplayAddress').textContent = $('sshHost').value ? `${$('sshHost').value}:${$('sshPort').value || 22}` : '选择服务器以登录';
     };
     function fill(profile = {}) {
       selected = profile.id || ''; clearSecrets();
       for (const [field, value] of Object.entries({ sshHost: profile.host || '', sshPort: profile.port || 22, sshUsername: profile.username || '', sshAlias: profile.alias || '', sshPrivateKey: profile.privateKeyPath || '' })) $(field).value = value;
-      $('serverProfile').value = selected; $('connectionAdvanced').open = !profile.host;
+      $('serverProfile').value = selected;
       $('connectionError').textContent = ''; updateHeading();
     }
     function refresh(saved, apply = true) {
@@ -33,12 +33,15 @@ window.RemoteConnectionProfiles = Object.freeze({
     for (const id of ['sshHost', 'sshPort', 'sshAlias']) $(id).addEventListener('input', updateHeading);
     $('saveServer').addEventListener('click', async () => {
       $('saveServer').disabled = true; $('connectionError').textContent = '';
-      try { refresh(await api.saveServer(input()), false); $('connectionHint').textContent = '服务器配置已保存；密码仅用于本次登录。'; $('connectionAdvanced').open = false; }
+      try {
+        if (!$('connectionForm').reportValidity()) return;
+        refresh(await api.saveServer(input()), false); clearSecrets(); options.onSaved?.();
+        $('connectionHint').textContent = '配置已保存，请输入密码登录。';
+      }
       catch (error) { $('connectionError').textContent = error.message; }
       finally { $('saveServer').disabled = false; }
     });
-    $('connectionForm').addEventListener('invalid', () => { $('connectionAdvanced').open = true; }, true);
     $('connectionDialog').addEventListener('close', clearSecrets);
-    return { refresh, input, clearSecrets, fill };
+    return { refresh, input, clearSecrets, fill, updateHeading };
   }
 });

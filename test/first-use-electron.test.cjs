@@ -40,13 +40,17 @@ test('first connection creates private storage, resets old desktop preference, s
   const page = await application.firstWindow(); page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.locator('#connectionDialog[open]').waitFor();
-  assert.equal(await page.locator('#connectionAdvanced').evaluate(element => element.open), false);
-  await page.locator('#connectionAdvanced summary').click();
+  assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'login');
+  for (const selector of ['#sshUsername', '#sshPassword', '#switchAccountButton', '#connectSubmit']) assert.equal(await page.locator(selector).isVisible(), true, selector);
+  for (const selector of ['#connectionAdvanced', '#serverSwitcher', '#advancedConnectSubmit']) assert.equal(await page.locator(selector).isVisible(), false, selector);
+  await page.locator('#switchAccountButton').click();
+  assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'advanced');
+  assert.equal(await page.locator('#connectionAdvanced').isVisible(), true);
   await page.locator('#sshAlias').fill('计算服务器 A');
   await page.locator('#sshPassword').fill(fixture.password);
   await page.locator('#sshPassphrase').fill('fixture-private-key-passphrase');
   await page.locator('#saveServer').click();
-  await page.waitForFunction(() => !document.getElementById('connectionAdvanced').open && document.getElementById('connectionHint').textContent.includes('已保存'));
+  await page.waitForFunction(() => document.getElementById('connectionDialog').dataset.mode === 'login' && document.getElementById('connectionHint').textContent.includes('已保存'));
   const firstId = await page.locator('#serverProfile').inputValue(); assert.ok(firstId);
   const savedFirst = JSON.parse(await fs.readFile(path.join(userData, 'settings.json'), 'utf8'));
   assert.equal(savedFirst.storageVersion, 2);
@@ -56,6 +60,7 @@ test('first connection creates private storage, resets old desktop preference, s
   assert.ok(!JSON.stringify(savedFirst).includes('fixture-private-key-passphrase'));
   assert.ok(!/"(?:password|passphrase|privateKey)"\s*:/.test(JSON.stringify(savedFirst)));
 
+  await page.locator('#switchAccountButton').click();
   await page.locator('#newServer').click();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
   assert.equal(await page.locator('#sshPassphrase').inputValue(), '');
@@ -65,6 +70,8 @@ test('first connection creates private storage, resets old desktop preference, s
   await page.locator('#sshAlias').fill('备用服务器 B');
   await page.locator('#saveServer').click();
   await page.waitForFunction(() => document.getElementById('serverProfile').options.length === 3);
+  await page.waitForFunction(() => document.getElementById('connectionDialog').dataset.mode === 'login');
+  await page.locator('#switchAccountButton').click();
   await page.locator('#sshPassword').fill('must-clear-on-switch');
   await page.locator('#serverProfile').selectOption(firstId);
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
@@ -72,6 +79,9 @@ test('first connection creates private storage, resets old desktop preference, s
   assert.equal(await page.locator('#serverDisplayName').textContent(), '计算服务器 A');
   assert.equal(await page.locator('#sshPort').inputValue(), String(fixture.config.port));
   await fs.mkdir(path.join(project, 'artifacts'), { recursive: true });
+  await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-login-advanced.png' : 'electron-login-advanced.png') });
+  await page.locator('#backToLogin').click();
+  assert.equal(await page.locator('#connectionAdvanced').isVisible(), false);
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-login.png' : 'electron-login.png') });
   await page.locator('#sshPassword').fill(fixture.password);
   await page.locator('#connectSubmit').click();
@@ -93,6 +103,7 @@ test('first connection creates private storage, resets old desktop preference, s
   for (const selector of ['#disconnectButton', '#reconnectButton', '#switchAccountButton']) assert.equal(await page.locator(selector).isVisible(), true, selector);
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-account.png' : 'electron-account.png') });
   await page.locator('#switchAccountButton').click();
+  assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'advanced');
   assert.equal(await page.locator('#sshUsername').isEditable(), true);
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
   assert.equal(await page.locator('#serverSwitcher').isVisible(), true);
