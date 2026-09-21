@@ -255,8 +255,6 @@ button:disabled { opacity: .4; cursor: default; }
 #connectionError,#extensionSettingsError,#settingsError { color:#ffb1ad; }
 #connectionHint { font-size:12px; } .connection-dialog .settings-footer { margin-top:12px; }
 .settings-fields #settingsDownloadThreshold { min-width:0; width:100%; padding:7px; color:var(--text); background:var(--field); border:1px solid #6c635d; border-radius:4px; }
-.downloads-panel { position:fixed; z-index:2100; right:12px; top:42px; width:min(450px,calc(100vw - 24px)); max-height:calc(100vh - 64px); overflow:auto; border:1px solid #4a4a4a; border-radius:12px; padding:16px; color:var(--text); background:#292929fa; box-shadow:0 12px 35px #0009; }
-.downloads-panel header { display:flex; align-items:center; justify-content:space-between; } .downloads-panel h2 { font-size:17px; margin:0; }
 .download-item { padding:13px 0; border-top:1px solid var(--line); } .download-item strong { display:block; overflow-wrap:anywhere; } .download-status { font-size:12px; color:#bdbdb8; overflow-wrap:anywhere; line-height:1.5; }
 .download-item progress { width:calc(100% - 72px); height:9px; accent-color:#e95420; margin-right:12px; } .download-item button { padding:5px 10px; }
 .image-controls { display:flex; flex-wrap:wrap; flex:none; align-items:center; gap:6px; padding:7px 9px; background:#2d2d2d; border-bottom:1px solid var(--line); }
@@ -271,8 +269,6 @@ button:disabled { opacity: .4; cursor: default; }
 .image-status { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 @media(max-width:700px) { .image-help { display:none; } .toolbar { gap:5px; } .toolbar-actions { gap:3px; } .server-clock { display:none; } .connection-fields { grid-template-columns:65px minmax(0,1fr); } }
 .transfer-controls { display:grid; gap:8px; padding:12px 0; border-bottom:1px solid #555; }
-.transfer-buttons { display:flex; gap:10px; }
-.transfer-buttons button { flex:1; padding:12px; font-size:15px; }
 .transfer-help { font-size:12px; color:#c5b7bc; margin:0; line-height:1.7; }
 .transfer-history-heading { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:12px; }
 .transfer-history-heading h3 { font-size:13px; margin:0; }
@@ -281,7 +277,6 @@ button:disabled { opacity: .4; cursor: default; }
 .download-item .transfer-remove { padding:4px 8px; font-size:12px; }
 .window-picker-count { display:block; color:#dac6bb; font-size:11px; margin-top:4px; }
 #transferError { color:#ffb5a9; white-space:pre-wrap; }
-.downloads-panel { width:min(480px,90vw); max-height:80vh; overflow:auto; }
 .activity-toast { position:fixed; right:18px; bottom:46px; z-index:2200; width:min(370px,calc(100vw - 36px)); padding:12px 14px; border:1px solid #505050; border-radius:9px; background:#303030; box-shadow:0 8px 30px #0007; }
 .activity-toast-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .activity-toast-heading button { padding:2px 7px; }

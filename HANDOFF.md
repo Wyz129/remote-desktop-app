@@ -1,5 +1,15 @@
 # Remote Desktop App 开发交接
 
+更新日期：2026-09-21。当前独立应用版本：1.1.13。
+
+1.1.13：快捷栏/目录空白右键“打开本机终端”调用固定 terminal:open-local IPC，lib/local-terminal.cjs 用隐藏 PowerShell 启动器与 Start-Process 分配独立 Windows 控制台，内层 -NoNewWindow -Wait 运行随包 rdesktop shell。直接 detached + stdio ignore 会失去 TTY，不能回退该实现。Electron GUI 子系统对 stdin 初始化不同；scripts/cli.cjs 的 interactiveInput 仅在 Electron/Windows、实际控制台输出、stdin 为字符设备时，以 r+ 重开 CONIN$ 获得 libuv 原始输入，不接管重定向文件/管道。lib/interactive-shell.cjs 复用现有 SSH PTY，instance-bridge 增加有大小/流量边界的双向 shell 帧，CLI raw mode、UTF-8 增量解码、resize、Ctrl+C 转发、Ctrl+] 关闭。日志进入第三方访问，系统日志仅保留连接引用。启动参数没有凭据/令牌。
+
+RTerminal 用本机选区与固定剪贴板 IPC 修复鼠标、Ctrl+C/V，Marked/DOMPurify/KaTeX 提供独立 Reading 分栏。Transfer Center 是与 Settings 一致的独立单例虚拟窗口；默认服务器上传位置按当前服务器身份保存，缺省 ~/.rdesktop/download；本机下载位置全局保存。Programs/顶栏模块英文；app/context-menu.js 共享白名单、按上下文显示与 Settings 自定义。路径热区悬停高亮。
+
+仅普通 F11 切换桌面全屏，主进程统一拦截所有 WebContents；Esc 交给当前程序。Exit 返回真实请求结果、合并重复点击、等待连接切换并取消挂起握手、保留 Monaco 未保存确认；清理失败或超时有明确退出选择。终端关闭不弹保存确认。
+
+新增源码、隔离 Electron/SSH、Windows 隐藏原生控制台 TTY 与最终包回归，详细结果以 docs/RELEASE-1.1.13.md 为准。回退 checkpoint/pre-terminal-transfer-1.1.12；本轮仅本地提交/打包，不推送 GitHub。默认使用当前源码和本节，以下是历史记录。
+
 更新日期：2026-09-21。独立应用版本：1.1.12。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
 
 1.1.12 当前状态：顶栏账号显示用户名及连接圆点，已连接面板仅显示服务器别名、完整账号地址、重连图标、切换账号、退出桌面，独立顶栏退出默认隐藏但可在偏好中显示。没有保存服务器时登录页不显示凭据框，头像改为磁盘图标。空别名保存为 Unknown Server，首次成功连接按系统名/UID 生成 `<OS> User/Root`，手工别名保持。设置新增 connection 分类，saveConnectionPort 校验当前 workspaceIdentity、端口和已认证配置，只更改客户端目标后重新认证，不操作 sshd；密码重输，已保存私钥可重用，提交认证前保留现有连接。新增 test/session-ui.test.cjs、test/session-electron.test.cjs。

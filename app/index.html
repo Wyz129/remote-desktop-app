@@ -17,19 +17,21 @@
   <link rel="stylesheet" href="../media/workbench/video.css">
   <link rel="stylesheet" href="video-player.css">
   <link rel="stylesheet" href="../media/xterm.css">
+  <link rel="stylesheet" href="../media/workbench/katex.css">
+  <link rel="stylesheet" href="terminal-tools.css">
 </head>
 <body>
   <header class="toolbar">
     <div class="brand"><span id="notice" role="status" aria-live="polite">正在读取桌面…</span></div>
     <time id="serverClock" class="server-clock" aria-label="服务器时间" role="button" tabindex="0" aria-expanded="false" aria-controls="notificationPanel">服务器时间 —</time>
-    <div class="toolbar-actions"><button id="connectButton" class="toolbar-icon connection-button" aria-label="账号与连接" title="账号与连接"><span class="connection" id="connection">未登录</span><span id="connectionIndicator" class="connection-indicator" aria-hidden="true"></span></button><button id="downloadsButton" class="toolbar-icon" aria-label="传输中心" title="传输中心"></button><button id="activityButton" class="toolbar-icon" aria-label="实时监听" title="实时监听"></button><button id="browserButton" class="toolbar-icon" aria-label="浏览器" title="浏览器"></button><button id="homeShortcut" class="toolbar-icon" title="Home" aria-label="Home"></button><button id="desktopSettings" class="toolbar-icon" aria-label="设置" title="设置"></button><button id="fullscreen" class="toolbar-icon" aria-label="全屏" title="全屏"></button></div>
+    <div class="toolbar-actions"><button id="connectButton" class="toolbar-icon connection-button" aria-label="Account" title="Account"><span class="connection" id="connection">未登录</span><span id="connectionIndicator" class="connection-indicator" aria-hidden="true"></span></button><button id="downloadsButton" class="toolbar-icon" aria-label="Transfer Center" title="Transfer Center"></button><button id="activityButton" class="toolbar-icon" aria-label="Activity Monitor" title="Activity Monitor"></button><button id="browserButton" class="toolbar-icon" aria-label="Browser" title="Browser"></button><button id="homeShortcut" class="toolbar-icon" title="Home" aria-label="Home"></button><button id="desktopSettings" class="toolbar-icon" aria-label="Settings" title="Settings"></button><button id="fullscreen" class="toolbar-icon" aria-label="Fullscreen" title="Fullscreen"></button></div>
   </header>
   <div class="workspace">
-    <aside class="dock" id="dock" aria-label="收藏夹" title="收藏夹">
+    <aside class="dock" id="dock" aria-label="收藏夹">
       <div id="favoriteApps" class="favorite-apps" aria-label="收藏的程序"></div>
       <div id="pinnedApps" class="pinned-apps" aria-label="固定的应用"></div>
       <div id="windowTabs" class="window-tabs"></div>
-      <button id="applicationsButton" class="applications-button" type="button" title="程序" aria-label="程序" aria-expanded="false" aria-controls="applicationsPanel"><span class="applications-dots" aria-hidden="true"></span></button>
+      <button id="applicationsButton" class="applications-button" type="button" title="Programs" aria-label="Programs" aria-expanded="false" aria-controls="applicationsPanel"><span class="applications-dots" aria-hidden="true"></span></button>
     </aside>
     <main class="desktop" id="desktop" aria-label="远程桌面">
       <div class="desktop-caption"><span class="caption-icon" aria-hidden="true">▦</span><span id="desktopPath">桌面</span></div>
@@ -37,7 +39,7 @@
       <div id="windows"></div>
       <section id="applicationsPanel" class="applications-panel" role="dialog" aria-labelledby="applicationsTitle" aria-describedby="applicationsHint" hidden>
         <div class="applications-content">
-          <header class="applications-heading"><h2 id="applicationsTitle">程序</h2><button id="closeApplications" type="button" aria-label="关闭程序" title="关闭">×</button></header>
+          <header class="applications-heading"><h2 id="applicationsTitle">Programs</h2><button id="closeApplications" type="button" aria-label="关闭程序" title="关闭">×</button></header>
           <label class="applications-search"><span aria-hidden="true">⌕</span><input id="applicationsSearch" type="search" aria-label="搜索程序" placeholder="搜索程序…" autocomplete="off" spellcheck="false"></label>
           <p id="applicationsHint" class="applications-hint">选择应用，在当前虚拟桌面中打开。</p>
           <div class="applications-results"><div id="applicationsGrid" class="applications-grid" aria-label="可用程序"></div><p id="applicationsEmpty" class="applications-empty" role="status" hidden>没有匹配的程序</p></div>
@@ -45,7 +47,7 @@
         </div>
       </section>
       <dialog id="settingsDialog" class="settings-dialog category-panel" aria-labelledby="settingsTitle" tabindex="-1">
-        <header class="titlebar"><span class="settings-app-icon" aria-hidden="true">⚙</span><h2 id="settingsTitle" class="window-title">设置</h2><div class="window-controls" aria-label="设置窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化设置" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化设置" title="最大化">□</button><button type="button" id="closeSettings" class="window-control close" data-window-action="close" aria-label="关闭设置" title="关闭">×</button></div></header>
+        <header class="titlebar"><span class="settings-app-icon" aria-hidden="true">⚙</span><h2 id="settingsTitle" class="window-title">Settings</h2><div class="window-controls" aria-label="设置窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化设置" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化设置" title="最大化">□</button><button type="button" id="closeSettings" class="window-control close" data-window-action="close" aria-label="关闭设置" title="关闭">×</button></div></header>
         <div class="settings-layout">
         <nav class="settings-tabs" role="tablist" aria-label="设置分类" aria-orientation="vertical">
           <button type="button" id="desktopSettingsTab" role="tab" aria-selected="true" aria-controls="desktopSettingsPanel" data-settings-tab="desktop" data-settings-icon="Monitor"><span class="settings-nav-icon" aria-hidden="true"></span><span>桌面与外观</span></button>
@@ -53,10 +55,12 @@
           <button type="button" id="systemSettingsTab" role="tab" aria-selected="false" aria-controls="systemSettingsPanel" data-settings-tab="system" data-settings-icon="Server" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>远程系统</span></button>
           <button type="button" id="placesSettingsTab" role="tab" aria-selected="false" aria-controls="placesSettingsPanel" data-settings-tab="places" data-settings-icon="Folder" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>目录与侧栏</span></button>
           <button type="button" id="shellSettingsTab" role="tab" aria-selected="false" aria-controls="shellSettingsPanel" data-settings-tab="shell" data-settings-icon="PanelTop" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>上栏与通知</span></button>
+          <button type="button" id="contextMenuSettingsTab" role="tab" aria-selected="false" aria-controls="contextMenuSettingsPanel" data-settings-tab="context-menu" data-settings-icon="MousePointer2" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>右键菜单</span></button>
           <button type="button" id="connectionSettingsTab" role="tab" aria-selected="false" aria-controls="connectionSettingsPanel" data-settings-tab="connection" data-settings-icon="Network" tabindex="-1"><span class="settings-nav-icon" aria-hidden="true"></span><span>连接</span></button>
         </nav>
         <div class="settings-content">
         <section id="placesSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="placesSettingsTab" hidden></section>
+        <section id="contextMenuSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="contextMenuSettingsTab" hidden></section>
         <section id="shellSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="shellSettingsTab" hidden></section>
         <section id="connectionSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="connectionSettingsTab" hidden><h3 class="settings-page-title">连接</h3><p class="settings-description">修改本机连接服务器时使用的 SSH 端口。服务器必须已在目标端口提供 SSH 服务。</p><form id="connectionPortForm"><div class="settings-card"><label class="preference-field">当前服务器<output id="settingsConnectionTarget">请先连接 SSH</output></label><label class="preference-field">SSH 端口<input id="settingsConnectionPort" type="number" min="1" max="65535" required value="22"></label></div><p class="settings-description">确认后重新连接；使用密码登录时会要求再次输入密码。不会修改服务器的 SSH 服务配置。</p><p id="connectionPortError" class="interface-error" role="alert"></p><footer class="settings-footer"><button id="saveConnectionPort" type="submit" class="primary">保存并重新连接</button></footer></form></section>
         <section id="desktopSettingsPanel" class="settings-page" role="tabpanel" aria-labelledby="desktopSettingsTab">
@@ -146,8 +150,8 @@
   <template id="terminalTemplate">
     <section class="window terminal-window" aria-label="终端窗口" tabindex="-1">
       <header class="titlebar"><span class="terminal-app-icon" aria-hidden="true">&gt;_</span><strong class="window-title">终端</strong><div class="window-controls" aria-label="窗口控件"><button type="button" class="window-control" data-window-action="minimize" aria-label="最小化" title="最小化">−</button><button type="button" class="window-control" data-window-action="maximize" aria-label="最大化" title="最大化">□</button><button type="button" class="window-control close" data-window-action="close" aria-label="关闭终端窗口" title="关闭终端及其进程">×</button></div></header>
-      <div class="terminal-location"></div>
-      <div class="terminal-surface" aria-label="终端内容"></div>
+      <div class="terminal-location-bar"><div class="terminal-location"></div><button type="button" data-terminal-reading aria-pressed="false" title="Markdown 与公式阅读分栏">Reading</button><button type="button" data-terminal-selection disabled title="将选中的终端文字渲染为 Markdown 与公式">Selection</button></div>
+      <div class="terminal-content"><div class="terminal-surface" aria-label="终端内容"></div><aside class="terminal-reader" aria-label="Markdown 与公式阅读" hidden><header class="terminal-reader-head"><span class="terminal-reader-mode">实时输出 · Markdown / LaTeX</span><button type="button" data-terminal-live title="显示实时终端输出">Live</button><button type="button" data-terminal-reader-close aria-label="关闭阅读分栏" title="关闭阅读分栏">×</button></header><div class="terminal-reader-content"></div></aside></div>
       <footer class="window-footer terminal-status" role="status">正在启动终端…</footer>
     </section>
   </template>
@@ -176,20 +180,20 @@
 <dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>将在真实主目录中初始化 .rdesktop/desktop、log 和 download。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">重新初始化</button></footer></dialog>
 <dialog id="desktopPickerDialog" class="connection-dialog directory-picker" aria-labelledby="desktopPickerTitle"><h2 id="desktopPickerTitle">选择桌面目录</h2><form id="desktopPickerForm" class="directory-picker-address"><button type="button" id="desktopPickerUp" aria-label="上一级目录">↑</button><input id="desktopPickerPath" aria-label="选择目录地址" spellcheck="false" autocomplete="off"><button type="submit" id="desktopPickerGo">打开</button></form><p id="desktopPickerError" role="alert"></p><div id="desktopPickerEntries" class="directory-picker-entries" aria-label="可选目录"></div><footer class="settings-footer"><button type="button" id="desktopPickerCancel">取消</button><button type="button" id="desktopPickerSelect" class="primary">使用此目录</button></footer></dialog>
 <dialog id="fileAccessDialog" class="connection-dialog" aria-labelledby="fileAccessTitle"><h2 id="fileAccessTitle">无访问权限</h2><p id="fileAccessDetail" role="alert"></p><footer class="settings-footer"><button type="button" id="fileAccessCancel">关闭</button><button type="button" id="fileAccessReadOnly" class="primary" hidden>只读打开</button></footer></dialog>
-<aside id="downloadsPanel" class="downloads-panel category-panel" aria-label="传输中心" hidden>
-<header><h2>传输中心</h2><button id="closeDownloads" aria-label="关闭传输中心">×</button></header>
+<section id="downloadsPanel" class="transfer-window category-panel" aria-label="Transfer Center" tabindex="-1" hidden>
+<header class="titlebar"><span class="transfer-app-icon" aria-hidden="true"></span><strong class="window-title">Transfer Center</strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button id="closeDownloads" class="window-control close" data-window-action="close" aria-label="关闭 Transfer Center">×</button></div></header>
 <div class="settings-layout"><nav class="settings-tabs" aria-label="传输中心分类">
 <button id="transferTasksTab" type="button" role="tab" aria-selected="true" aria-controls="transferTasksPage" data-transfer-tab="tasks"><span class="settings-nav-icon" data-transfer-icon="ArrowDownUp" aria-hidden="true"></span><span>任务</span></button>
 <button id="transferHistoryTab" type="button" role="tab" aria-selected="false" aria-controls="transferHistoryPage" data-transfer-tab="history"><span class="settings-nav-icon" data-transfer-icon="History" aria-hidden="true"></span><span>历史记录</span></button>
 <button id="transferAdvanced" type="button" class="category-link"><span class="settings-nav-icon" data-transfer-icon="Settings" aria-hidden="true"></span><span>高级设置</span></button>
 </nav><div class="settings-content"><p id="transferError" role="alert"></p>
 <section id="transferTasksPage" role="tabpanel" aria-labelledby="transferTasksTab"><h3 class="settings-page-title">任务</h3><section class="transfer-controls">
-<div class="transfer-buttons"><button id="transferUpload" class="primary">上传</button><button id="transferDownload" class="primary">下载</button></div>
+<form id="transferDirectoriesForm"><div class="settings-card"><label class="transfer-path-field" for="transferServerDirectory">服务器上传目录<span class="path-controls"><input id="transferServerDirectory" spellcheck="false" autocomplete="off" placeholder="连接后使用 ~/.rdesktop/download"><button type="button" id="browseTransferServerDirectory">浏览…</button></span><small>从本机上传文件时，默认选中的服务器保存目录。</small></label><label class="transfer-path-field" for="transferLocalDirectory">本地下载目录<span class="path-controls"><input id="transferLocalDirectory" spellcheck="false" autocomplete="off" placeholder="Windows 下载目录"><button type="button" id="browseTransferLocalDirectory">浏览…</button></span><small>从服务器下载文件时，默认选中的本机保存目录。</small></label></div><div class="transfer-path-actions"><span id="transferDirectoryStatus" role="status"></span><button id="saveTransferDirectories" class="primary" type="submit">保存目录</button></div></form>
 <p class="transfer-help">将本机文件拖入此窗口上传；将服务器文件或文件夹拖入此窗口下载。上传支持多选文件，不支持文件夹。</p></section>
 <p id="downloadsEmpty" class="transfer-empty">暂无进行中的任务。已结束任务可在历史记录中查看。</p><div id="downloadItems"></div></section>
 <section id="transferHistoryPage" role="tabpanel" aria-labelledby="transferHistoryTab" hidden><div class="transfer-history-heading"><h3 class="settings-page-title">历史记录</h3><button id="clearTransferHistory" type="button" disabled>清除已结束记录</button></div><p id="transferHistoryEmpty" class="transfer-empty">尚无传输历史</p><div id="transferHistoryItems"></div></section>
-</div></div></aside>
-<template id="imageTemplate"><section class="window image-window" aria-label="图片查看器" tabindex="-1"><header class="titlebar"><span aria-hidden="true">▧</span><strong class="window-title"></strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button class="window-control close" data-window-action="close" aria-label="关闭图片">×</button></div></header><div class="image-controls"><button data-image-action="open">打开图片</button><button data-image-action="out" aria-label="缩小图片">−</button><button data-image-action="in" aria-label="放大图片">＋</button><button data-image-action="actual">100%</button><button data-image-action="fit">适应窗口</button><button data-image-action="rotate" title="旋转 90° · R">旋转</button><button data-image-action="flip" title="水平翻转 · H">翻转</button><span class="image-scale">—</span><span class="image-help">滚轮缩放 · 拖动平移</span></div><div class="image-viewport"><div class="image-empty"><strong>图片查看器</strong><p>从服务器选择 PNG、JPEG、GIF、WebP、BMP 或 AVIF 图片</p><button data-image-action="open">打开图片</button><small>Viewer.js · 单图最大 25 MiB</small></div></div><footer class="window-footer image-status" role="status">请选择图片 · + / − 缩放，方向键平移，F 适应窗口</footer></section></template>
+</div></div></section>
+<template id="imageTemplate"><section class="window image-window" aria-label="图片查看器" tabindex="-1"><header class="titlebar"><span aria-hidden="true">▧</span><strong class="window-title"></strong><div class="window-controls"><button class="window-control" data-window-action="minimize" aria-label="最小化">−</button><button class="window-control" data-window-action="maximize" aria-label="最大化">□</button><button class="window-control close" data-window-action="close" aria-label="关闭图片">×</button></div></header><div class="image-controls"><button data-image-action="open">打开图片</button><button data-image-action="out" aria-label="缩小图片">−</button><button data-image-action="in" aria-label="放大图片">＋</button><button data-image-action="actual">100%</button><button data-image-action="fit">适应窗口</button><button data-image-action="rotate" title="旋转 90° · R">旋转</button><button data-image-action="flip" title="水平翻转 · H">翻转</button><span class="image-scale">—</span><span class="image-help">滚轮缩放 · 拖动平移</span></div><div class="image-viewport"><div class="image-empty"><strong>Image Viewer</strong><p>从服务器选择 PNG、JPEG、GIF、WebP、BMP 或 AVIF 图片</p><button data-image-action="open">打开图片</button><small>Viewer.js · 单图最大 25 MiB</small></div></div><footer class="window-footer image-status" role="status">请选择图片 · + / − 缩放，方向键平移，F 适应窗口</footer></section></template>
   <div id="selectionBox" class="selection-box" hidden></div>
   <div id="dragGhost" class="drag-ghost" hidden></div>
   <div id="context" class="context" role="menu" aria-label="文件操作" hidden>
@@ -210,11 +214,12 @@
     <button data-action="compress" role="menuitem">压缩…</button>
     <button data-action="extract" role="menuitem">解压缩</button>
     <button data-action="terminal" role="menuitem" title="在当前目录打开终端（Ctrl+Alt+T）">在此处打开终端</button>
+    <button data-action="local-terminal" role="menuitem">打开本机终端</button>
     <button data-action="refresh" role="menuitem">刷新</button>
     <button data-action="arrange" role="menuitem">整理桌面</button>
   </div>
-  <div id="appContext" class="context" role="menu" aria-label="收藏夹操作" hidden><button id="togglePinApp" role="menuitem">添加到收藏夹</button><button id="unpinApp" role="menuitem">从收藏夹移除</button></div>
-  <div id="programContext" class="context" role="menu" aria-label="程序操作" hidden><button id="toggleFavorite" type="button" role="menuitem">添加到收藏夹</button></div>
+  <div id="appContext" class="context" role="menu" aria-label="收藏夹操作" hidden><button id="togglePinApp" role="menuitem">添加到收藏夹</button><button id="unpinApp" role="menuitem">从收藏夹移除</button><button id="appLocalTerminal" type="button" role="menuitem">打开本机终端</button></div>
+  <div id="programContext" class="context" role="menu" aria-label="程序操作" hidden><button id="toggleFavorite" type="button" role="menuitem">添加到收藏夹</button><button id="programLocalTerminal" type="button" role="menuitem">打开本机终端</button></div>
   <script src="../media/lucide.js"></script>
   <script src="../media/xterm.js"></script>
   <script src="../media/xterm-addon-fit.js"></script>
@@ -227,8 +232,12 @@
   <script src="workbench-frame.js"></script>
   <script src="application-icons.js"></script>
   <script src="shell-ui.js"></script>
+  <script src="context-menu.js"></script>
   <script src="interface-settings.js"></script>
   <script src="../media/workbench/purify.js"></script>
+  <script src="../media/workbench/marked.js"></script>
+  <script src="../media/workbench/katex.js"></script>
+  <script src="terminal-tools.js"></script>
   <script src="../media/workbench/highlight-shell.js"></script>
   <script src="../media/workbench/ansi-up.js"></script>
   <script src="activity-transcript.js"></script>

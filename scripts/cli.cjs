@@ -5,6 +5,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const readline = require('node:readline');
 const crypto = require('node:crypto');
+const { StringDecoder } = require('node:string_decoder');
 const { spawn } = require('node:child_process');
 const { listInstances, requestInstance, defaultUserDataDir } = require('../lib/instance-bridge.cjs');
 
@@ -16,18 +17,20 @@ const HELP = `Remote Desktop 命令行（复用正在运行的桌面实例和 SS
   rdesktop upload LOCAL_PATH REMOTE_DIRECTORY
   rdesktop download REMOTE_PATH [LOCAL_DIRECTORY]
   rdesktop exec [--cwd REMOTE_DIRECTORY] [--timeout SECONDS] -- "REMOTE COMMAND"
+  rdesktop shell [--cwd REMOTE_DIRECTORY]
   rdesktop cancel TASK_ID
 全局选项：--instance ID  --user-data-dir PATH  --exe PATH  --json
 未绑定私钥时交互输入密码（不回显）；重定向输入需显式 --password-stdin。
 同一主机、端口和用户会复用已绑定私钥；--password-stdin 可改用密码。
 不接受 --password/--passphrase 参数，不保存密码。未知主机在桌面窗口确认指纹。
 exec 执行远程服务器 shell 命令，默认 30 秒，上限 300 秒、输出 4 MiB。
+shell 打开持续交互的远程终端，复用实例连接；Ctrl+] 关闭本次终端。
 上传目录/大文件使用 SFTP，小文件使用 SSH 流；同名自动编号，不覆盖。
 `;
 
 function parseArgs(argv) {
   const args = [], options = {};
-  const values = new Set(['instance', 'user-data-dir', 'exe', 'host', 'username', 'port', 'key', 'fingerprint', 'cwd', 'timeout']);
+  const values = new Set(['instance', 'user-data-dir', 'exe', 'host', 'username', 'port', 'key', 'fingerprint', 'cwd', 'timeout', 'connection-id']);
   const flags = new Set(['json', 'password-stdin', 'ask-passphrase', 'help']);
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index];
@@ -108,7 +111,7 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   const output = dependencies.stdout || process.stdout, errorOutput = dependencies.stderr || process.stderr, input = dependencies.stdin || process.stdin;
   const { args, options } = parseArgs(argv); const command = args.shift();
   if (!command || options.help || command === 'help') { output.write(HELP); return 0; }
-  if (!['list', 'launch', 'status', 'focus', 'connect', 'exec', 'upload', 'download', 'cancel'].includes(command)) throw new Error(`未知命令：${command}`);
+  if (!['list', 'launch', 'status', 'focus', 'connect', 'exec', 'shell', 'upload', 'download', 'cancel'].includes(command)) throw new Error(`未知命令：${command}`);
   const userDataDir = path.resolve(options['user-data-dir'] || defaultUserDataDir());
   const find = dependencies.listInstances || listInstances;
   const request = dependencies.requestInstance || requestInstance;
@@ -125,6 +128,12 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   if (!instances.length) throw new Error('未找到运行中的实例。请先使用 launch 启动应用，或检查 --instance/--user-data-dir。');
   if (instances.length > 1) throw new Error('存在多个桌面实例，请使用 list 查看并用 --instance ID 指定。');
   const entry = instances[0]; let action = command, payload = {};
+  if (command === 'shell') {
+    if (args.length || options.json) throw new Error('shell 使用交互终端，不接受额外命令或 --json。');
+    const shellInput = interactiveInput(input, output);
+    try { return await runShell(entry, options, { input: shellInput, output, errorOutput, request }); }
+    finally { if (shellInput !== input) shellInput.destroy(); }
+  }
   if (command === 'launch') action = 'focus';
   if (command === 'connect') {
     payload = { host: options.host || entry.status?.host, username: options.username || entry.status?.username, port: Number(options.port || entry.status?.port || 22) };
@@ -174,5 +183,49 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   } finally { delete payload.password; delete payload.passphrase; process.removeListener('SIGINT', stop); }
 }
 
+function interactiveInput(input, output) {
+  // Electron's Windows GUI executable attaches to its parent's console but
+  // initializes stdin as a file ReadStream. Reopen the same console read/write
+  // for libuv raw mode. Never override redirected files/pipes or injected input.
+  if (input.isTTY || input !== process.stdin || !output.isTTY || process.platform !== 'win32' || !process.versions.electron) return input;
+  const nativeFs = require('node:fs');
+  if (!nativeFs.fstatSync(0).isCharacterDevice()) return input;
+  const fd = nativeFs.openSync('\\\\.\\CONIN$', 'r+');
+  try { return new (require('node:tty').ReadStream)(fd); }
+  catch (error) { nativeFs.closeSync(fd); throw error; }
+}
+
+async function runShell(entry, options, { input, output, errorOutput, request }) {
+  if (!input.isTTY || typeof input.setRawMode !== 'function') throw new Error('shell 需要本机交互终端；非交互指令请使用 exec。');
+  if (!entry.status?.connected) throw new Error('指定实例尚未连接 SSH。');
+  const controller = new AbortController(), wasRaw = Boolean(input.isRaw);
+  let send = null;
+  const decoder = new StringDecoder('utf8');
+  const size = () => ({ cols: Math.min(500, Math.max(2, output.columns || 120)), rows: Math.min(200, Math.max(1, output.rows || 32)) });
+  const onData = chunk => {
+    const text = Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk);
+    if (text.includes('\x1d')) { send?.({ type: 'close' }); return; }
+    // Avoid splitting UTF-16 surrogate pairs while keeping UTF-8 frames bounded.
+    let part = '', bytes = 0;
+    for (const char of text) { const count = Buffer.byteLength(char); if (bytes + count > 60000) { send?.({ type: 'input', data: part }); part = ''; bytes = 0; } part += char; bytes += count; }
+    if (part) send?.({ type: 'input', data: part });
+  };
+  const resize = () => send?.({ type: 'resize', ...size() });
+  const interrupt = () => send?.({ type: 'input', data: '\x03' });
+  const end = () => controller.abort();
+  errorOutput.write('RTerminal — 通过 Remote Desktop 转发，Ctrl+] 关闭此终端连接。\n');
+  try {
+    const result = await request(entry, 'shell', { cwd: options.cwd, identity: options['connection-id'], ...size() }, {
+      signal: controller.signal, timeoutMs: 0,
+      onReady: write => { send = write; input.setRawMode(true); input.on('data', onData); input.once('end', end); input.once('error', end); output.on?.('resize', resize); process.on('SIGINT', interrupt); input.resume(); },
+      onProgress: value => { if (value.kind === 'stdout' || value.kind === 'stderr') (value.kind === 'stderr' ? errorOutput : output).write(value.data); }
+    });
+    return Number.isInteger(result.code) ? Math.min(255, Math.max(0, result.code)) : 0;
+  } finally {
+    input.off('data', onData); input.off('end', end); input.off('error', end); output.off?.('resize', resize); process.off('SIGINT', interrupt);
+    input.setRawMode(wasRaw); input.pause(); output.write('\x1b[0m\x1b[?25h\r\n');
+  }
+}
+
 if (require.main === module) runCli().then(code => { process.exitCode = code; }, error => { process.stderr.write(`${error.message}\n`); process.exitCode = error.code === 'ABORT_ERR' ? 130 : 1; });
-module.exports = { runCli, parseArgs, readPassword, launchInstance, HELP };
+module.exports = { runCli, parseArgs, readPassword, launchInstance, interactiveInput, HELP };

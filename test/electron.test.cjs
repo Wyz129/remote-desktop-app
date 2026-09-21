@@ -90,7 +90,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 2; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal((await browserViews()).visible, 2);
   assert.equal(await page.locator('.browser-window').count(), 1);
-  assert.equal(await page.locator('.browser-window .window-title').textContent(), '浏览器');
+  assert.equal(await page.locator('.browser-window .window-title').textContent(), 'Browser');
   const browserBounds = await page.locator('.browser-surface').boundingBox();
   assert.ok(Math.abs((await browserViews()).bounds.x - browserBounds.x) <= 1);
   await page.locator('.browser-window [data-window-action="minimize"]').click();
@@ -269,7 +269,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.equal(await page.locator('#pinnedApps .pinned-app').count(), 1);
   // All paths are governed by server permissions, including shared data outside HOME.
   await page.locator('#homeShortcut').click();
-  const explorer = page.locator('.window').first();
+  const explorer = page.locator('.explorer-window').first();
   await explorer.focus(); await explorer.press('Control+l'); await explorer.locator('.window-path').fill('/'); await explorer.locator('.window-path').press('Enter');
   await explorer.locator('.entry').filter({ hasText: 'outside' }).waitFor();
   await explorer.focus(); await explorer.press('Control+l'); await explorer.locator('.window-path').fill('/outside'); await explorer.locator('.window-path').press('Enter');

@@ -5,7 +5,7 @@
 以下 PowerShell 示例先为启动器路径设置变量：
 
 ```powershell
-$rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1.2\win-unpacked\resources\cli\scripts\rdesktop.cmd'
+$rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1.13\win-unpacked\resources\cli\scripts\rdesktop.cmd'
 & $rdesktop launch
 & $rdesktop list
 & $rdesktop status
@@ -26,13 +26,30 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 
 未绑定私钥时在当前交互终端输入密码，输入不回显。省略主机、端口、用户名时采用该实例已保存的设置。只有主机、端口、用户名均与保存值一致时，才自动复用已绑定的私钥路径；不同账户需明确指定 `--key` 或输入密码。私钥有口令时增加 `--ask-passphrase` 并隐藏输入口令。实例只保存选定私钥的路径，不保存密码、私钥内容或口令。
 
-首次连接仍在桌面原生窗口核验主机 SHA-256 指纹；也可通过 `--fingerprint 'SHA256:...'` 提交已通过可信渠道核对的指纹。已保存指纹不一致时拒绝连接。切换连接会触发文档与终端的正常关闭确认，取消该确认则保留原连接。
+首次连接仍在桌面原生窗口核验主机 SHA-256 指纹；也可通过 `--fingerprint 'SHA256:...'` 提交已通过可信渠道核对的指纹。已保存指纹不一致时拒绝连接。切换连接保留 Monaco 未保存文档确认；终端直接关闭，不弹保存提示。
 
 `connect` 期间按 Ctrl+C 会停止命令行等待，但桌面中已发起的连接与确认流程会继续；需要取消连接时，应在桌面确认窗口选择取消。传输与 `exec` 的 Ctrl+C 会同时请求取消对应任务。
 
 自动化调用可明确使用 `--password-stdin` 从标准输入读取第一行密码。此选项强制使用密码，即使该账户已绑定私钥；不能与 `--key` 同时使用。密码来源应通过父进程标准输入提供，避免在命令文本、脚本参数或 shell 历史中写明文。`--password`、`--passphrase` 参数一律拒绝。
 
-## 执行服务器命令
+## 本机交互终端
+
+连接服务器后，在左侧快捷栏的图标、运行窗口标签或空白处右键，选择“打开本机终端”。应用打开独立 Windows PowerShell 窗口，自动运行 `rdesktop shell`，复用所选实例已经认证的 SSH 连接；不另建 SSH 连接，也不要求再次输入密码。工作目录使用关联窗口所在目录，否则使用服务器 Home。资源管理器目录空白右键也提供此入口，可在 Settings → 右键菜单中隐藏。
+
+也可在已有本机终端直接调用：
+
+```powershell
+& $rdesktop list
+& $rdesktop shell --instance 'list 返回的实例 ID' --cwd '/home/alice/project'
+```
+
+这是持续的 SSH PTY：`cd`、环境变量与交互程序保留会话状态，键盘输入、ANSI 回复和窗口尺寸经本地命名管道转发。Ctrl+C 传给远程程序；Ctrl+] 仅关闭当前转发终端，也可正常输入 `exit` 退出。关闭本机窗口会释放对应远程 PTY，桌面连接保持；桌面断连、切换账号或退出后终端会话结束，不自动重新绑定其他实例。Windows 窗口保留会话结束信息，可手动关闭。多个本机与虚拟终端合计最多 8 个。
+
+`shell` 需要真正的交互终端，不支持管道输入或 `--json`；自动化命令使用 `exec`。Windows 控制台按原生终端方式显示文本和 ANSI，Markdown/公式阅读分栏仅存在于虚拟桌面的 RTerminal。启动器参数不含 SSH 密码、私钥内容或本地认证令牌。
+
+监听归入 Activity Monitor 的第三方访问，原始 PTY 输入（包括控制字符）、启动命令、服务器回复及时间写入独立 CLI 日志；系统日志只保存连接信息及对应日志文件。不会把按键猜测重建为 shell 命令。日志遵循现有大小上限与轮换规则。
+
+## 单次执行服务器命令
 
 ```powershell
 & $rdesktop exec -- 'uname -a'

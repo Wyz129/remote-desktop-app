@@ -8,6 +8,8 @@
 .explorer-window .address-slot { min-width: 0; flex: 1; display: flex; justify-content: center; padding: 0 10px; }
 .explorer-window .address-box { flex: 0 1 auto; width: max-content; max-width: 100%; min-width: 32px; height: 32px; margin: 0; padding: 0 6px; cursor: text; border-color: transparent; background: transparent; }
 .explorer-window .address-box:not(.editing):focus-within { border-color: transparent; box-shadow: none; }
+.explorer-window .address-box:not(.editing):hover:not(:has(button:hover)),
+.explorer-window .address-box:not(.editing):focus-visible { border-color: #aaa39e; box-shadow: 0 0 0 1px #aaa39e55; background: #ffffff06; }
 .explorer-window .address-box.editing { width: 100%; background: #222; border-color: #77716d; }
 .explorer-window .address-box.editing:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .explorer-window .window-path { font: 12px/1.5 "Ubuntu", "Segoe UI", sans-serif; user-select: text; }

@@ -1,8 +1,14 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.12，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.13，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.13 的源码各模块回归、最终包验收与具体边界见 [1.1.13 交付记录](docs/RELEASE-1.1.13.md)。新增终端鼠标/剪贴板/Markdown、传输窗口、上下文菜单设置、Exit/F11、本机持续终端转发测试。原生 Windows 控制台使用独立隐藏窗口验证真实 TTY 与 raw mode，窗口启动 IPC 另用受控替身检查固定实例和工作目录；不操控用户现有窗口。
+
+新增脚本已纳入 npm test：test/local-terminal.test.cjs、local-terminal-electron.test.cjs、lifecycle-electron.test.cjs、context-menu*.test.cjs、terminal-tools.test.cjs、terminal-electron.test.cjs、transfer-window.test.cjs。Windows 原生控制台专项可运行 `node --test --test-name-pattern="Windows launcher" test/local-terminal.test.cjs`，设置 REMOTE_DESKTOP_TEST_EXE 可验证打包版。
+
+以下为历史验证记录。
 
 1.1.12 完整 `npm test` 已通过：语法 50 文件、后端 113/113、模块 85/85、本机 Vim 7/7、UI 60/60、工作台 14/14、源码 Electron 7/7、工作区 1/1、浏览器 2/2、CLI 1/1、视频 1/1。最终审查后压缩/解压 10/10、归档 Electron 1/1、布局定向 6/6 均通过。最终打包 EXE 11/11，258 个包内文件及 3 个外部 CLI 资源逐字节核验通过；记录为 `artifacts/full-test-1.1.12.log`、`archive-final-1.1.12.log`、`shell-final-ui-1.1.12.log`、`packaged-test-1.1.12.log`，完整范围与哈希见 [1.1.12 交付记录](docs/RELEASE-1.1.12.md)。
 

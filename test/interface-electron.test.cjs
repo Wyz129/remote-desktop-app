@@ -73,7 +73,7 @@ test('account-scoped places and transfer defaults, real log relocation, shell pe
   assert.match(await fs.readFile(first.mapPath(originalLog),'utf8'),/after-log-move/,'running terminal keeps its original log through a destination change');
   assert.equal(await fs.readFile(first.mapPath(`${first.home}/custom-log/keep.txt`),'utf8'),'keep');
   await page.evaluate(config=>window.remoteDesktop.connect(config),second.config);
-  saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.workspacePreferences.logPath,'');assert.equal(saved.defaultUploadDirectory,'');
+  saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.workspacePreferences.logPath,'');assert.equal(saved.defaultUploadDirectory,`${second.home}/.rdesktop/download`);
   await page.evaluate(config=>window.remoteDesktop.connect(config),first.config);
   saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.workspacePreferences.logPath,preferences.logPath);assert.equal(saved.defaultUploadDirectory,`${first.home}/shared`);
   await page.evaluate(()=>window.remoteDesktop.saveShellPreferences({clockMode:'detailed',toolbarOrder:['exitButton','homeShortcut'],toolbarHidden:['browserButton','activityButton']}));

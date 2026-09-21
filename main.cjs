@@ -1,5 +1,6 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { clipboardText } = require('./lib/terminal-clipboard.cjs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
@@ -13,6 +14,8 @@ const { ActivityLog } = require('./lib/activity-log.cjs');
 const { createAuditor, safeUrl, createSystemCommandLogger } = require('./lib/activity-audit.cjs');
 const { UploadService } = require('./lib/upload-service.cjs');
 const { InstanceBridge, executeRemote } = require('./lib/instance-bridge.cjs');
+const { openInteractiveShell } = require('./lib/interactive-shell.cjs');
+const { launchLocalTerminal } = require('./lib/local-terminal.cjs');
 const { TransferCenter } = require('./lib/transfer-center.cjs');
 const { transferDirectory, transferPreferences } = require('./lib/transfer-preferences.cjs');
 const { LocalPicker } = require('./lib/local-picker.cjs');
@@ -24,6 +27,7 @@ const { VideoService } = require('./lib/video-service.cjs');
 const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle, automaticServerAlias } = require('./lib/server-profiles.cjs');
 const { normalizeProgramPreferences, updateProgramPreferences } = require('./lib/program-preferences.cjs');
 const { workspacePreferences, workspaceLocations, shellPreferences } = require('./lib/interface-preferences.cjs');
+const { normalize: contextMenuPreferences } = require('./app/context-menu.js');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
@@ -41,10 +45,10 @@ const selectedKeys = new Set();
 const completedDownloads = new Set();
 const terminalStarts = new Map();
 const desktopPreferenceWrites = new Map();
-let sessionTransition = false, allowWindowClose = false, closingApplication = false;
+let sessionTransition = false, allowWindowClose = false, closingApplication = false, quitPromise = null;
 let connectionCleanup = Promise.resolve();
 const terminalGuard = new TerminalGuard({ getBackend: () => backend,
-  onAction: (record, source) => { if (currentSession(source)) activityLog.system(record); },
+  onAction: (record, source) => { if (currentSession(source) && !record.terminalId?.startsWith('local-')) activityLog.system(record); },
   closed: id => {
     const start = terminalStarts.get(id);
     if (start && !start.ready) start.releaseLog?.();
@@ -52,6 +56,18 @@ const terminalGuard = new TerminalGuard({ getBackend: () => backend,
   } });
 const entryPath = path.join(__dirname, 'app', 'index.html');
 const entryUrl = pathToFileURL(entryPath).href;
+// Covers the desktop renderer, Monaco frames and embedded browser contents.
+// Consume F11 before any renderer can also toggle it; Escape belongs to the
+// focused application (including browser/TUI fullscreen modes).
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('before-input-event', (event, input) => {
+    if (input.key !== 'F11' || input.control || input.alt || input.meta || input.shift) return;
+    event.preventDefault();
+    if (input.type !== 'keyDown' || input.isAutoRepeat || !windowRef || windowRef.isDestroyed()) return;
+    windowRef.setFullScreen(!windowRef.isFullScreen());
+    post({ type: 'fullscreenResult', ok: true, message: '已切换全屏；F11 切换。' });
+  });
+});
 function requireSender(event) {
   if (!windowRef || event.sender !== windowRef.webContents || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== entryUrl) throw new Error('拒绝非应用窗口的请求。');
 }
@@ -59,7 +75,7 @@ function requireBackend() { if (!backend?.connected || !desktopService) throw ne
 function publicSettings() {
   const { knownHosts, desktopLocations, workspaceLocations: locations, transferUploadDirectories, ...visible } = settings;
   const workspace = workspacePreferences(backend?.connected && locations?.[backend.desktopIdentity]);
-  return { ...visible, defaultUploadDirectory: backend?.connected ? transferUploadDirectories?.[backend.desktopIdentity] || '' : '', shellPreferences: shellPreferences(settings.shellPreferences), workspacePreferences: workspace, workspaceIdentity: backend?.connected ? backend.desktopIdentity : '', downloadsPath: settings.defaultDownloadDirectory || app.getPath('downloads') };
+  return { ...visible, defaultUploadDirectory: backend?.connected ? transferUploadDirectories?.[backend.desktopIdentity] || backend.remoteStorage?.download || '' : '', shellPreferences: shellPreferences(settings.shellPreferences), contextMenuPreferences: contextMenuPreferences(settings.contextMenuPreferences), workspacePreferences: workspace, workspaceIdentity: backend?.connected ? backend.desktopIdentity : '', downloadsPath: settings.defaultDownloadDirectory || app.getPath('downloads') };
 }
 function currentSession(source) { return Boolean(source && source === backend && source.connected); }
 function queueWorkspacePreferences(task) {
@@ -70,13 +86,14 @@ function queueWorkspacePreferences(task) {
 function accessDenied(error) { return [3, 'EACCES', 'EPERM'].includes(error?.code); }
 function accessMessage(error, remotePath) { return `${accessDenied(error) ? '无访问权限：' : ''}${remotePath ? `${remotePath} — ` : ''}${error.message}${error.code !== undefined ? ` (${error.code})` : ''}`; }
 async function loadSettings() {
-  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), ...transferPreferences(loaded), serverProfiles: profilesFromSettings(loaded), programPreferences: normalizeProgramPreferences(loaded.programPreferences), workspaceLocations: workspaceLocations(loaded.workspaceLocations), shellPreferences: shellPreferences(loaded.shellPreferences) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
+  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), ...transferPreferences(loaded), serverProfiles: profilesFromSettings(loaded), programPreferences: normalizeProgramPreferences(loaded.programPreferences), workspaceLocations: workspaceLocations(loaded.workspaceLocations), shellPreferences: shellPreferences(loaded.shellPreferences), contextMenuPreferences: contextMenuPreferences(loaded.contextMenuPreferences) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
   settings.scriptEditor = 'monaco';
   settings.desktopLocations = desktopLocations(settings.desktopLocations);
   settings.workspaceLocations = workspaceLocations(settings.workspaceLocations);
   settings.shellPreferences = shellPreferences(settings.shellPreferences);
+  settings.contextMenuPreferences = contextMenuPreferences(settings.contextMenuPreferences);
 }
 function saveSettings(patch) {
   const task = settingsQueue.then(async () => {
@@ -108,7 +125,7 @@ function bridgeActivity(event) {
   }
   if (event.type === 'progress') {
     const progress = event.progress;
-    activityLog.cli(id, progress?.kind === 'command' ? { type: 'command', command: progress.data, protocol: 'SSH exec' } : ['stdout', 'stderr'].includes(progress?.kind) ? { type: progress.kind, data: progress.data } : { type: 'progress', progress });
+    activityLog.cli(id, progress?.kind === 'command' ? { type: 'command', command: progress.data, protocol: event.action === 'shell' ? 'SSH PTY' : 'SSH exec' } : ['stdout', 'stderr', 'terminal-input'].includes(progress?.kind) ? { type: progress.kind, data: progress.data } : { type: 'progress', progress });
   } else if (event.type === 'finish' || event.type === 'error') {
     const result = event.action === 'exec' && event.result ? { code: event.result.code, signal: event.result.signal } : event.result;
     activityLog.cli(id, { type: 'end', result, error: event.error }); cliActivity.delete(id);
@@ -120,24 +137,68 @@ function createWindow() {
   windowRef.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   windowRef.webContents.on('will-navigate', (event, url) => { if (url !== entryUrl) event.preventDefault(); });
   windowRef.webContents.session.setPermissionRequestHandler((_, __, callback) => callback(false));
-  windowRef.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    if (input.key === 'F11') { event.preventDefault(); windowRef.setFullScreen(!windowRef.isFullScreen()); }
-    else if (input.key === 'Escape' && windowRef.isFullScreen()) windowRef.setFullScreen(false);
-  });
   windowRef.loadFile(entryPath);
   windowRef.on('close', event => { if (!allowWindowClose) { event.preventDefault(); void quitSafely(); } });
-  windowRef.on('closed', () => { windowRef = null; backend?.disconnect(); });
+  windowRef.on('closed', () => { windowRef = null; void backend?.disconnect().catch(() => {}); });
 }
-async function quitSafely() {
-  if (closingApplication || sessionTransition) return;
-  closingApplication = true; sessionTransition = true;
-  try {
-    if (!await workbench?.confirmAll() || !await terminalGuard.all()) return;
-    await closeConnectionResources();
-    terminalStarts.clear(); await backend?.disconnect(); await instanceBridge?.close(); await workbench?.dispose(); await transferCenter.flush(); allowWindowClose = true; app.quit();
-  } catch (error) { post({ type: 'desktopError', error: `关闭应用未完成：${error.message}` });
-  } finally { closingApplication = false; sessionTransition = false; }
+function shutdownDeadline(task, label, milliseconds = 5000) {
+  let timer;
+  return Promise.race([Promise.resolve().then(task), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}超时`)), milliseconds); })]).finally(() => clearTimeout(timer));
+}
+function quitSafely() {
+  if (allowWindowClose) return Promise.resolve(true);
+  if (quitPromise) return quitPromise;
+  quitPromise = (async () => {
+    closingApplication = true; let ownsTransition = false;
+    try {
+      if (sessionTransition) {
+        post({ type: 'desktopError', error: '正在等待当前连接操作结束，随后退出应用。' });
+        // Authentication has no unsaved document state; cancel a hanging SSH
+        // handshake so quitting need not wait the full two-minute SSH timeout.
+        backend?.connectingClient?.destroy();
+        const deadline = Date.now() + 12000;
+        while (sessionTransition) {
+          if (Date.now() >= deadline) throw new Error('等待连接操作完成超时，请在当前连接操作结束后重试。');
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+      sessionTransition = true; ownsTransition = true;
+      if (workbench && !await workbench.confirmAll()) return false;
+      if (!await terminalGuard.all()) return false;
+      const failures = [];
+      const closeStep = async (label, task, timeout) => {
+        try { await shutdownDeadline(task, label, timeout); }
+        catch (error) { failures.push(`${label}：${error.message}`); }
+      };
+      // Freeze editor input immediately after its save/discard decision, before
+      // any potentially slow transport cleanup can allow new unsaved changes.
+      await closeStep('关闭文档会话', () => workbench?.disconnect(), 1000);
+      // Stop accepting local CLI requests before draining logs/resources. Each
+      // cleanup has a deadline; a stuck network stream cannot hide the Exit UI.
+      await closeStep('关闭本地接口', () => instanceBridge?.close());
+      await closeStep('清理服务器资源', () => closeConnectionResources(), 8000);
+      terminalStarts.clear();
+      await closeStep('断开 SSH', () => backend?.disconnect()); desktopService = null;
+      await closeStep('保存传输历史', () => transferCenter.flush());
+      await closeStep('保存应用设置', () => settingsQueue);
+      if (failures.length) {
+        const choice = await dialog.showMessageBox(windowRef, { type: 'warning', title: 'Exit', message: '部分退出清理未完成。', detail: `${failures.join('\n')}\n\n文档关闭确认已经完成。退出可能保留尚未清理的传输临时文件或未写完的日志。`, buttons: ['返回桌面', '退出'], defaultId: 0, cancelId: 0, noLink: true });
+        if (choice.response !== 1) {
+          post({ type: 'remoteState', status: 'disconnected', message: 'SSH 已关闭；请重新连接，或再次选择 Exit。' });
+          // A canceled shutdown must retain its local CLI entry point.
+          await shutdownDeadline(() => instanceBridge?.start(), '恢复本地接口').catch(error => post({ type: 'desktopError', error: error.message }));
+          return false;
+        }
+      }
+      await closeStep('关闭文档资源', () => workbench?.dispose());
+      allowWindowClose = true;
+      // Resolve the IPC request before destroying its renderer.
+      setImmediate(() => app.quit()); return true;
+    } catch (error) {
+      post({ type: 'desktopError', error: `关闭应用未完成：${error.message}` }); return false;
+    } finally { closingApplication = false; if (ownsTransition) sessionTransition = false; quitPromise = null; }
+  })();
+  return quitPromise;
 }
 function closeConnectionResources() {
   const previousUploader = uploader, previousVideo = videoService;
@@ -251,7 +312,7 @@ async function handleDesktopMessage(message) {
   if (!message || typeof message.type !== 'string') throw new Error('无效的桌面请求。');
   const type = message.type;
   if (type === 'ready' || type === 'getExtensionSettings') { post(compatibilitySettings(message.requestId)); if (type === 'ready' && backend?.connected) { post({ type: 'connectionInfo', profile: backend.connectionProfile }); await inspect(); await serverInfo(); } return; }
-  if (type === 'toggleFullscreen') { windowRef.setFullScreen(!windowRef.isFullScreen()); post({ type: 'fullscreenResult', ok: true, message: '已切换全屏；Esc 退出全屏，F11 切换。' }); return; }
+  if (type === 'toggleFullscreen') { windowRef.setFullScreen(!windowRef.isFullScreen()); post({ type: 'fullscreenResult', ok: true, message: '已切换全屏；F11 切换。' }); return; }
   if (type === 'getServerInfo') return serverInfo();
   requireBackend();
   if (type === 'createDesktop') { const result = await inspect(true); activityLog.system({ type: 'desktop-created', path: result.path, status: result.status, protocol: 'SFTP MKDIR' }); return; }
@@ -344,7 +405,7 @@ async function handleDesktopMessage(message) {
   else throw new Error('该功能未在独立应用中提供。');
 }
 async function connectSsh(input, trustedLocal = false) {
-    if (connecting || sessionTransition) throw new Error('已有连接正在建立或关闭。'); connecting = true; sessionTransition = true;
+    if (closingApplication || connecting || sessionTransition) throw new Error('已有连接正在建立或关闭。'); connecting = true; sessionTransition = true;
     try {
       if (!await workbench?.confirmAll() || !await terminalGuard.all()) return { cancelled: true };
       await closeConnectionResources();
@@ -415,10 +476,23 @@ function registerIpc() {
     return audited[channel] ? audit(channel, audited[channel](...args), () => action(...args)) : action(...args);
   });
   handle('activity:snapshot', () => activityLog.snapshot());
+  handle('terminal:clipboard-read', () => clipboardText(clipboard.readText()));
+  handle('terminal:clipboard-write', text => { clipboard.writeText(clipboardText(text)); return true; });
   handle('app:get-settings', () => publicSettings());
-  handle('app:quit', () => { void quitSafely(); return true; });
+  handle('terminal:open-local', async cwd => {
+    const source = requireBackend();
+    if (sessionTransition || !instanceBridge?.instanceId) throw new Error('连接正在切换，请稍后打开本机终端。');
+    const target = await desktopService.checked(cwd || source.home);
+    if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变。');
+    return launchLocalTerminal({ executable: process.execPath, cliPath: app.isPackaged ? path.join(process.resourcesPath, 'cli/scripts/cli.cjs') : path.join(__dirname, 'scripts/cli.cjs'), userDataDir: app.getPath('userData'), instanceId: instanceBridge.instanceId, cwd: target, identity: source.desktopIdentity });
+  });
+  handle('app:quit', () => quitSafely());
   handle('app:save-shell-preferences', async input => {
     const saved = await saveSettings({ shellPreferences: shellPreferences(input) });
+    post({ type: 'interfacePreferences', settings: saved }); return saved;
+  });
+  handle('app:save-context-menu-preferences', async input => {
+    const saved = await saveSettings({ contextMenuPreferences: contextMenuPreferences(input, true) });
     post({ type: 'interfacePreferences', settings: saved }); return saved;
   });
   handle('app:save-workspace-preferences', (input, identity) => {
@@ -591,8 +665,15 @@ app.whenReady().then(async () => {
   registerIpc(); createWindow();
   if (historyWarning) windowRef.webContents.once('did-finish-load', () => post({ type: 'desktopError', error: historyWarning }));
   instanceBridge = new InstanceBridge({ userDataDir: app.getPath('userData'), onActivity: bridgeActivity, metadata: { pid: process.pid, executable: process.execPath }, callbacks: {
-    status: async () => ({ connected: Boolean(backend?.connected), host: settings.host, port: settings.port, username: settings.username, privateKeyPath: settings.privateKeyPath, desktop: backend?.desktop, home: backend?.home }),
+    status: async () => ({ connected: Boolean(backend?.connected), host: settings.host, port: settings.port, username: settings.username, privateKeyPath: settings.privateKeyPath, desktop: backend?.desktop, home: backend?.home, identity: backend?.desktopIdentity }),
     focus: async () => { windowRef.show(); windowRef.focus(); return { ok: true }; },
+    shell: async (input, context) => {
+      const source = requireBackend();
+      if (sessionTransition || (input.identity && input.identity !== source.desktopIdentity)) throw new Error('SSH 连接已改变，请重新打开本机终端。');
+      const cwd = await desktopService.checked(input.cwd || source.home);
+      if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变。');
+      return openInteractiveShell(source, { ...input, cwd }, context);
+    },
     connect: input => connectSsh(input, true),
     exec: (input, context) => { if (sessionTransition) throw new Error('SSH 连接正在切换。'); return executeRemote(requireBackend(), input, { ...context, onCommand: command => context.onProgress({ kind: 'command', data: command }) }); },
     upload: (input, context) => upload(input.localPath, input.remoteDirectory, { id: input.id, ...context, auditCommands: false }),

@@ -1,0 +1,21 @@
+.terminal-location-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid #554c58; background: #302c33; }
+.terminal-location-bar .terminal-location { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.terminal-location-bar button, .terminal-reader-head button { padding: 4px 8px; font-size: 12px; }
+.terminal-location-bar button[aria-pressed="true"] { background: #765563; }
+.terminal-content { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.terminal-content > .terminal-surface { width: 100%; }
+.terminal-reading .terminal-content > .terminal-surface { flex: 1 1 50%; width: 50%; }
+.terminal-reader { flex: 1 1 50%; width: 50%; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid #605565; background: #28232b; color: #f0eaf1; }
+.terminal-reader[hidden] { display: none; }
+.terminal-reader-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: #343038; }
+.terminal-reader-mode { flex: 1; min-width: 0; font-size: 11px; color: #cfc3d2; }
+.terminal-reader-content { overflow: auto; padding: 12px 16px; font: 14px/1.65 "Segoe UI", "Microsoft YaHei", sans-serif; user-select: text; overflow-wrap: anywhere; }
+.terminal-reader-content :first-child { margin-top: 0; }
+.terminal-reader-content h1, .terminal-reader-content h2, .terminal-reader-content h3 { color: #fff; line-height: 1.35; }
+.terminal-reader-content h1 { font-size: 23px; }.terminal-reader-content h2 { font-size: 20px; }.terminal-reader-content h3 { font-size: 17px; }
+.terminal-reader-content pre { padding: 10px; background: #1e1a22; border-radius: 4px; overflow: auto; white-space: pre; }
+.terminal-reader-content code { font-family: Consolas, monospace; color: #eac4ab; }
+.terminal-reader-content blockquote { border-left: 3px solid #a77791; padding-left: 12px; margin-left: 0; color: #cfbfd0; }
+.terminal-reader-content table { border-collapse: collapse; }.terminal-reader-content td,.terminal-reader-content th { border: 1px solid #6c5f70; padding: 5px 8px; }
+.terminal-reader-content .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+@media (max-width: 700px) { .terminal-reading .terminal-content { flex-direction: column; }.terminal-reading .terminal-content > .terminal-surface,.terminal-reader { width: 100%; min-height: 100px; }.terminal-reader { border-left: 0; border-top: 1px solid #605565; } }

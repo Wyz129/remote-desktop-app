@@ -8,6 +8,10 @@ window.InterfaceSettings = class InterfaceSettings {
     shell.innerHTML = '<h3 class="settings-page-title">上栏与通知</h3><form id="shellPreferencesForm"><div class="settings-card"><label class="preference-field">时间显示<select id="settingsClockMode"><option value="compact">简约 · Sep 21 18:27</option><option value="detailed">详细 · 日期、秒与时区</option></select></label></div><p class="settings-description">勾选显示上栏按钮，使用箭头调整顺序。点击时间可查看本次运行的通知与日历；通知从上栏下方弹出。</p><ul id="settingsToolbarList" class="settings-card preference-list"></ul><p id="shellPreferencesError" class="interface-error" role="alert"></p><footer class="settings-footer"><button type="submit" class="primary">保存上栏设置</button></footer></form>';
     document.getElementById('placesPreferencesForm').addEventListener('submit', event => this.savePlaces(event));
     document.getElementById('shellPreferencesForm').addEventListener('submit', event => this.saveShell(event));
+    const menu = document.getElementById('contextMenuSettingsPanel');
+    menu.innerHTML = '<h3 class="settings-page-title">右键菜单</h3><p class="settings-description">勾选需要保留的内建项目。文件菜单只显示当前选择可用的操作；空白处显示新建、刷新等操作。偏好保存在本机，适用于所有服务器。</p><form id="contextMenuPreferencesForm"><h4>文件与文件夹</h4><ul id="contextMenuItemList" class="settings-card preference-list"></ul><h4>空白区域</h4><ul id="contextMenuEmptyList" class="settings-card preference-list"></ul><p id="contextMenuPreferencesError" class="interface-error" role="alert"></p><footer class="settings-footer"><button type="button" id="resetContextMenu">恢复默认</button><button type="submit" class="primary">保存右键菜单</button></footer></form>';
+    document.getElementById('contextMenuPreferencesForm').addEventListener('submit', event => this.saveContextMenu(event));
+    document.getElementById('resetContextMenu').addEventListener('click', () => { this.contextMenuDraft = ContextMenuPreferences.normalize(); this.renderContextMenu(); });
     document.getElementById('addPlace').addEventListener('click', () => {
       const label = document.getElementById('newPlaceLabel').value.trim(), path = document.getElementById('newPlacePath').value.trim();
       if (!label || !path.startsWith('/')) { document.getElementById('placesPreferencesError').textContent = '请输入快捷方式名称和服务器绝对路径。'; return; }
@@ -27,10 +31,29 @@ window.InterfaceSettings = class InterfaceSettings {
     this.shellDraft = { clockMode: this.saved.shellPreferences?.clockMode || 'compact', toolbarOrder: [...new Set([...(this.saved.shellPreferences?.toolbarOrder || []), ...this.toolbar().map(([id]) => id)])], toolbarHidden: [...(this.saved.shellPreferences?.toolbarHidden || ['browserButton', 'exitButton'])] };
     document.getElementById('settingsLogPath').value = this.draft.logPath; document.getElementById('settingsTrashPath').value = this.draft.trashPath;
     document.getElementById('settingsClockMode').value = this.shellDraft.clockMode;
+    this.contextMenuDraft = ContextMenuPreferences.normalize(this.saved.contextMenuPreferences);
+    document.getElementById('contextMenuPreferencesError').textContent = '';
     document.getElementById('placesPreferencesError').textContent = document.getElementById('shellPreferencesError').textContent = '';
-    this.renderPlaces(); this.renderToolbar();
+    this.renderPlaces(); this.renderToolbar(); this.renderContextMenu();
   }
-  toolbar() { return [['connectButton', '切换账号'], ['downloadsButton', '传输中心'], ['activityButton', '实时监听'], ['homeShortcut', 'Home'], ['desktopSettings', '设置'], ['fullscreen', '全屏'], ['exitButton', '退出'], ['browserButton', '浏览器']]; }
+  toolbar() { return [['connectButton', 'Account'], ['downloadsButton', 'Transfer Center'], ['activityButton', 'Activity Monitor'], ['homeShortcut', 'Home'], ['desktopSettings', 'Settings'], ['fullscreen', 'Fullscreen'], ['exitButton', 'Exit'], ['browserButton', 'Browser']]; }
+  renderContextMenu() {
+    const lists = { item: document.getElementById('contextMenuItemList'), empty: document.getElementById('contextMenuEmptyList') };
+    Object.values(lists).forEach(list => list.replaceChildren());
+    for (const entry of ContextMenuPreferences.entries) {
+      const row = document.createElement('li'), checkbox = document.createElement('input'), label = document.createElement('label');
+      checkbox.type = 'checkbox'; checkbox.id = `menu-${entry.id}`; checkbox.checked = !this.contextMenuDraft.hidden.includes(entry.id);
+      checkbox.addEventListener('change', () => { this.contextMenuDraft.hidden = this.contextMenuDraft.hidden.filter(id => id !== entry.id); if (!checkbox.checked) this.contextMenuDraft.hidden.push(entry.id); });
+      label.htmlFor = checkbox.id; label.className = 'preference-label'; label.textContent = entry.label;
+      row.append(checkbox, label); lists[entry.scope].append(row);
+    }
+  }
+  async saveContextMenu(event) {
+    event.preventDefault(); const form = event.currentTarget; for (const control of form.elements) control.disabled = true;
+    try { const saved = await this.options.saveContextMenu(this.contextMenuDraft); this.options.apply(saved); document.getElementById('contextMenuPreferencesError').textContent = ''; this.options.notify('右键菜单已保存'); }
+    catch (error) { document.getElementById('contextMenuPreferencesError').textContent = error.message; }
+    finally { for (const control of form.elements) control.disabled = false; }
+  }
   moveButtons(list, order, id, redraw) {
     for (const [label, delta] of [['上移', -1], ['下移', 1]]) { const button = document.createElement('button'); button.type = 'button'; button.textContent = delta < 0 ? '↑' : '↓'; button.title = label; button.setAttribute('aria-label', label); const index = order.indexOf(id); button.disabled = index + delta < 0 || index + delta >= order.length; button.addEventListener('click', () => { [order[index], order[index + delta]] = [order[index + delta], order[index]]; redraw(); }); list.append(button); }
   }

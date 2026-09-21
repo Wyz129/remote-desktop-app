@@ -73,27 +73,36 @@
 }
 
 /* Transfer Center shares the settings category rail and content template. */
-.downloads-panel.category-panel { display: flex; flex-direction: column; width: min(830px, calc(100vw - 90px)); height: min(610px, calc(100vh - 72px)); max-height: none; padding: 0; overflow: hidden; background: #242424; container-type: inline-size; }
-.downloads-panel.category-panel[hidden] { display: none; }
-.downloads-panel.category-panel > header { flex: none; min-height: 45px; padding: 0 12px 0 19px; border-bottom: 1px solid #424242; background: #303030; }
-.downloads-panel.category-panel > header h2 { font-size: 14px; }
-.downloads-panel.category-panel .settings-tabs { flex-basis: 158px; }
-.downloads-panel.category-panel .settings-content { padding: 22px; }
-.downloads-panel.category-panel .transfer-controls { padding: 0 0 18px; border-bottom-color: #424242; gap: 14px; }
-.downloads-panel.category-panel .transfer-buttons button { border-radius: 7px; }
-.downloads-panel.category-panel .transfer-history-heading { margin: 0 0 16px; align-items: flex-start; }
-.downloads-panel.category-panel .transfer-history-heading h3 { margin: 0; font-size: 17px; }
-.downloads-panel.category-panel .transfer-history-heading button { flex: none; border-radius: 7px; }
-.downloads-panel.category-panel .download-item { padding: 14px; margin: 12px 0; border: 1px solid #424242; border-radius: 9px; background: #2d2d2d; }
+.transfer-window { display: flex; flex-direction: column; padding: 0; overflow: hidden; background: #242424; container-type: inline-size; }
+.transfer-window[hidden] { display: none; }
+.transfer-window > .titlebar { flex: none; height: 45px; position: relative; background: #303030; }
+.transfer-window .window-title { position: absolute; left: 50%; transform: translateX(-50%); max-width: calc(100% - 190px); font-size: 14px; }
+.transfer-window .window-controls { margin-left: auto; }
+.transfer-app-icon { display: inline-flex; align-items: center; color: #b9b6bc; }
+.transfer-window .settings-tabs { flex-basis: 158px; }
+.transfer-window .settings-content { padding: 22px; }
+.transfer-window .transfer-controls { padding: 0 0 18px; border-bottom-color: #424242; gap: 14px; }
+.transfer-window .transfer-history-heading { margin: 0 0 16px; align-items: flex-start; }
+.transfer-window .transfer-history-heading h3 { margin: 0; font-size: 17px; }
+.transfer-window .transfer-history-heading button { flex: none; border-radius: 7px; }
+.transfer-window .download-item { padding: 14px; margin: 12px 0; border: 1px solid #424242; border-radius: 9px; background: #2d2d2d; }
+.transfer-path-field { display: block; padding: 15px; color: #eae8e5; font-size: 13px; font-weight: 600; }
+.transfer-path-field + .transfer-path-field { border-top: 1px solid #424242; }
+.transfer-path-field .path-controls { display: flex; gap: 8px; margin-top: 9px; }
+.transfer-path-field input { flex: 1; width: 0; min-width: 0; padding: 8px 10px; border: 1px solid #4b4b4b; border-radius: 7px; background: #3b3b3b; color: #eeeae7; font: 12px Consolas, monospace; }
+.transfer-path-field button, .transfer-path-actions button { flex: none; padding: 7px 12px; border-radius: 7px; }
+.transfer-path-field small { display: block; margin-top: 7px; color: #b7b4b1; font-size: 12px; font-weight: 400; line-height: 1.5; }
+.transfer-path-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+#transferDirectoryStatus { flex: 1; font-size: 12px; color: #b7b4b1; }
 .transfer-empty { color: #b7b4b1; font-size: 12px; line-height: 1.7; padding: 18px 0; }
 #transferError:empty { display: none; }
 #downloadsPanel .settings-tabs .category-link { margin-top: auto; border: 0; box-shadow: none; background: transparent; }
 #downloadsPanel .settings-tabs .category-link:hover { background: #3a3a3a; }
 @container (max-width: 550px) {
-  .downloads-panel.category-panel .settings-tabs { flex-basis: 120px; }
-  .downloads-panel.category-panel .settings-content { padding: 16px 12px; }
-  .downloads-panel.category-panel .transfer-history-heading { flex-direction: column; }
+  .transfer-window .settings-tabs { flex-basis: 120px; }
+  .transfer-window .settings-content { padding: 16px 12px; }
+  .transfer-window .transfer-history-heading { flex-direction: column; }
 }
 @container (max-width: 460px) {
-  .downloads-panel.category-panel .settings-tabs { flex-basis: 50px; }
+  .transfer-window .settings-tabs { flex-basis: 50px; }
 }

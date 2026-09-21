@@ -3,8 +3,8 @@ window.DesktopShell = class DesktopShell {
   constructor(options) {
     this.options = options; this.history = []; this.preferences = {}; this.monthOffset = 0;
     const actions = document.querySelector('.toolbar-actions');
-    const exit = document.createElement('button'); exit.id = 'exitButton'; exit.className = 'toolbar-icon'; exit.title = '退出'; exit.setAttribute('aria-label', '退出'); exit.append(options.icon('Power')); actions.append(exit);
-    exit.addEventListener('click', () => Promise.resolve(options.quit()).catch(error => options.notify(error.message)));
+    const exit = document.createElement('button'); exit.id = 'exitButton'; exit.className = 'toolbar-icon'; exit.title = 'Exit'; exit.setAttribute('aria-label', 'Exit'); exit.append(options.icon('Power')); actions.append(exit);
+    exit.addEventListener('click', async () => { exit.disabled = true; try { await options.quit(); } catch (error) { options.notify(error.message); } finally { exit.disabled = false; } });
     this.panel = document.createElement('section'); this.panel.id = 'notificationPanel'; this.panel.className = 'notification-panel'; this.panel.hidden = true; this.panel.setAttribute('aria-label', '通知与日历');
     this.panel.innerHTML = '<div class="notification-column"><header><h2>通知</h2><button type="button" class="clear-notifications">清除</button></header><div class="notification-history" tabindex="0" aria-label="历史通知"></div><footer>本次运行的通知</footer></div><div class="notification-calendar"><header><button type="button" class="previous-month" aria-label="上个月">‹</button><strong></strong><button type="button" class="next-month" aria-label="下个月">›</button></header><div class="calendar-weekdays"></div><div class="calendar-days"></div><p class="calendar-zone"></p></div>';
     document.body.append(this.panel);

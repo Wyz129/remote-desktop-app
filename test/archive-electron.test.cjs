@@ -43,7 +43,7 @@ test('desktop archive menu selects zip and extracts remote bytes with summarized
   });
   await page.evaluate(config => window.remoteDesktop.connect(config), fixture.config);
   await page.locator(`#icons [data-path="${parent}/source.txt"]`).click({ button: 'right' });
-  assert.equal(await page.locator('#context [data-action="extract"]').isDisabled(), true);
+  assert.equal(await page.locator('#context [data-action="extract"]').isVisible(), false);
   await page.locator('#context [data-action="compress"]').click();
   await page.locator(`#icons [data-path="${parent}/source.txt.zip"]`).waitFor();
   assert.deepEqual((await application.evaluate(() => globalThis.archiveDialogLog)).find(item => item.title === '压缩文件').buttons, ['取消', '.tar.gz', '.zip']);
