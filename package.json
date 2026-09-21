@@ -2,7 +2,7 @@
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
   "description": "独立 SSH Monaco Editor、浏览器、传输中心与命令行实例",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -14,8 +14,8 @@
     "test:backend": "node --test test/standalone-backend.test.cjs test/desktop-service.test.cjs test/terminal-close.test.cjs test/server-clock.test.cjs test/desktop-preferences.test.cjs test/remote-storage.test.cjs test/server-profiles.test.cjs",
     "test:ui": "node --test test/standalone-ui.test.cjs",
     "test:vim": "node --test test/real-vim.test.cjs",
-    "test:electron": "node --test test/electron.test.cjs test/first-use-electron.test.cjs test/video-app-electron.test.cjs test/programs-electron.test.cjs",
-    "test:modules": "node --test test/upload-service.test.cjs test/instance-bridge.test.cjs test/document-service.test.cjs test/jupyter-client.test.cjs test/ssh-network.test.cjs test/preview-server.test.cjs test/activity-log.test.cjs test/activity-audit.test.cjs test/transfer-center.test.cjs test/transfer-targets.test.cjs test/local-picker.test.cjs test/command-trace.test.cjs test/video-service.test.cjs test/program-preferences.test.cjs",
+    "test:electron": "node --test test/electron.test.cjs test/first-use-electron.test.cjs test/video-app-electron.test.cjs test/programs-electron.test.cjs test/interface-electron.test.cjs",
+    "test:modules": "node --test test/upload-service.test.cjs test/instance-bridge.test.cjs test/document-service.test.cjs test/jupyter-client.test.cjs test/ssh-network.test.cjs test/preview-server.test.cjs test/activity-log.test.cjs test/activity-audit.test.cjs test/transfer-center.test.cjs test/transfer-targets.test.cjs test/local-picker.test.cjs test/command-trace.test.cjs test/video-service.test.cjs test/program-preferences.test.cjs test/interface-preferences.test.cjs test/transfer-preferences.test.cjs",
     "test:workbench": "node --test test/workbench-ui.test.cjs",
     "test:workspace": "node --test test/workspace-electron.test.cjs",
     "test:browser": "node --test test/browser-electron.test.cjs",
@@ -34,7 +34,9 @@
     "playwright": "^1.63.0"
   },
   "dependencies": {
+    "ansi_up": "^6.0.6",
     "dompurify": "^3.4.15",
+    "highlight.js": "^11.12.0",
     "katex": "^0.18.7",
     "marked": "^18.0.13",
     "monaco-editor": "^0.53.0",
@@ -47,7 +49,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.1.10"
+      "output": "artifacts/electron-1.1.11"
     },
     "files": [
       "main.cjs",

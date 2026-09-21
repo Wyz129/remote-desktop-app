@@ -14,6 +14,7 @@ const { createAuditor, safeUrl } = require('./lib/activity-audit.cjs');
 const { UploadService } = require('./lib/upload-service.cjs');
 const { InstanceBridge, executeRemote } = require('./lib/instance-bridge.cjs');
 const { TransferCenter } = require('./lib/transfer-center.cjs');
+const { transferDirectory, transferPreferences } = require('./lib/transfer-preferences.cjs');
 const { LocalPicker } = require('./lib/local-picker.cjs');
 const { registerLocalPaths, transferIdentity, openTransferTarget } = require('./lib/transfer-targets.cjs');
 const { createWorkbenchManager } = require('./lib/workbench-manager.cjs');
@@ -22,6 +23,7 @@ const { ensureRemoteStorage } = require('./lib/remote-storage.cjs');
 const { VideoService } = require('./lib/video-service.cjs');
 const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle } = require('./lib/server-profiles.cjs');
 const { normalizeProgramPreferences, updateProgramPreferences } = require('./lib/program-preferences.cjs');
+const { workspacePreferences, workspaceLocations, shellPreferences } = require('./lib/interface-preferences.cjs');
 
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
@@ -32,8 +34,9 @@ const audit = createAuditor(activityLog);
 const cliActivity = new Map();
 const transferCenter = new TransferCenter(value => send('download:progress', value));
 const selectedLocalPaths = new Set(), selectedDownloadDirectories = new Set();
-let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {}, storageVersion: 2, serverProfiles: [], selectedServerId: '', programPreferences: normalizeProgramPreferences() };
+let settings = { downloadThreshold: DEFAULT_THRESHOLD, scriptEditor: 'monaco', knownHosts: {}, desktopLocations: {}, storageVersion: 2, serverProfiles: [], selectedServerId: '', programPreferences: normalizeProgramPreferences(), ...transferPreferences() };
 let settingsQueue = Promise.resolve();
+let workspacePreferenceQueue = Promise.resolve();
 const selectedKeys = new Set();
 const completedDownloads = new Set();
 const terminalStarts = new Map();
@@ -42,23 +45,38 @@ let sessionTransition = false, allowWindowClose = false, closingApplication = fa
 let connectionCleanup = Promise.resolve();
 const terminalGuard = new TerminalGuard({ getBackend: () => backend,
   onAction: (record, source) => { if (currentSession(source)) activityLog.system(record); },
-  closed: id => { terminalStarts.delete(id); post({ type: 'terminalClosed', id }); } });
+  closed: id => {
+    const start = terminalStarts.get(id);
+    if (start && !start.ready) start.releaseLog?.();
+    terminalStarts.delete(id); post({ type: 'terminalClosed', id });
+  } });
 const entryPath = path.join(__dirname, 'app', 'index.html');
 const entryUrl = pathToFileURL(entryPath).href;
 function requireSender(event) {
   if (!windowRef || event.sender !== windowRef.webContents || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== entryUrl) throw new Error('拒绝非应用窗口的请求。');
 }
 function requireBackend() { if (!backend?.connected || !desktopService) throw new Error('尚未连接 SSH。'); return backend; }
-function publicSettings() { const { knownHosts, desktopLocations, ...visible } = settings; return { ...visible, downloadsPath: app.getPath('downloads') }; }
+function publicSettings() {
+  const { knownHosts, desktopLocations, workspaceLocations: locations, transferUploadDirectories, ...visible } = settings;
+  const workspace = workspacePreferences(backend?.connected && locations?.[backend.desktopIdentity]);
+  return { ...visible, defaultUploadDirectory: backend?.connected ? transferUploadDirectories?.[backend.desktopIdentity] || '' : '', shellPreferences: shellPreferences(settings.shellPreferences), workspacePreferences: workspace, workspaceIdentity: backend?.connected ? backend.desktopIdentity : '', downloadsPath: settings.defaultDownloadDirectory || app.getPath('downloads') };
+}
 function currentSession(source) { return Boolean(source && source === backend && source.connected); }
+function queueWorkspacePreferences(task) {
+  const pending = workspacePreferenceQueue.catch(() => {}).then(task);
+  workspacePreferenceQueue = pending;
+  return pending;
+}
 function accessDenied(error) { return [3, 'EACCES', 'EPERM'].includes(error?.code); }
 function accessMessage(error, remotePath) { return `${accessDenied(error) ? '无访问权限：' : ''}${remotePath ? `${remotePath} — ` : ''}${error.message}${error.code !== undefined ? ` (${error.code})` : ''}`; }
 async function loadSettings() {
-  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), serverProfiles: profilesFromSettings(loaded), programPreferences: normalizeProgramPreferences(loaded.programPreferences) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
+  try { const loaded = JSON.parse(await fsp.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); settings = { ...settings, ...Object.fromEntries(Object.entries(loaded).filter(([key]) => ['host', 'port', 'username', 'alias', 'hostKeyFingerprint', 'knownHosts', 'downloadThreshold', 'privateKeyPath', 'selectedServerId'].includes(key))), ...storagePreferences(loaded), ...transferPreferences(loaded), serverProfiles: profilesFromSettings(loaded), programPreferences: normalizeProgramPreferences(loaded.programPreferences), workspaceLocations: workspaceLocations(loaded.workspaceLocations), shellPreferences: shellPreferences(loaded.shellPreferences) }; } catch (error) { if (error.code !== 'ENOENT') settings.loadWarning = '本地设置不可读，已使用默认值。'; }
   if (!settings.knownHosts || typeof settings.knownHosts !== 'object' || Array.isArray(settings.knownHosts)) settings.knownHosts = {};
   if (!Number.isSafeInteger(settings.downloadThreshold) || settings.downloadThreshold < 1048576 || settings.downloadThreshold > 1073741824) settings.downloadThreshold = DEFAULT_THRESHOLD;
   settings.scriptEditor = 'monaco';
   settings.desktopLocations = desktopLocations(settings.desktopLocations);
+  settings.workspaceLocations = workspaceLocations(settings.workspaceLocations);
+  settings.shellPreferences = shellPreferences(settings.shellPreferences);
 }
 function saveSettings(patch) {
   const task = settingsQueue.then(async () => {
@@ -72,6 +90,17 @@ function saveSettings(patch) {
 }
 function send(channel, payload) { if (windowRef && !windowRef.isDestroyed()) windowRef.webContents.send(channel, payload); }
 function post(payload) { send('desktop:message', payload); }
+function bindCommandLogger(source) {
+  if (source.commandLogContexts) return;
+  source.commandLogContexts = new Map();
+  source.onCommandActivity = record => {
+    if (!currentSession(source)) return;
+    let operation = source.commandLogContexts.get(record.operationId);
+    if (!operation) { const context = activityLog.capture(); operation = { context, release: activityLog.retain(context) }; source.commandLogContexts.set(record.operationId, operation); }
+    activityLog.system(record, operation.context);
+    if (record.type === 'end') { operation.release(); source.commandLogContexts.delete(record.operationId); }
+  };
+}
 function bridgeActivity(event) {
   const id = event.connection.id;
   if (event.type === 'start' && event.action === 'connect') return;
@@ -123,6 +152,7 @@ function closeConnectionResources() {
     const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close(), previousVideo?.disconnect()]);
     const failure = results.find(result => result.status === 'rejected');
     if (failure) throw failure.reason;
+    await workspacePreferenceQueue.catch(() => {});
     activityLog.system({ type: 'connection-closed' });
     await activityLog.disconnect();
   });
@@ -144,24 +174,33 @@ async function download(remotePath, { id = crypto.randomUUID(), destination, sig
   const abort = () => source.cancelDownload(id); signal?.addEventListener('abort', abort, { once: true });
   try {
     if (signal?.aborted) throw new Error('下载已取消。');
-    const targetDirectory = path.resolve(destination || app.getPath('downloads'));
+    const targetDirectory = path.resolve(destination || settings.defaultDownloadDirectory || app.getPath('downloads'));
     const result = await transferCenter.run({ id, source: remotePath, direction: 'download', destination: targetDirectory, targetDirectory, targetSide: 'local', serverIdentity: transferIdentity(source) }, progress => source.download(remotePath, { id, destination: targetDirectory, audit: auditCommands, onProgress: value => { progress(value); onProgress?.(value); } }), abort);
     completedDownloads.add(result.path); return result;
   } finally { signal?.removeEventListener('abort', abort); }
 }
-async function inspect(create = false) {
+async function inspect(create = false, allowTransition = false) {
   const source = requireBackend();
-  if (!source.remoteStorage || create) source.remoteStorage = await ensureRemoteStorage(source);
-  await activityLog.attach(source, source.remoteStorage.root, { directory: source.remoteStorage.log });
-  const logContext = activityLog.capture();
-  for (const record of source.startupActivity || []) activityLog.system(record, logContext);
-  source.startupActivity = null;
-  source.onCommandActivity = record => { if (currentSession(source)) activityLog.system(record, logContext); };
-  const remote = await desktopService.inspect(false, settings.desktopLocations[source.desktopIdentity] || source.remoteStorage.desktop);
-  if (!currentSession(source)) return { cancelled: true };
-  post(remote);
-  if (remote.configError) post({ type: 'desktopError', error: remote.configError });
-  return { ...remote, found: remote.status === 'ready', path: remote.rootPath, home: remote.homePath };
+  return queueWorkspacePreferences(async () => {
+    const valid = () => currentSession(source) && (!sessionTransition || allowTransition);
+    if (!valid()) return { cancelled: true };
+    const service = desktopService;
+    if (!source.remoteStorage || create) source.remoteStorage = await ensureRemoteStorage(source);
+    if (!valid()) return { cancelled: true };
+    const preferences = workspacePreferences(settings.workspaceLocations?.[source.desktopIdentity]);
+    await activityLog.attach(source, source.remoteStorage.root, { directory: preferences.logPath || source.remoteStorage.log, preserveDirectoryMode: Boolean(preferences.logPath), isCurrent: valid });
+    if (!valid()) return { cancelled: true };
+    const logContext = activityLog.capture();
+    for (const record of source.startupActivity || []) activityLog.system(record, logContext);
+    source.startupActivity = null;
+    bindCommandLogger(source);
+    const remote = await service.inspect(false, settings.desktopLocations[source.desktopIdentity] || source.remoteStorage.desktop);
+    if (!valid()) return { cancelled: true };
+    post(remote);
+    post({ type: 'interfacePreferences', settings: publicSettings() });
+    if (remote.configError) post({ type: 'desktopError', error: remote.configError });
+    return { ...remote, found: remote.status === 'ready', path: remote.rootPath, home: remote.homePath };
+  });
 }
 async function serverInfo() {
   const source = backend, service = desktopService;
@@ -250,6 +289,8 @@ async function handleDesktopMessage(message) {
     const terminalLog = record => { if (currentSession(terminalBackend)) activityLog.system({ ...record, operationId, protocol: 'SSH exec + PTY' }, terminalContext); };
     if (terminalStarts.has(message.id)) throw new Error('终端 ID 已存在。');
     terminalStarts.set(message.id, token);
+    const releaseTerminalLog = activityLog.retain(terminalContext); let terminalStarted = false;
+    token.releaseLog = releaseTerminalLog;
     try {
       const cwd = await service.checked(message.path), program = message.program || 'shell';
       if (!['shell', 'vim', 'htop'].includes(program)) throw new Error('不支持的终端程序。');
@@ -275,11 +316,13 @@ async function handleDesktopMessage(message) {
       backend.openShell(message.id, cwd, data => output(decoder.write(data)), (error, code) => {
         output(decoder.end());
         terminalLog({ type: 'terminal-exit', terminalId: message.id, code: code ?? null, error: error?.message });
+        releaseTerminalLog();
         terminalStarts.delete(message.id); post({ type: error ? 'terminalError' : 'terminalExit', id: message.id, error: error?.message, exitCode: code ?? 0 });
       }, { program, filePath, readOnly, cols: message.cols, rows: message.rows,
         onCommand: command => terminalLog({ type: 'terminal-command', terminalId: message.id, command }),
         onInput: data => terminalLog({ type: 'terminal-input', terminalId: message.id, data }),
-        onReady: () => post({ type: 'terminalOpened', id: message.id }) });
+        onReady: () => { token.ready = true; post({ type: 'terminalOpened', id: message.id }); } });
+      terminalStarted = true;
     } catch (error) {
       terminalLog({ type: 'terminal-error', terminalId: message.id, error: error.message });
       if (terminalStarts.get(message.id) === token) {
@@ -287,7 +330,7 @@ async function handleDesktopMessage(message) {
         if (message.filePath && accessDenied(error)) post({ type: 'fileAccessError', id: message.id, path: message.filePath, error: accessMessage(error, message.filePath), accessDenied: true });
         else post({ type: 'terminalError', id: message.id, error: error.message });
       }
-    }
+    } finally { if (!terminalStarted) releaseTerminalLog(); }
   } else if (type === 'terminalInput') backend.writeShell(message.id, message.data);
   else if (type === 'terminalResize') backend.resizeShell(message.id, message.cols, message.rows);
   else if (type === 'terminalClose') { await audit('terminalClose', { terminalId: message.id }, () => terminalGuard.request(message.id)); }
@@ -333,7 +376,7 @@ async function connectSsh(input, trustedLocal = false) {
       windowRef.setTitle(connectionTitle(profile, result.address));
       backend.connectionProfile = { ...profile, address: result.address };
       post({ type: 'connectionInfo', profile: backend.connectionProfile });
-      try { await inspect(); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
+      try { await inspect(false, true); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
       if (!trustedLocal) activityLog.system({ type: 'ssh-connected', host, port, username, home: backend.home, desktop: backend.desktop });
       await serverInfo(); return result;
     } finally { connecting = false; sessionTransition = false; }
@@ -362,6 +405,42 @@ function registerIpc() {
   });
   handle('activity:snapshot', () => activityLog.snapshot());
   handle('app:get-settings', () => publicSettings());
+  handle('app:quit', () => { void quitSafely(); return true; });
+  handle('app:save-shell-preferences', async input => {
+    const saved = await saveSettings({ shellPreferences: shellPreferences(input) });
+    post({ type: 'interfacePreferences', settings: saved }); return saved;
+  });
+  handle('app:save-workspace-preferences', (input, identity) => {
+    return queueWorkspacePreferences(async () => {
+      const source = requireBackend();
+      const valid = () => currentSession(source) && !sessionTransition;
+      if (!valid() || identity !== source.desktopIdentity) throw new Error('SSH 连接已改变，请重新打开设置。');
+      const next = workspacePreferences(input, true), previous = workspacePreferences(settings.workspaceLocations?.[identity]);
+      for (const target of [next.logPath, next.trashPath, ...next.shortcuts.map(item => item.path)].filter(Boolean)) {
+        try { await desktopService.entries(target); } catch (error) { throw new Error(accessMessage(error, target)); }
+        if (!valid()) throw new Error('SSH 连接已改变，未保存目录设置。');
+      }
+      const attachLog = value => activityLog.attach(source, source.remoteStorage.root, { directory: value.logPath || source.remoteStorage.log, preserveDirectoryMode: Boolean(value.logPath), isCurrent: valid });
+      if (next.logPath !== previous.logPath) {
+        const result = await attachLog(next);
+        if (result.error || !valid()) {
+          if (valid()) await attachLog(previous);
+          throw new Error(result.error || 'SSH 连接已改变。');
+        }
+      }
+      try {
+        const saved = await saveSettings(current => {
+          if (!valid()) throw new Error('SSH 连接已改变，未保存目录设置。');
+          return { workspaceLocations: { ...current.workspaceLocations, [identity]: next } };
+        });
+        bindCommandLogger(source);
+        post({ type: 'interfacePreferences', settings: saved }); return saved;
+      } catch (error) {
+        if (valid() && next.logPath !== previous.logPath) await attachLog(previous);
+        throw error;
+      }
+    });
+  });
   handle('app:program-preferences', async (action, id) => {
     const saved = await saveSettings(current => ({ programPreferences: updateProgramPreferences(current.programPreferences, action, id) }));
     post({ type: 'programPreferences', preferences: saved.programPreferences });
@@ -372,11 +451,35 @@ function registerIpc() {
     if (profile.privateKeyPath && !selectedKeys.has(profile.privateKeyPath) && !settings.serverProfiles.some(saved => saved.privateKeyPath === profile.privateKeyPath && saved.host === profile.host && saved.port === profile.port && saved.username === profile.username)) throw new Error('请使用“选择私钥”按钮选择本地文件。');
     return saveSettings(current => upsertProfile(current.serverProfiles, profile));
   });
-  handle('app:save-settings', patch => {
+  handle('app:save-settings', async patch => {
     const threshold = Number(patch?.downloadThreshold);
     if (!Number.isSafeInteger(threshold) || threshold < 1048576 || threshold > 1073741824) throw new Error('下载阈值必须为 1–1024 MiB。');
+    const directories = {}, source = backend?.connected ? backend : null;
+    if (patch.workspaceIdentity !== undefined && patch.workspaceIdentity !== (source?.desktopIdentity || '')) throw new Error('SSH 连接已改变，请重新打开设置。');
+    if (patch.defaultUploadDirectory !== undefined) {
+      directories.defaultUploadDirectory = transferDirectory(patch.defaultUploadDirectory, 'remote');
+      if (directories.defaultUploadDirectory && directories.defaultUploadDirectory !== publicSettings().defaultUploadDirectory) {
+        requireBackend();
+        await desktopService.entries(directories.defaultUploadDirectory);
+        if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，请重新设置上传目录。');
+      }
+    }
+    if (patch.defaultDownloadDirectory !== undefined) {
+      directories.defaultDownloadDirectory = transferDirectory(patch.defaultDownloadDirectory, 'local');
+      if (directories.defaultDownloadDirectory && !(await fsp.stat(directories.defaultDownloadDirectory)).isDirectory()) throw new Error('默认下载位置必须是文件夹。');
+    }
+    const saved = await saveSettings(current => {
+      if (source && (!currentSession(source) || sessionTransition)) throw new Error('SSH 连接已改变，请重新保存。');
+      const { defaultUploadDirectory, ...local } = directories;
+      return { downloadThreshold: threshold, scriptEditor: 'monaco', ...local,
+        ...(source && defaultUploadDirectory !== undefined ? { transferUploadDirectories: { ...current.transferUploadDirectories, [source.desktopIdentity]: defaultUploadDirectory } } : {}) };
+    });
     if (backend) backend.threshold = threshold;
-    return saveSettings({ downloadThreshold: threshold, scriptEditor: 'monaco' });
+    return saved;
+  });
+  handle('app:choose-download-directory', async () => {
+    const result = await dialog.showOpenDialog(windowRef, { title: '选择默认下载目录', defaultPath: settings.defaultDownloadDirectory || app.getPath('downloads'), properties: ['openDirectory', 'createDirectory'] });
+    return result.canceled ? null : result.filePaths[0];
   });
   handle('app:quit-fullscreen', () => { windowRef.setFullScreen(false); return true; });
   handle('terminal:close', id => terminalGuard.request(id));
@@ -432,7 +535,7 @@ function registerIpc() {
   });
   handle('transfer:choose-download-directory', async () => {
     const source = requireBackend();
-    const result = await dialog.showOpenDialog(windowRef, { title: '选择本地保存目录', properties: ['openDirectory', 'createDirectory'] });
+    const result = await dialog.showOpenDialog(windowRef, { title: '选择本地保存目录', defaultPath: settings.defaultDownloadDirectory || app.getPath('downloads'), properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !currentSession(source) || sessionTransition) return null; selectedDownloadDirectories.add(result.filePaths[0]); return result.filePaths[0];
   });
   handle('transfer:upload', (localPath, remoteDirectory, id) => {
@@ -461,6 +564,7 @@ app.whenReady().then(async () => {
   const logging = { audit, captureLog: source => (!source || currentSession(source)) ? activityLog.capture() : null, log: (record, context) => activityLog.system(record, context) };
   workbench = createWorkbenchManager({ ...logging, embedded: true, onEvent: value => send('workbench:event', value), getBackend: requireBackend, getParent: () => windowRef, getConnectionId: () => backend?.client, createPreview: (remotePath, options) => browserManager.createPreview(remotePath, options) });
   browserManager = createBrowserManager({ ...logging, embedded: true, getBackend: requireBackend, getParent: () => windowRef, onEvent: value => send('browser:event', value), onTransfer: value => transferCenter.update({ ...value, status: value.status === 'completed' ? 'complete' : value.status }),
+    getDownloadsPath: () => settings.defaultDownloadDirectory || app.getPath('downloads'),
     uploadFile: ({ localPath, remoteDirectory, id, signal, onProgress }) => { requireBackend(); if (!uploader || sessionTransition) throw new Error('SSH 连接正在切换。'); return uploader.upload(localPath, remoteDirectory, { id, signal, onProgress }); } });
   registerIpc(); createWindow();
   if (historyWarning) windowRef.webContents.once('did-finish-load', () => post({ type: 'desktopError', error: historyWarning }));

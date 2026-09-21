@@ -1,0 +1,85 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { _electron: electron } = require('playwright');
+const { createSshFixture } = require('./helpers/ssh-fixture.cjs');
+const project = path.resolve(__dirname,'..');
+test('account-scoped places and transfer defaults, real log relocation, shell persistence and safe exit', {timeout:120000}, async t => {
+  const first=await createSshFixture({desktop:false}), second=await createSshFixture({desktop:false});
+  let application;
+  const close=async()=>{if(application && application.process().exitCode===null){const timer=setTimeout(()=>spawnSync('taskkill',['/pid',String(application.process().pid),'/T','/F'],{windowsHide:true}),5000);try{await application.close();}finally{clearTimeout(timer);}}};
+  t.after(async()=>{await close();await first.close();await second.close();});
+  await first.put('custom-log/keep.txt','keep'); await first.put('custom-trash/keep.txt','keep'); await first.put('shared/keep.txt','keep');
+  const userData=path.join(first.root,'interface-test');await fs.mkdir(userData);
+  const settingsPath=path.join(userData,'settings.json');
+  await fs.writeFile(settingsPath,JSON.stringify({knownHosts:{[`${first.config.host}:${first.config.port}`]:first.fingerprint,[`${second.config.host}:${second.config.port}`]:second.fingerprint}}));
+  const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+  const executablePath=process.env.REMOTE_DESKTOP_TEST_EXE;
+  const launch=async()=>{application=await electron.launch({...(executablePath?{executablePath}:{}),args:[...(executablePath?[]:[project]),'--smoke-test',`--user-data-dir=${userData}`],env});const page=await application.firstWindow();page.setDefaultTimeout(12000);await page.locator('#connectionDialog[open]').waitFor();await page.locator('#closeConnection').click();return page;};
+  let page=await launch();const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.evaluate(config=>window.remoteDesktop.connect(config),first.config);
+  let saved=await page.evaluate(()=>window.remoteDesktop.getSettings());const identity=saved.workspaceIdentity;
+  assert.ok(identity);assert.equal(saved.shellPreferences.clockMode,'compact');assert.ok(saved.shellPreferences.toolbarHidden.includes('browserButton'));
+  assert.ok((await fs.stat(first.mapPath(`${first.home}/.rdesktop/trash`))).isDirectory());
+  const preferences={logPath:`${first.home}/custom-log`,trashPath:`${first.home}/custom-trash`,shortcuts:[{id:'custom-shared',label:'Shared',path:`${first.home}/shared`}],placeOrder:['home','root','custom-shared','desktop','log','trash']};
+  const before=await fs.readFile(settingsPath,'utf8');
+  await assert.rejects(page.evaluate(input=>window.remoteDesktop.saveWorkspacePreferences(input,'wrong-account'),preferences),/连接已改变/);
+  await assert.rejects(page.evaluate(([input,id])=>window.remoteDesktop.saveWorkspacePreferences({...input,logPath:'/nonexistent-log'},id),[preferences,identity]),/不存在|no such/i);
+  assert.equal(await fs.readFile(settingsPath,'utf8'),before);
+  await page.keyboard.press('Control+Alt+t'); await page.locator('.terminal-window').waitFor();
+  const terminalId=await page.locator('.terminal-window').getAttribute('data-window-id');
+  await page.waitForFunction(()=>window.remoteDesktop.getActivitySnapshot().then(value=>value.entries.some(record=>record.type==='terminal-command')));
+  const originalLog=(await page.evaluate(()=>window.remoteDesktop.getActivitySnapshot())).systemLogPath;
+  await application.evaluate((_,target)=>{
+    const fs=process.getBuiltinModule('fs').promises, rename=fs.rename;
+    fs.rename=async(...args)=>{
+      if(args[1]===target){fs.rename=rename;await new Promise(resolve=>{globalThis.resumeInterfaceSettingsWrite=resolve;});}
+      return rename(...args);
+    };
+  },settingsPath);
+  const savingPlaces=page.evaluate(([input,id])=>window.remoteDesktop.saveWorkspacePreferences(input,id),[preferences,identity]);
+  await application.evaluate(()=>new Promise((resolve,reject)=>{
+    const timeout=setTimeout(()=>{clearInterval(timer);reject(new Error('settings write was not reached'));},10000);
+    const timer=setInterval(()=>{if(globalThis.resumeInterfaceSettingsWrite){clearInterval(timer);clearTimeout(timeout);resolve();}},10);
+  }));
+  const concurrentRefresh=page.evaluate(()=>window.remoteDesktop.discoverDesktop(false));
+  await page.evaluate(()=>window.remoteDesktop.getSystemInfo());
+  await application.evaluate(()=>{globalThis.resumeInterfaceSettingsWrite();delete globalThis.resumeInterfaceSettingsWrite;});
+  await Promise.all([savingPlaces,concurrentRefresh]);
+  assert.match((await page.evaluate(()=>window.remoteDesktop.getActivitySnapshot())).systemLogPath,/custom-log/,'refresh must not restore the previous log destination during settings persistence');
+  const persistedPlaces=await fs.readFile(settingsPath,'utf8');
+  await application.evaluate((_,target)=>{
+    const fs=process.getBuiltinModule('fs').promises, rename=fs.rename;
+    fs.rename=async(...args)=>{if(args[1]===target){fs.rename=rename;throw new Error('injected settings write failure');}return rename(...args);};
+  },settingsPath);
+  await assert.rejects(page.evaluate(([input,id])=>window.remoteDesktop.saveWorkspacePreferences({...input,logPath:`${input.logPath}/../shared`},id),[preferences,identity]),/injected settings write failure/);
+  assert.equal(await fs.readFile(settingsPath,'utf8'),persistedPlaces);
+  assert.match((await page.evaluate(()=>window.remoteDesktop.getActivitySnapshot())).systemLogPath,/custom-log/,'failed settings persistence restores the previous log destination');
+  await page.evaluate(id=>window.remoteDesktop.send({type:'terminalInput',id,data:'after-log-move\r'}),terminalId);
+  await page.waitForFunction(()=>window.remoteDesktop.getActivitySnapshot().then(value=>value.entries.some(record=>record.type==='terminal-output'&&record.data?.includes('after-log-move'))));
+  await page.evaluate(id=>window.remoteDesktop.closeTerminal(id),terminalId);
+  await page.evaluate(input=>window.remoteDesktop.saveSettings(input),{downloadThreshold:1048576,defaultUploadDirectory:`${first.home}/shared`,defaultDownloadDirectory:first.downloads});
+  await page.locator('#homeShortcut').click();await page.locator('.explorer-place[data-place-id="custom-shared"]').waitFor();
+  assert.deepEqual(await page.locator('.explorer-place').evaluateAll(nodes=>nodes.map(node=>node.dataset.placeId)),preferences.placeOrder);
+  await page.evaluate(()=>window.remoteDesktop.getSystemInfo());
+  const snapshot=await page.evaluate(()=>window.remoteDesktop.getActivitySnapshot());assert.match(snapshot.systemLogPath,/custom-log/);
+  await page.waitForFunction(()=>window.remoteDesktop.getActivitySnapshot().then(value=>value.entries.some(record=>record.type==='stdout'&&record.data?.includes('Ubuntu'))));
+  await page.evaluate(()=>window.remoteDesktop.disconnect());
+  const log=await fs.readFile(first.mapPath(snapshot.systemLogPath),'utf8');assert.match(log,/"type":"command"/);assert.match(log,/Ubuntu/);
+  assert.match(await fs.readFile(first.mapPath(originalLog),'utf8'),/after-log-move/,'running terminal keeps its original log through a destination change');
+  assert.equal(await fs.readFile(first.mapPath(`${first.home}/custom-log/keep.txt`),'utf8'),'keep');
+  await page.evaluate(config=>window.remoteDesktop.connect(config),second.config);
+  saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.workspacePreferences.logPath,'');assert.equal(saved.defaultUploadDirectory,'');
+  await page.evaluate(config=>window.remoteDesktop.connect(config),first.config);
+  saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.workspacePreferences.logPath,preferences.logPath);assert.equal(saved.defaultUploadDirectory,`${first.home}/shared`);
+  await page.evaluate(()=>window.remoteDesktop.saveShellPreferences({clockMode:'detailed',toolbarOrder:['exitButton','homeShortcut'],toolbarHidden:['browserButton','activityButton']}));
+  await close();page=await launch();
+  saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.shellPreferences.clockMode,'detailed');assert.equal(saved.shellPreferences.toolbarOrder[0],'exitButton');assert.equal(saved.workspacePreferences.logPath,'');
+  await page.evaluate(config=>window.remoteDesktop.connect(config),first.config);saved=await page.evaluate(()=>window.remoteDesktop.getSettings());assert.equal(saved.workspacePreferences.trashPath,preferences.trashPath);
+  assert.deepEqual(errors,[]);
+  const closed=page.waitForEvent('close');await page.locator('#exitButton').click();await closed;
+});
+

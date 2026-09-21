@@ -1,0 +1,16 @@
+.activity-cell { margin: 0 0 14px; padding: 0; border: 1px solid #4a414d; border-radius: 8px; overflow: hidden; background: #221f25; }
+.activity-cell .activity-entry-heading { padding: 8px 12px; color: #aaa1af; background: #2d2830; font-size: 11px; }
+.activity-cell-input, .activity-cell-output { display: flex; align-items: flex-start; min-width: 0; }
+.activity-cell-input { background: #252129; }
+.activity-cell-output { border-top: 1px solid #3f3544; background: #211e23; }
+.activity-cell-prompt { flex: none; padding: 12px 8px 12px 12px; color: #bf99d4; font: 12px/1.55 Consolas, monospace; width: 46px; }
+.activity-cell-output .activity-cell-prompt { color: #a2b5a5; }
+.activity-cell pre { min-width: 0; margin: 0; padding: 12px 12px 12px 0; color: #e3dce8; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.activity-cell-input pre, .activity-cell-output pre { flex: 1; }
+.activity-cell .activity-error-output { color: #ed9898; }
+.activity-cell pre.activity-result { padding: 7px 12px; border-top: 1px solid #3f3544; color: #a6a0ac; font-size: 11px; }
+.activity-command .hljs-keyword, .activity-command .hljs-built_in { color: #c6a2e8; }
+.activity-command .hljs-string { color: #aad09c; }
+.activity-command .hljs-comment { color: #928399; }
+.activity-command .hljs-variable, .activity-command .hljs-attr { color: #92bfda; }
+.activity-command .hljs-number, .activity-command .hljs-literal { color: #dfb38a; }

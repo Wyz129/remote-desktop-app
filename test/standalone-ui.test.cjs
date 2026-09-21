@@ -56,6 +56,7 @@ async function scenario(name, fn, options = {}) {
       async openDocument(path,options) { window.calls.push({type:'openDocument',path,...options}); },
       async chooseUpload() { window.calls.push({type:'chooseUpload'}); return ['D:\\projects\\code.py']; },
       async chooseDownloadDirectory() { window.calls.push({type:'chooseDownloadDirectory'}); return 'D:\\Downloads'; },
+      async chooseDefaultDownloadDirectory() { window.calls.push({type:'chooseDefaultDownloadDirectory'}); return 'D:\\Saved'; },
       async acceptDroppedFiles(files) { window.calls.push({type:'acceptDroppedFiles',names:files.map(file=>file.name)}); return files.map(file=>'D:\\drop\\'+file.name); },
       async upload(localPath,remoteDirectory,id) { window.calls.push({type:'upload',localPath,remoteDirectory,id}); return {id,path:remoteDirectory+'/code.py',done:12,total:12}; },
       async listTransfers() { return []; },
@@ -84,6 +85,9 @@ async function scenario(name, fn, options = {}) {
       async setDesktop(path) { window.calls.push({type:'setDesktop',path}); if(window.deferDesktop) return new Promise((resolve,reject)=>{window.resolveDesktop=resolve;window.rejectDesktop=reject;}); if(window.deniedDirectory === path) throw new Error('无访问权限：Permission denied (EACCES)'); if(!window.directories[path]) throw new Error('目录不存在'); return {status:'ready',rootPath:path,homePath:'/home/tester',entries:window.directories[path],config:{wallpaper:'slate',viewMode:'details',showHiddenFiles:true}}; },
       async checkFileAccess(path) { window.calls.push({type:'checkFileAccess',path}); if(window.deferFileAccess) return new Promise(resolve=>{window.resolveFileAccess=resolve;}); return {path,readable:window.deniedFile !== path,writable:window.readOnlyFile !== path,error:window.deniedFile === path ? 'Permission denied (EACCES)' : undefined}; },
       async getSettings() { return window.initialSettings || window.settings; },
+      async quit() { window.calls.push({type:'quit'}); },
+      async saveShellPreferences(input) { window.settings.shellPreferences = input; return structuredClone(window.settings); },
+      async saveWorkspacePreferences(input, identity) { if(window.failPlacesSave) throw new Error('Permission denied'); window.settings.workspacePreferences = input; window.calls.push({type:'savePlaces', identity, input}); return structuredClone(window.settings); },
       async updateProgramPreferences(action, id) {
         window.calls.push({ type: 'programPreference', action, id });
         if (window.failProgramPreference) throw new Error('disk write failed');
@@ -349,11 +353,11 @@ test('windows_navigation_resize_drag_minimize_maximize', () => scenario('windows
   await win.locator('.entry').first().click();
   await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-icons-1.1.9.png') });
   await win.locator('[data-window-action="details"]').click();
-  await win.locator('.window-path').fill('~/Desktop/results');await win.locator('.window-path').press('Enter');
+  await win.focus(); await win.press('Control+l'); await win.locator('.window-path').fill('~/Desktop/results');await win.locator('.window-path').press('Enter');
   await page.waitForFunction(()=>document.querySelector('.window-path').value==='/home/tester/Desktop/results');
   await win.locator('[data-window-action="back"]').click();await win.getByText('source.txt',{exact:true}).waitFor();
-  const before=await win.boundingBox();const title=await win.locator('.window-title').boundingBox();
-  await page.mouse.move(title.x+10,title.y+8);await page.mouse.down();await page.mouse.move(title.x+140,title.y+70,{steps:8});await page.mouse.up();
+  const before=await win.boundingBox();const title=await win.locator('.titlebar').boundingBox();
+  await page.mouse.move(title.x+74,title.y+22);await page.mouse.down();await page.mouse.move(title.x+204,title.y+84,{steps:8});await page.mouse.up();
   const moved=await win.boundingBox();assert.ok(moved.x>before.x+80);
   const resize=await win.locator('[data-resize="se"]').boundingBox();await page.mouse.move(resize.x+3,resize.y+3);await page.mouse.down();await page.mouse.move(resize.x+90,resize.y+70,{steps:8});await page.mouse.up();
   assert.ok((await win.boundingBox()).width>moved.width+50);
@@ -414,7 +418,7 @@ test('image_launcher_remote_picker_errors_keyboard_focus_and_disconnect_cleanup'
   await page.waitForFunction(()=>document.querySelector('.image-source')?.viewer?.viewed);
   assert.equal(await win.locator('.window-title').textContent(),'picture.png');
   await win.focus();await page.keyboard.press('r');assert.equal(await win.evaluate(el=>el.querySelector('.image-source').viewer.imageData.rotate),90);
-  await page.locator('#homeShortcut').click();await page.locator('.window-path').fill('/home/tester');await page.keyboard.press('r');
+  await page.locator('#homeShortcut').click();await page.locator('.explorer-window').focus(); await page.keyboard.press('Control+l'); await page.locator('.window-path').fill('/home/tester');await page.keyboard.press('r');
   assert.equal(await win.evaluate(el=>el.querySelector('.image-source').viewer.imageData.rotate),90,'typing in another window does not rotate image');
   await page.locator('#windowTabs .window-tab').filter({hasText:'picture.png'}).click();
   await win.locator('.image-controls [data-image-action="open"]').click();
@@ -509,7 +513,7 @@ test('desktop_refresh_errors_and_root_changes_preserve_running_editors', () => s
 test('builtin_home_and_settings_remain_available_without_connection_or_pins', () => scenario('builtin-shortcuts', async page => {
   await page.locator('#closeConnection').click();
   assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(),0);
-  assert.deepEqual(await page.locator('.toolbar-actions button').evaluateAll(nodes => nodes.map(node => node.id).filter(id => ['browserButton', 'homeShortcut', 'desktopSettings'].includes(id))), ['browserButton', 'homeShortcut', 'desktopSettings']);
+  assert.deepEqual(await page.locator('.toolbar-actions button:visible').evaluateAll(nodes => nodes.map(node => node.id).filter(id => ['browserButton', 'homeShortcut', 'desktopSettings'].includes(id))), ['homeShortcut', 'desktopSettings']);
   assert.equal(await page.locator('#dock #homeShortcut, #dock #browserButton, #dock #desktopSettings').count(), 0);
   await page.locator('#desktopSettings').click();
   await page.waitForFunction(()=>document.getElementById('settingsDownloadThreshold').value==='50');
@@ -545,7 +549,7 @@ test('settings_sidebar_keyboard_cards_and_compact_layout_preserve_unsaved_fields
   assert.equal(await page.locator('#filesSettingsTab').getAttribute('aria-selected'), 'true');
   await page.locator('#settingsDownloadThreshold').fill('77');
   await page.screenshot({ path: path.join(root, 'artifacts', 'settings-1.1.10-files.png') });
-  await page.locator('#filesSettingsTab').focus(); await page.keyboard.press('End');
+  await page.locator('#filesSettingsTab').focus(); await page.keyboard.press('ArrowDown');
   await page.locator('#systemInfoFields').waitFor();
   assert.equal(await page.locator('#systemSettingsTab').getAttribute('aria-selected'), 'true');
   await page.screenshot({ path: path.join(root, 'artifacts', 'settings-1.1.10-system.png') });
@@ -642,7 +646,7 @@ test('public_filesystem_navigation_and_denied_directory_restore_previous_locatio
   await page.evaluate(()=>{window.directories['/']=[{name:'shared',path:'/shared',type:'folder'}];window.directories['/shared']=[{name:'locked',path:'/shared/locked',type:'folder'}];window.deniedDirectory='/shared/locked';});
   await page.locator('#homeShortcut').click();const win=page.locator('.window');
   await win.getByText('profile.txt',{exact:true}).waitFor();
-  await win.locator('.window-path').fill('/');await win.locator('.window-path').press('Enter');
+  await win.focus(); await win.press('Control+l'); await win.locator('.window-path').fill('/');await win.locator('.window-path').press('Enter');
   await win.getByText('shared',{exact:true}).dblclick();await win.getByText('locked',{exact:true}).waitFor();
   await win.getByText('locked',{exact:true}).dblclick();
   await win.locator('.window-error').waitFor();
@@ -651,6 +655,79 @@ test('public_filesystem_navigation_and_denied_directory_restore_previous_locatio
   assert.equal(await win.getByText('locked',{exact:true}).count(),1);
   await win.locator('[data-window-action="back"]').click();await win.getByText('shared',{exact:true}).waitFor();
   assert.equal(await win.locator('.window-path').inputValue(),'/');
+}));
+
+test('explorer_places_follow_workspace_paths_order_and_permission_failures', () => scenario('explorer-places', async page => {
+  await connect(page);
+  await page.evaluate(() => {
+    extensionSettings.workspacePreferences = { logPath: '/shared/logs', trashPath: '/shared/trash', shortcuts: [{ id: 'shared', label: 'Shared data', path: '/shared' }], placeOrder: ['home', 'shared', 'root', 'trash', 'desktop', 'log'] };
+    for (const directory of ['/', '/shared', '/shared/logs', '/shared/trash']) window.directories[directory] = [];
+  });
+  await page.locator('#homeShortcut').click();
+  const win = page.locator('.explorer-window');
+  await win.locator('.entry').first().waitFor();
+  assert.deepEqual(await win.locator('.explorer-place').evaluateAll(buttons => buttons.map(button => ({ id: button.dataset.placeId, path: button.dataset.placePath }))), [
+    { id: 'home', path: '/home/tester' }, { id: 'shared', path: '/shared' }, { id: 'root', path: '/' },
+    { id: 'trash', path: '/shared/trash' }, { id: 'desktop', path: desktop }, { id: 'log', path: '/shared/logs' }
+  ]);
+  await win.locator('[data-place-id="shared"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-place-id="shared"]').getAttribute('aria-current') === 'location');
+  await win.locator('[data-place-id="log"]').focus(); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.window-path').value === '/shared/logs');
+  await page.evaluate(() => { window.deniedDirectory = '/shared/trash'; });
+  await win.locator('[data-place-id="trash"]').click();
+  await win.locator('.window-error').waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(), '/shared/logs');
+  assert.match(await win.locator('.window-error').textContent(), /无访问权限.*Permission denied/);
+  assert.equal(await win.locator('[data-place-id="log"]').getAttribute('aria-current'), 'location');
+  await page.evaluate(() => { extensionSettings.workspacePreferences = {}; refreshExplorerPlaces(); });
+  assert.deepEqual(await win.locator('.explorer-place').evaluateAll(buttons => buttons.map(button => button.dataset.placeId)), ['root', 'home', 'desktop', 'log', 'trash']);
+  assert.equal(await win.locator('[data-place-id="log"]').getAttribute('data-place-path'), '/home/tester/.rdesktop/log');
+  assert.equal(await win.locator('[data-place-id="trash"]').getAttribute('data-place-path'), '/home/tester/.rdesktop/trash');
+  await win.locator('[data-place-id="desktop"]').click();
+  await win.locator('.entry').first().waitFor();
+  await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-places-1.1.11.png') });
+}));
+
+test('explorer_breadcrumbs_prioritize_current_path_and_allow_full_address_editing', () => scenario('explorer-breadcrumbs', async page => {
+  await connect(page);
+  const deep = '/home/tester/Desktop/research/materials/experiments/runs/current';
+  await page.evaluate(deep => {
+    let directory = '';
+    for (const segment of deep.split('/').filter(Boolean)) { directory += '/' + segment; window.directories[directory] ||= []; }
+  }, deep);
+  await page.locator('#homeShortcut').click();
+  const win = page.locator('.explorer-window');
+  await win.locator('.entry').first().waitFor();
+  assert.equal(await win.locator('.window-path').isVisible(), false);
+  const pathBounds = await win.locator('.address-box').boundingBox(), headerBounds = await win.locator('.titlebar').boundingBox();
+  assert.ok(pathBounds.y >= headerBounds.y && pathBounds.y + pathBounds.height <= headerBounds.y + headerBounds.height, 'address belongs in the title row');
+  assert.equal(await win.locator('.address-box').evaluate(box => getComputedStyle(box).cursor), 'text');
+  await win.locator('.address-box').click({ position: { x: 2, y: 2 } });
+  assert.equal(await win.locator('.window-path').isVisible(), true);
+  assert.equal(await win.locator('.window-path').evaluate(input => input.selectionEnd - input.selectionStart), '/home/tester'.length);
+  await win.locator('.window-path').fill(deep); await win.locator('.window-path').press('Enter');
+  await win.locator(`[data-breadcrumb-path="${deep}"]`).waitFor();
+  await page.evaluate(() => { const win = state.windows.find(win => !win.kind); win.size.width = 510; positionWindow(win); });
+  await win.locator('.breadcrumb-overflow').waitFor();
+  assert.equal(await win.locator('.breadcrumb-segment').first().isVisible(), false, 'root is omitted before nearby directories');
+  assert.equal(await win.locator('.breadcrumb-segment.current button').textContent(), 'current');
+  await page.waitForFunction(() => { const path = document.querySelector('.window-breadcrumbs'); return path.scrollWidth <= path.clientWidth + 1; });
+  await win.locator('.breadcrumb-overflow').click();
+  assert.equal(await win.locator('.window-path').inputValue(), deep);
+  await win.locator('.window-path').fill('/not/submitted'); await win.locator('.window-path').press('Escape');
+  assert.equal(await win.locator('.window-path').isVisible(), false);
+  assert.equal(await win.locator('.window-path').inputValue(), deep);
+  await win.press('Control+l'); await win.locator('.window-path').fill('/home/tester/Desktop/research'); await win.locator('.window-path').press('Enter');
+  await win.locator('[data-breadcrumb-path="/home/tester/Desktop/research"]').waitFor();
+  await page.evaluate(() => { const win = state.windows.find(win => !win.kind); win.size.width = 1000; positionWindow(win); });
+  await win.locator('[data-breadcrumb-path="/home/tester/Desktop"]').click();
+  await win.getByText('notes.txt', { exact: true }).waitFor();
+  assert.equal(await win.locator('.window-path').inputValue(), desktop);
+  await win.press('F4'); await win.locator('.window-path').fill('~/Desktop/results'); await win.locator('.window-path').press('Enter');
+  await page.waitForFunction(() => document.querySelector('.window-path').value === '/home/tester/Desktop/results');
+  assert.equal(await win.locator('.window-path').isVisible(), false);
+  await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-breadcrumbs-1.1.11.png') });
 }));
 
 test('desktop_picker_accepts_arbitrary_public_path_and_preserves_running_editor', () => scenario('desktop-location', async page => {
@@ -784,6 +861,7 @@ test('late_file_permission_result_after_disconnect_does_not_open_editor', () => 
 
 test('clock_uses_server_zone_or_explicit_offset_without_client_timezone_fallback', () => scenario('server-local-clock', async page => {
   await connect(page);
+  await page.evaluate(()=>window.receive({type:'interfacePreferences',settings:{shellPreferences:{clockMode:'detailed'}}}));
   await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'Asia/Shanghai',utcOffsetMinutes:480,timeZoneLabel:'Asia/Shanghai · UTC+08:00',remote:true}));
   assert.match(await page.locator('#serverClock').textContent(),/11:04:05.*Asia\/Shanghai.*UTC\+08:00/);
   await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'SERVER-CUSTOM',utcOffsetMinutes:345,timeZoneLabel:'NPT · UTC+05:45',remote:true}));
@@ -806,6 +884,34 @@ test('monaco_default_readonly_and_fixed_launcher_have_no_vim_file_route', () => 
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openDocument'&&value.path===null));
 }));
 
+test('transfer_categories_share_settings_layout_and_use_configured_defaults', () => scenario('transfer-categories', async page => {
+  await connect(page); await page.locator('#downloadsButton').click();
+  assert.equal(await page.locator('#transferTasksPage').isVisible(), true);
+  await page.locator('#transferAdvanced').click();
+  assert.equal(await page.locator('#downloadsPanel').isVisible(), false);
+  assert.equal(await page.locator('#filesSettingsPanel').isVisible(), true);
+  await page.locator('#settingsUploadPath').fill('/home/tester');
+  await page.locator('#browseLocalDownloadPath').click();
+  assert.equal(await page.locator('#settingsLocalDownloadPath').inputValue(), 'D:\\Saved');
+  await page.locator('#saveExtensionSettings').click();
+  await page.waitForFunction(() => window.settings.defaultUploadDirectory === '/home/tester' && window.settings.defaultDownloadDirectory === 'D:\\Saved');
+  await page.locator('#closeSettings').click(); await page.locator('#downloadsButton').click();
+  await page.locator('#transferUpload').click();
+  const picker = page.locator('.server-picker-window'); await picker.waitFor();
+  assert.equal(await picker.locator('.window-picker-path').inputValue(), '/home/tester');
+  await picker.locator('[data-window-action="cancel-picker"]').click();
+  await page.evaluate(() => window.progress({id:'category-active',source:'/tmp/live',status:'running',done:2,total:20}));
+  assert.equal(await page.locator('#downloadItems [data-download-id="category-active"]').isVisible(), true);
+  await page.evaluate(() => window.progress({id:'category-active',source:'/tmp/live',status:'complete',path:'D:\\Saved\\live'}));
+  assert.equal(await page.locator('#downloadsEmpty').isVisible(), true);
+  await page.locator('#transferHistoryTab').click();
+  assert.equal(await page.locator('#transferHistoryItems [data-download-id="category-active"]').isVisible(), true);
+  await page.screenshot({path:path.join(root,'artifacts','transfer-categories-next.png')});
+  await page.setViewportSize({width:820,height:560});
+  assert.equal(await page.locator('#downloadsPanel').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  await page.screenshot({path:path.join(root,'artifacts','transfer-categories-compact-next.png')});
+}));
+
 test('transfer_center_upload_destination_download_and_browser_entry', () => scenario('transfer-controls', async page => {
   await page.evaluate(() => {
     window.remoteDesktop.chooseUpload=async()=>{window.calls.push({type:'chooseUpload'});return ['D:\\projects\\code.py','D:\\projects\\folder'];};
@@ -822,13 +928,15 @@ test('transfer_center_upload_destination_download_and_browser_entry', () => scen
   assert.equal(await page.evaluate(()=>window.calls.some(value=>value.type==='chooseUpload')),true);
   await picker.locator('.window-picker-path').fill('/shared');await picker.locator('[data-window-action="pick"]').click();
   await page.waitForFunction(()=>window.calls.filter(value=>value.type==='upload').length===2);
-  assert.match(await page.locator('#downloadItems strong').first().textContent(),/^↑ 上传 · code.py$/);
-  assert.equal(await page.locator('#downloadItems progress:visible, #downloadItems .transfer-cancel:visible').count(),0);
+  await page.locator('#transferHistoryTab').click();
+  assert.match(await page.locator('#transferHistoryItems strong').first().textContent(),/^↑ 上传 · code.py$/);
+  assert.equal(await page.locator('#transferHistoryItems progress:visible, #transferHistoryItems .transfer-cancel:visible').count(),0);
+  await page.locator('#transferTasksTab').click();
   await page.locator('#transferDownload').click();await picker.waitFor();
   assert.equal(await page.evaluate(()=>window.calls.some(value=>value.type==='chooseDownloadDirectory')),false);
   await picker.locator('.window-picker-path').fill('/shared/code.py');await picker.locator('[data-window-action="pick"]').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='download'&&value.destination==='D:\\saved'));
-  await page.locator('#closeDownloads').click();await page.locator('#browserButton').click();
+  await page.locator('#closeDownloads').click();await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(()=>window.calls.some(value=>value.type==='openBrowser'));
 }));
 
@@ -857,7 +965,7 @@ test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_dir
   await page.locator('#transferDownload').click();
   const win = page.locator('.server-picker-window'); await win.getByText('notes.txt',{exact:true}).waitFor();
   await page.evaluate(() => { window.deniedDirectory = '/private'; window.deniedFile = '/private'; });
-  await win.locator('.window-path').fill('/private'); await win.locator('.window-path').press('Enter');
+  await win.focus(); await win.press('Control+l'); await win.locator('.window-path').fill('/private'); await win.locator('.window-path').press('Enter');
   await page.waitForFunction(()=>document.querySelector('.server-picker-window .window-error')?.textContent.includes('无访问权限'));
   assert.equal(await win.locator('.window-path').inputValue(),desktop);
   await win.locator('.window-picker-path').fill('/private'); await win.locator('[data-window-action="pick"]').click();
@@ -876,7 +984,7 @@ test('transfer_server_picker_allows_direct_paths_and_retains_last_accessible_dir
 test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenario('browser-window', async page => {
   await connect(page);
   assert.equal(await page.locator('#applicationsButton').count(), 1);
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   const win = page.locator('.browser-window'); await win.waitFor();
   const browserIcon = win.locator('.browser-app-icon');
   assert.equal(await browserIcon.count(), 1, 'browser window titlebar uses a dedicated browser icon');
@@ -887,7 +995,7 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   const bounds = await win.locator('.browser-surface').boundingBox();
   const layout = await page.evaluate(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1));
   assert.ok(Math.abs(layout.bounds.x-bounds.x)<=1); assert.ok(Math.abs(layout.bounds.height-bounds.height)<=1);
-  await page.locator('#browserButton').click(); assert.equal(await win.count(),1);
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click(); assert.equal(await win.count(),1);
   assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='openBrowser').length),1);
   await win.locator('[data-window-action="maximize"]').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).bounds.width>1200);
@@ -897,7 +1005,7 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   await page.locator('#desktopSettings').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   assert.equal(await page.locator('#settingsDialog').isVisible(),true,'nonmodal settings may remain open behind active browser');
   await page.locator('#desktopSettings').click();
@@ -914,7 +1022,7 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   await page.evaluate(()=>{document.getElementById('context').hidden=false;});
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(()=>!window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
   await win.locator('[data-window-action="minimize"]').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1).hidden);
@@ -924,10 +1032,10 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
   await page.evaluate(()=>window.browserEvent({type:'closed',id:41}));
   assert.equal(await win.count(),0);
   assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='closeBrowser').length),0,'closed event does not recursively close manager');
-  await page.locator('#browserButton').click(); await win.waitFor();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click(); await win.waitFor();
   await win.locator('[data-window-action="close"]').click();
   assert.equal(await win.count(),0); assert.ok(await page.evaluate(()=>window.calls.some(call=>call.type==='closeBrowser')));
-  await page.locator('#browserButton').click(); await win.waitFor();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click(); await win.waitFor();
   await page.evaluate(()=>window.receive({type:'remoteState',status:'disconnected'}));
   assert.equal(await win.count(),0);
   await page.evaluate(()=>window.browserEvent({type:'focus',id:41}));
@@ -936,7 +1044,7 @@ test('embedded_browser_shell_dock_bounds_visibility_and_lifecycle', () => scenar
 
 test('embedded_browser_deduplicates_pending_open_and_disposes_late_connection_result', () => scenario('browser-window-opening', async page => {
   await connect(page); await page.evaluate(()=>{window.deferBrowserOpen=true;});
-  await page.locator('#browserButton').click(); await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click(); await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(()=>typeof window.resolveBrowserOpen==='function');
   assert.equal(await page.evaluate(()=>window.calls.filter(call=>call.type==='openBrowser').length),1);
   await page.evaluate(()=>{window.receive({type:'remoteState',status:'disconnected'});window.resolveBrowserOpen({id:88,embedded:true});});
@@ -975,7 +1083,7 @@ test('cli_activity_toast_stream_snapshot_dedup_and_monitor_window_lifecycle', ()
   await page.screenshot({ path: path.join(root, 'artifacts', 'standalone-activity-monitor.png') });
   await win.locator('[data-window-action="close"]').click(); assert.equal(await win.count(), 0);
   await page.evaluate(() => window.activityEvent({ type: 'entry', entry: { id: 'entry-3', seq: 3, sessionId: 'cli-1', type: 'end', exitCode: 0, time: '2026-09-19T01:02:05.000Z' } }));
-  await page.locator('#activityButton').click(); assert.equal(await win.locator('.activity-entry').count(), 3, 'closing monitor leaves incoming recording intact');
+  await page.locator('#activityButton').click(); assert.equal(await win.locator('.activity-entry').count(), 1, 'command and response stay in one cell after reopening'); assert.match(await win.locator('.activity-events').textContent(), /下一行/);
 }));
 
 test('cli_activity_permission_errors_ip_truthful_and_session_selection', () => scenario('activity-error', async page => {
@@ -1008,7 +1116,7 @@ test('cli_activity_permission_errors_ip_truthful_and_session_selection', () => s
 }));
 
 test('cli_activity_toast_and_monitor_hide_native_browser_surface', () => scenario('activity-browser', async page => {
-  await connect(page); await page.locator('#browserButton').click();
+  await connect(page); await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1)?.hidden === false);
   await page.evaluate(() => window.activityEvent({ type: 'connection', session: { id: 'cli-overlay', time: new Date().toISOString(), action: 'exec' } }));
   await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1).hidden);
@@ -1028,12 +1136,12 @@ test('cli_activity_rendering_is_bounded_and_keeps_latest_entries', () => scenari
   });
   await page.locator('#openActivityToast').click();
   const win = page.locator('.activity-window');
-  assert.equal(await win.locator('.activity-entry').count(), 600);
+  assert.equal(await win.locator('.activity-entry').count(), 1, 'chunks from one request are grouped');
   assert.match(await win.locator('.activity-entry').first().textContent(), /record-50/);
   assert.match(await win.locator('.activity-entry').last().textContent(), /record-649/);
   await page.evaluate(() => window.activityEvent({ type: 'entry', entry: { id: 'huge', seq: 651, sessionId: 'cli-bounded', type: 'output', data: 'a'.repeat(100000) } }));
   await page.waitForFunction(() => document.querySelector('.activity-entry:last-child').textContent.includes('界面显示已截断'));
-  assert.ok((await win.locator('.activity-entry').last().textContent()).length < 34000);
+  assert.ok((await win.locator('.activity-entry').last().textContent()).length < 42000); assert.doesNotMatch(await win.locator('.activity-events').textContent(), /record-0(?:\D|$)/);
 }));
 
 test('cancelled_pending_transfer_picker_can_be_reopened_in_reused_explorer', () => scenario('transfer-picker-pending-cancel', async page => {
@@ -1126,6 +1234,7 @@ test('transfer_history_can_open_targets_delete_finished_and_keep_active_tasks', 
   });
   const upload=page.locator('[data-download-id="upload-done"]');
   assert.equal(await upload.locator('progress, .transfer-cancel').evaluateAll(nodes=>nodes.every(node=>node.hidden)),true);
+  await page.locator('#transferHistoryTab').click();
   await page.evaluate(()=>{window.transferTarget={side:'remote',path:'/home/tester/Desktop/projects'};});
   await upload.locator('.transfer-target').click();
   await page.locator('.window').getByText('source.txt',{exact:true}).waitFor();
@@ -1137,6 +1246,7 @@ test('transfer_history_can_open_targets_delete_finished_and_keep_active_tasks', 
   assert.equal(await page.locator('[data-download-id="failed"]').count(),0);
   await page.locator('#clearTransferHistory').click();
   assert.deepEqual(await page.locator('.download-item').evaluateAll(nodes=>nodes.map(node=>node.dataset.downloadId)),['active']);
+  await page.locator('#transferTasksTab').click();
   assert.equal(await page.locator('[data-download-id="active"] progress').isVisible(),true);
   assert.equal(await page.locator('[data-download-id="active"] .transfer-remove').isVisible(),false);
   await page.evaluate(()=>window.progress({type:'removed',id:'active'}));
@@ -1147,7 +1257,7 @@ test('transfer_history_can_open_targets_delete_finished_and_keep_active_tasks', 
 
 
 test('browser_stays_live_without_overlap_and_previews_when_covered', () => scenario('browser-background', async page => {
-  await connect(page); await page.locator('#browserButton').click(); await page.locator('.browser-window').waitFor();
+  await connect(page); await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click(); await page.locator('.browser-window').waitFor();
   await page.evaluate(() => { const win=state.windows.find(win=>win.kind==='browser'); win.position={x:10,y:10};win.size={width:430,height:300};positionWindow(win); });
   await page.locator('#homeShortcut').click();
   await page.evaluate(() => { const win=state.windows.find(win=>!win.kind);win.position={x:700,y:70};win.size={width:550,height:420};positionWindow(win); });
@@ -1156,8 +1266,72 @@ test('browser_stays_live_without_overlap_and_previews_when_covered', () => scena
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1)?.snapshot===true);
   await page.evaluate(() => { const canvas=document.createElement('canvas');canvas.width=10;canvas.height=10;const data=canvas.toDataURL();window.browserEvent({type:'snapshot',id:41,toolbar:data,page:data,toolbarHeight:148}); });
   await page.waitForFunction(()=>document.querySelector('.browser-background.has-snapshot .browser-snapshot-page')?.naturalWidth===10);
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(()=>window.calls.filter(call=>call.type==='browserLayout').at(-1)?.hidden===false);
   await page.locator('.browser-window [data-window-action=minimize]').click();
   await page.waitForFunction(()=>{const last=window.calls.filter(call=>call.type==='browserLayout').at(-1);return last?.hidden&&!last.snapshot;});
+}));
+
+test('shell_preferences_notifications_calendar_and_exit_keep_server_time', () => scenario('shell-next', async page => {
+  await connect(page);
+  assert.equal(await page.locator('#browserButton').isVisible(), false);
+  assert.equal(await page.locator('.toolbar-actions button:visible').last().getAttribute('id'), 'exitButton');
+  await page.evaluate(() => window.receive({type:'serverInfo',epochMs:Date.UTC(2026,8,21,10,27,0),timeZone:'Asia/Shanghai',utcOffsetMinutes:480,timeZoneLabel:'Asia/Shanghai (UTC+08:00)',remote:true}));
+  assert.match(await page.locator('#serverClock').textContent(),/Sep 21 18:27/);
+  await page.locator('#desktopSettings').click(); await page.locator('#shellSettingsTab').click();
+  await page.locator('#show-browserButton').check(); await page.locator('#show-activityButton').uncheck(); await page.locator('#settingsClockMode').selectOption('detailed');
+  await page.locator('#settingsToolbarList li').filter({has:page.locator('#show-exitButton')}).getByRole('button',{name:'上移'}).click();
+  await page.locator('#shellPreferencesForm button[type=submit]').click();
+  assert.equal(await page.locator('#browserButton').isVisible(),true); assert.equal(await page.locator('#activityButton').isVisible(),false);
+  assert.match(await page.locator('#serverClock').textContent(),/2026.*Asia\/Shanghai/);
+  await page.locator('#closeSettings').click(); await page.locator('#serverClock').click();
+  await page.locator('#notificationPanel').waitFor();
+  assert.match(await page.locator('.notification-history').textContent(),/上栏设置已保存/);
+  assert.equal(await page.locator('.calendar-days .today').textContent(),'21');
+  assert.equal(await page.locator('.calendar-days span').count(),42);
+  await page.screenshot({path:path.join(root,'artifacts','notifications-1.1.11.png')});
+  await page.locator('.clear-notifications').click(); assert.match(await page.locator('.notification-history').textContent(),/暂无通知/);
+  await page.keyboard.press('Escape'); assert.equal(await page.locator('#notificationPanel').isVisible(),false);
+  await page.locator('#exitButton').click(); assert.ok(await page.evaluate(()=>window.calls.some(call=>call.type==='quit')));
+}));
+
+test('workspace_preferences_save_failure_preserves_places_and_custom_order_is_applied', () => scenario('workspace-preferences-next', async page => {
+  await connect(page); await page.evaluate(()=>{window.settings.workspaceIdentity='fixture-account';window.receive({type:'interfacePreferences',settings:window.settings});});
+  await page.locator('#homeShortcut').click();
+  await page.locator('#desktopSettings').click(); await page.locator('#placesSettingsTab').click();
+  await page.locator('#settingsLogPath').fill('/shared/log'); await page.locator('#settingsTrashPath').fill('/shared/trash');
+  await page.locator('#newPlaceLabel').fill('公共目录'); await page.locator('#newPlacePath').fill('/shared/projects'); await page.locator('#addPlace').click();
+  await page.locator('#settingsPlacesList li').filter({hasText:'公共目录'}).getByRole('button',{name:'上移'}).click();
+  await page.evaluate(()=>{window.failPlacesSave=true;}); await page.locator('#placesPreferencesForm button[type=submit]').click();
+  await page.waitForFunction(()=>document.getElementById('placesPreferencesError').textContent.includes('Permission denied'));
+  assert.equal(await page.locator('.explorer-place').filter({hasText:'公共目录'}).count(),0);
+  await page.evaluate(()=>{window.failPlacesSave=false;}); await page.locator('#placesPreferencesForm button[type=submit]').click();
+  await page.waitForFunction(()=>window.calls.some(call=>call.type==='savePlaces'));
+  assert.equal(await page.locator('.explorer-place').filter({hasText:'公共目录'}).count(),1);
+  await page.screenshot({path:path.join(root,'artifacts','places-settings-1.1.11.png')});
+  const placeSaves = await page.evaluate(() => window.calls.filter(call => call.type === 'savePlaces').length);
+  await page.evaluate(() => { window.settings = {...window.settings, workspaceIdentity:'different-account', workspacePreferences:{}, defaultUploadDirectory:'/different/upload'}; window.receive({type:'interfacePreferences',settings:window.settings}); });
+  await page.locator('#placesPreferencesForm button[type=submit]').click();
+  assert.match(await page.locator('#placesPreferencesError').textContent(),/SSH 连接已改变/);
+  assert.equal(await page.evaluate(() => window.calls.filter(call => call.type === 'savePlaces').length),placeSaves);
+  await page.locator('#filesSettingsTab').click(); await page.locator('#saveExtensionSettings').click();
+  assert.match(await page.locator('#extensionSettingsError').textContent(),/SSH 连接已改变/);
+  await page.locator('#closeSettings').click(); await page.locator('#desktopSettings').click(); await page.locator('#placesSettingsTab').click();
+  assert.equal(await page.locator('#settingsLogPath').inputValue(),'');
+  await page.locator('#filesSettingsTab').click();
+  assert.equal(await page.locator('#settingsUploadPath').inputValue(),'/different/upload');
+}));
+
+test('activity_cells_group_raw_commands_and_ansi_output_without_html_execution', () => scenario('activity-cells-next', async page => {
+  await connect(page); await page.locator('#activityButton').click();
+  await page.evaluate(()=> {
+    const base={scope:'system',source:'system',sessionId:'system',operationId:'raw-command-1',time:'2026-09-21T10:27:00Z',protocol:'SSH exec'};
+    for(const entry of [{...base,id:'cmd-1',seq:1,type:'command',command:'printf "hello\\n"'}, {...base,id:'out-1',seq:2,type:'stdout',data:'\u001b[32mgreen\u001b[0m\n<img src=x onerror=alert(1)>'}, {...base,id:'end-1',seq:3,type:'end',code:0}]) window.activityEvent({type:'entry',entry});
+  });
+  await page.waitForFunction(()=>document.querySelector('.activity-stdout')?.textContent.includes('green'));
+  assert.equal(await page.locator('.activity-cell').count(),1); assert.equal(await page.locator('.activity-events img').count(),0);
+  assert.match(await page.locator('.activity-command').textContent(),/^printf/); assert.ok(await page.locator('.activity-command .hljs-built_in').count());
+  assert.match(await page.locator('.activity-stdout span').first().getAttribute('style'),/color/);
+  assert.doesNotMatch(await page.locator('.activity-command').textContent(),/指令:|操作:/);
+  await page.screenshot({path:path.join(root,'artifacts','activity-cells-1.1.11.png')});
 }));

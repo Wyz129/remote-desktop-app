@@ -131,7 +131,7 @@ test('first connection creates private storage, resets old desktop preference, s
   await page.locator('.video-window [data-window-action=close]').click();
   await page.locator('.video-window').waitFor({ state: 'detached' });
 
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.locator('.browser-window').waitFor();
   let browserDownloadDirectory;
   for (let attempt = 0; attempt < 100; attempt++) {

@@ -13,7 +13,15 @@ for (const [source, destination] of [
   ['viewerjs/dist/viewer.min.js', 'viewer.js'], ['viewerjs/dist/viewer.min.css', 'viewer.css'], ['viewerjs/LICENSE', 'viewer-LICENSE'],
   ['video.js/dist/video.min.js', 'video.js'], ['video.js/dist/video-js.min.css', 'video.css'],
   ['video.js/dist/lang/zh-CN.js', 'video-zh-CN.js'], ['video.js/LICENSE', 'video-LICENSE']
+  , ['highlight.js/LICENSE', 'highlight-LICENSE'], ['ansi_up/LICENSE', 'ansi-up-LICENSE']
 ]) fs.cpSync(path.join(root, 'node_modules', source), path.join(target, destination), { recursive: true });
+// Expose the upstream parsers as local browser globals; no runtime require/eval.
+const highlightCore = fs.readFileSync(path.join(root, 'node_modules/highlight.js/lib/core.js'), 'utf8');
+const highlightBash = fs.readFileSync(path.join(root, 'node_modules/highlight.js/lib/languages/bash.js'), 'utf8');
+fs.writeFileSync(path.join(target, 'highlight-shell.js'), `window.shellHighlight = (() => { const module = {exports:{}};\n${highlightCore}\nreturn module.exports; })();\nwindow.shellHighlight.registerLanguage('bash', (() => { const module = {exports:{}};\n${highlightBash}\nreturn module.exports; })());\n`);
+const ansiUp = fs.readFileSync(path.join(root, 'node_modules/ansi_up/ansi_up.js'), 'utf8');
+if (!ansiUp.includes('export class AnsiUp')) throw new Error('Unsupported ansi_up browser export');
+fs.writeFileSync(path.join(target, 'ansi-up.js'), `(() => {\n${ansiUp.replace('export class AnsiUp', 'class AnsiUp')}\nwindow.AnsiUp = AnsiUp; })();\n`);
 // Monaco 0.53's minified AMD chunks contain top-level `var` helpers outside
 // their define() factory. Parallel file:// script loads otherwise overwrite
 // one another before their factories run (for example css's helper becomes

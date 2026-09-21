@@ -37,6 +37,58 @@ test('an in-flight GUI operation finishes in its original desktop log after a de
   await log.disconnect();
 });
 
+test('commands and CLI requests started while a log target initializes retain complete transcripts', async () => {
+  const fixture = memoryBackend(), log = new ActivityLog();
+  await log.attach(fixture.backend, '/desktop');
+  const original = log.capture(), originalPath = log.snapshot().systemLogPath;
+  const realpath = fixture.sftp.realpath;
+  let resume, started;
+  const initializing = new Promise(resolve => { started = resolve; });
+  fixture.sftp.realpath = (name, callback) => {
+    if (name === '/other') { resume = () => realpath(name, callback); started(); }
+    else realpath(name, callback);
+  };
+  const changing = log.attach(fixture.backend, '/other');
+  await initializing;
+  assert.equal(log.capture(), original, 'initializing targets must not hide the usable current log');
+  const release = log.retain(log.capture());
+  assert.equal(log.system({ type: 'command', operationId: 'during-change', command: 'printf migration' }, original), true);
+  const cli = log.beginCli({ id: 'during-change-cli' });
+  log.cli(cli.id, { type: 'command', command: 'printf cli-migration' });
+  fixture.sftp.realpath = realpath; resume();
+  await changing;
+  assert.equal(log.system({ type: 'stdout', operationId: 'during-change', data: 'migration' }, original), true);
+  log.system({ type: 'end', operationId: 'during-change', code: 0 }, original); release();
+  log.cli(cli.id, { type: 'stdout', data: 'cli-migration' }); log.cli(cli.id, { type: 'end', result: { code: 0 } });
+  await log.flush();
+  assert.deepEqual(fixture.lines(originalPath).filter(record => record.operationId === 'during-change').map(record => record.type), ['command', 'stdout', 'end']);
+  assert.deepEqual(fixture.lines(cli.logPath).map(record => record.type), ['connection', 'command', 'stdout', 'end']);
+  assert.ok(!fixture.allLines('/other/.log/').some(record => record.operationId === 'during-change' || record.operationId === cli.id));
+  assert.equal(log.contexts.size, 1);
+  await log.disconnect();
+});
+
+test('failed or stale log relocation leaves the previous writable context intact', async () => {
+  const fixture = memoryBackend(), log = new ActivityLog();
+  await log.attach(fixture.backend, '/desktop');
+  const original = log.capture(), originalPath = log.snapshot().systemLogPath;
+  const chmod = fixture.sftp.chmod;
+  fixture.sftp.chmod = (name, mode, callback) => name.startsWith('/other/') ? callback(new Error('denied')) : chmod(name, mode, callback);
+  assert.match((await log.attach(fixture.backend, '/other')).error, /denied/);
+  assert.equal(log.capture(), original);
+  fixture.sftp.chmod = chmod;
+  let valid = true;
+  const write = fixture.sftp.write;
+  fixture.sftp.write = (...args) => { valid = false; write(...args); };
+  assert.match((await log.attach(fixture.backend, '/other', { isCurrent: () => valid })).error, /连接已改变/);
+  assert.equal(log.capture(), original);
+  assert.equal(log.system({ type: 'command', command: 'still-recording' }), true);
+  await log.flush();
+  assert.ok(fixture.lines(originalPath).some(record => record.command === 'still-recording'));
+  assert.equal(log.contexts.size, 1);
+  await log.disconnect();
+});
+
 // Fault-injection SFTP models POSIX modes and exact handles. Actual encrypted
 // SFTP I/O is exercised independently below; Windows fixtures cannot enforce
 // remote Unix chmod semantics.

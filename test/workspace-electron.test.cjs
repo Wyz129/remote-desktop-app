@@ -53,7 +53,8 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   const localUpload=path.join(fixture.root,'cli-upload.txt');await fs.writeFile(localUpload,'uploaded through running instance');
   const uploaded=await cli(['upload',localUpload,'/outside']);assert.equal(uploaded.code,0,uploaded.stderr);
   assert.equal(await fs.readFile(path.join(fixture.outsideRoot,'cli-upload.txt'),'utf8'),'uploaded through running instance');
-  if (!await page.locator('#downloadsPanel').isVisible()) await page.locator('#downloadsButton').click();await page.locator('#downloadItems').getByText(/cli-upload.txt/).first().waitFor();
+  if (!await page.locator('#downloadsPanel').isVisible()) await page.locator('#downloadsButton').click();
+  await page.locator('#transferHistoryTab').click(); await page.locator('#transferHistoryItems').getByText(/cli-upload.txt/).first().waitFor();
   await page.locator('#closeDownloads').click();
   async function openDocument(name){await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/${name}"]`).dblclick();const work=await currentEditor();await work.waitForFunction(()=>document.getElementById('filePath').textContent.startsWith('/'));return work;}
   await page.locator('#applicationsButton').click(); await page.locator('[data-application=editor]').click();

@@ -1,0 +1,53 @@
+/* A single header keeps navigation and the path alongside the window controls. */
+.explorer-window { container-type: inline-size; }
+.explorer-window > .titlebar { height: 45px; min-height: 45px; gap: 0; padding-left: 8px; }
+.explorer-window > .titlebar > .window-app-icon,
+.explorer-window > .titlebar > .window-title { display: none; }
+.explorer-window .pathbar { min-width: 0; flex: 1; padding: 0; gap: 2px; border: 0; background: transparent; }
+.explorer-window .pathbar > button { width: 29px; height: 30px; border-radius: 6px; }
+.explorer-window .pathbar [data-window-action="up"] { display: none; }
+.explorer-window .address-box { min-width: 40px; height: 32px; margin: 0 10px; padding: 0 6px; cursor: text; border-color: transparent; background: transparent; }
+.explorer-window .address-box:not(.editing):focus-within { border-color: transparent; box-shadow: none; }
+.explorer-window .address-box.editing { background: #222; border-color: #77716d; }
+.explorer-window .address-box.editing:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.explorer-window .window-path { font: 12px/1.5 "Ubuntu", "Segoe UI", sans-serif; user-select: text; }
+.window-breadcrumbs { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.breadcrumb-trail { display: flex; align-items: center; justify-content: flex-start; max-width: 100%; min-width: 0; }
+.breadcrumb-segment { flex: none; display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.breadcrumb-segment.current { flex: 0 1 auto; }
+.breadcrumb-trail.measuring .breadcrumb-segment.current { flex: none; }
+.breadcrumb-segment button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 12px; color: #b8b8b5; padding: 5px 7px; border-radius: 5px; }
+.breadcrumb-segment.current button { color: #f3f3f0; }
+.breadcrumb-separator { color: #8b8b87; font-size: 15px; padding: 0 1px; }
+.breadcrumb-overflow { flex: none; min-width: 28px; padding: 4px 6px; color: #ccc; font-size: 17px; }
+.explorer-window .view-button.active { border-color: transparent; background: #ffffff0b; }
+.explorer-window .window-controls { flex: none; padding-left: 5px; gap: 5px; }
+.explorer-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.explorer-places { width: 168px; flex: none; display: flex; flex-direction: column; gap: 3px; padding: 12px 8px; overflow-y: auto; background: #2b2b2b; border-right: 1px solid #3d3d3d; }
+.explorer-place { display: flex; align-items: center; gap: 11px; min-height: 37px; padding: 8px 9px; width: 100%; flex: none; text-align: left; font-size: 12px; font-weight: 600; border-radius: 6px; }
+.explorer-place > .tool-icon { width: 17px; height: 17px; color: #c3c3be; }
+.explorer-place span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-place.active { background: #41413f; }
+.explorer-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; background: #242424; }
+.explorer-picker-heading { margin: 0; padding: 11px 16px; flex: none; border-bottom: 1px solid var(--line); font-weight: 600; color: #e6ded8; background: #2d2927; }
+.explorer-window > .window-footer { padding-left: 182px; }
+.explorer-content .column-headings { grid-template-columns: minmax(0, 1fr) 80px 65px; }
+.explorer-content .entry:not(.icon-view .entry) { grid-template-columns: minmax(0, 1fr) 80px 65px; }
+@container (max-width: 620px) {
+  .explorer-places { width: 124px; padding-inline: 5px; }
+  .explorer-place { gap: 8px; padding-inline: 7px; }
+  .explorer-window > .window-footer { padding-left: 136px; }
+  .explorer-window .address-box { margin-inline: 3px; padding-inline: 2px; }
+  .explorer-window .pathbar > button { width: 25px; }
+  .explorer-content .column-headings, .explorer-content .entry:not(.icon-view .entry) { grid-template-columns: minmax(0, 1fr) 58px; }
+  .explorer-content .entry-type, .explorer-content .column-headings span:nth-child(2) { display: none; }
+}
+@container (max-width: 440px) {
+  .explorer-places { width: 44px; padding: 9px 4px; }
+  .explorer-place { justify-content: center; padding-inline: 3px; }
+  .explorer-place > span { display: none; }
+  .explorer-window > .window-footer { padding-left: 55px; }
+  .explorer-window .pathbar .view-button { display: none; }
+  .explorer-window .pathbar [data-window-action="refresh"] { display: none; }
+  .explorer-window .window-controls { gap: 2px; padding-inline: 3px; }
+}

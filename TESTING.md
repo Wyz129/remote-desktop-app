@@ -1,8 +1,20 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.10，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.11，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.11 已完成完整 `npm test`：语法检查 48 个文件、后端 103/103、模块 84/84、真实本机 Vim 7/7、UI 55/55、工作台 14/14、Electron 5/5、工作区 1/1、浏览器 2/2、CLI 1/1、视频 1/1。最终打包验证、程序哈希和实际范围见 [1.1.11 交付记录](docs/RELEASE-1.1.11.md)。测试使用隔离 Chrome/Electron、临时设置与回环 SSH，不接管用户现有实例，不连接生产服务器。
+
+本轮新增或调整的验证包括：
+
+- 资源管理器固定目录与自定义排序、标题栏面包屑溢出、完整路径编辑与权限失败回退；无头 UI 使用真实 HTML/CSS/JS 和替身 API。
+- 传输中心任务/历史切换、结束后控件隐藏、双向拖放、高级设置跳转、默认上传/下载路径校验及身份隔离。
+- 顶栏按钮顺序和显隐、简约/详细时钟、通知历史自动滚动、日历、退出调用，以及设置保存失败后的恢复。
+- 监听 In/Out 按操作聚合、原始命令、ANSI 回复颜色及 HTML 注入防护。
+- `test/interface-electron.test.cjs` 通过两个隔离 SSH/SFTP 服务验证跨账号路径隔离、无效目录不提交、Trash 初始化、Log 改址后的实际命令/输出落盘、已有终端继续写原日志、重启恢复和真正点击退出关闭测试应用。
+
+截图来自合成目录和回环服务，不能代表目标服务器的权限、Linux ACL、长期连接或大规模目录实际表现。打包测试通过 `REMOTE_DESKTOP_TEST_EXE` 复用同一组隔离场景，不能用源码测试结果替代打包产物结果。
 
 1.1.10 的程序全屏网格、搜索/常用、右键收藏、保存失败与重启恢复、键盘焦点、设置分类与紧凑布局、窗口按钮悬停、浏览器折叠及动态视图尺寸见 [1.1.10 交付记录](docs/RELEASE-1.1.10.md)。执行完整 `npm test`，最终界面修改后再跑完整 UI 与打包 EXE 集成。测试使用隔离 Chrome/Electron、临时设置与回环 SSH，不操作用户现有实例或生产服务器。
 
@@ -60,8 +72,8 @@ npm.cmd run test:electron
 
 ```powershell
 npm.cmd run package
-$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.10\win-unpacked\Remote Desktop.exe').Path
-node --test test/electron.test.cjs test/first-use-electron.test.cjs test/programs-electron.test.cjs test/video-app-electron.test.cjs test/workspace-electron.test.cjs test/browser-electron.test.cjs test/cli-packaged.test.cjs
+$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.11\win-unpacked\Remote Desktop.exe').Path
+node --test test/electron.test.cjs test/first-use-electron.test.cjs test/programs-electron.test.cjs test/interface-electron.test.cjs test/video-app-electron.test.cjs test/workspace-electron.test.cjs test/browser-electron.test.cjs test/cli-packaged.test.cjs
 Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 ```
 

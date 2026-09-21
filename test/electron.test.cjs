@@ -70,11 +70,11 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/notes.txt"]`).waitFor();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
   assert.equal(await page.locator('#desktopPath').textContent(), `${fixture.home}/.rdesktop/desktop`);
-  await page.waitForFunction(() => document.getElementById('serverClock').textContent.includes('Asia/Shanghai (UTC+08:00)'));
+  await page.waitForFunction(() => document.getElementById('serverClock').title.includes('Asia/Shanghai (UTC+08:00)'));
   assert.equal(await page.locator('#newWindow').count(), 0);
   assert.equal(await page.locator('#dock #editorShortcut, #dock #imageShortcut, #builtinApps').count(), 0);
   assert.equal(await page.locator('#applicationsButton').count(), 1);
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.locator('.browser-window').waitFor();
   const browserViews = () => application.evaluate(({ BrowserWindow }) => {
     const all = BrowserWindow.getAllWindows(), views = all[0].contentView.children;
@@ -96,7 +96,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('.browser-window [data-window-action="minimize"]').click();
   for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 0; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal((await browserViews()).visible, 0);
-  await page.locator('#browserButton').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.locator('#desktopSettings').click();
   for (let attempt = 0; attempt < 100 && (await browserViews()).visible !== 0; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal((await browserViews()).visible, 0);
@@ -153,6 +153,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.equal(downloadedTask.status, 'complete');
   assert.equal(downloadedTask.targetSide, 'local');
   assert.equal(downloadedTask.targetDirectory, fixture.downloads);
+  await page.locator('#transferHistoryTab').click();
   assert.equal(await page.locator('.download-item progress').isVisible(), false);
   assert.equal(await page.locator('.download-item .transfer-cancel').isVisible(), false);
   await page.locator('.download-item .transfer-target').click();
@@ -160,6 +161,13 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   assert.ok(await application.evaluate(() => globalThis.openDialogLog.some(value => value.properties.includes('openDirectory'))));
   await page.locator('#closeDownloads').click();
   const localUpload = path.join(fixture.root, 'electron-upload.txt'); await fsp.writeFile(localUpload, 'native picker upload');
+  await assert.rejects(page.evaluate(() => window.remoteDesktop.saveSettings({ downloadThreshold:1048576, defaultUploadDirectory:'relative' })), /绝对路径/);
+  await assert.rejects(page.evaluate(file => window.remoteDesktop.saveSettings({ downloadThreshold:1048576, defaultDownloadDirectory:file }), localUpload), /文件夹/);
+  const transferDefaults = { downloadThreshold:1048576, defaultUploadDirectory:`${fixture.home}/.rdesktop/desktop`, defaultDownloadDirectory:fixture.downloads };
+  assert.equal((await page.evaluate(patch => window.remoteDesktop.saveSettings(patch), transferDefaults)).defaultUploadDirectory, transferDefaults.defaultUploadDirectory);
+  await application.evaluate((_electron, directory) => globalThis.openDialogAnswers.push({canceled:false,filePaths:[directory]}), fixture.downloads);
+  assert.equal(await page.evaluate(() => window.remoteDesktop.chooseDefaultDownloadDirectory()), fixture.downloads);
+  assert.ok(await application.evaluate((_electron, directory) => globalThis.openDialogLog.some(value => value.title === '选择默认下载目录' && value.defaultPath === directory), fixture.downloads));
   await assert.rejects(page.evaluate(args => window.remoteDesktop.upload(...args), [localUpload, `${fixture.home}/.rdesktop/desktop`, 'ungranted-upload']), /选择/);
   await assert.rejects(page.evaluate(args => window.remoteDesktop.download(...args), [`${fixture.home}/.rdesktop/desktop/notes.txt`, 'ungranted-download', fixture.root]), /选择/);
   assert.deepEqual(await page.evaluate(() => { const forged=new File(['unsafe'],'forged.txt');Object.defineProperty(forged,'path',{value:'C:\\Windows\\win.ini'});return window.remoteDesktop.acceptDroppedFiles([forged]); }), []);
@@ -185,6 +193,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.evaluate(() => { const data = new DataTransfer(); data.items.add(document.getElementById('fixtureFiles').files[0]); document.getElementById('desktop').dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: data })); document.getElementById('fixtureFiles').remove(); });
   const uploadPicker = page.locator('.server-picker-window'); await uploadPicker.waitFor();
   await uploadPicker.locator('.window-picker-path').fill(`${fixture.home}/.rdesktop/desktop`); await uploadPicker.locator('.window-picker-select').click();
+  await page.locator('#transferHistoryTab').click();
   await page.locator('.download-item').filter({ hasText: 'electron-drop.txt' }).locator('.download-status').getByText('已完成', { exact: true }).waitFor();
   const dropTask = (await page.evaluate(() => window.remoteDesktop.listTransfers())).find(task => task.source === droppedFile);
   assert.equal(typeof dropTask.path, 'string', JSON.stringify(dropTask));
@@ -260,9 +269,9 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   // All paths are governed by server permissions, including shared data outside HOME.
   await page.locator('#homeShortcut').click();
   const explorer = page.locator('.window').first();
-  await explorer.locator('.window-path').fill('/'); await explorer.locator('.window-path').press('Enter');
+  await explorer.focus(); await explorer.press('Control+l'); await explorer.locator('.window-path').fill('/'); await explorer.locator('.window-path').press('Enter');
   await explorer.locator('.entry').filter({ hasText: 'outside' }).waitFor();
-  await explorer.locator('.window-path').fill('/outside'); await explorer.locator('.window-path').press('Enter');
+  await explorer.focus(); await explorer.press('Control+l'); await explorer.locator('.window-path').fill('/outside'); await explorer.locator('.window-path').press('Enter');
   await explorer.locator('.entry').filter({ hasText: 'blocked' }).waitFor();
   await explorer.locator('.entry').filter({ hasText: 'blocked' }).dblclick();
   await explorer.locator('.window-error').getByText(/无访问权限/).waitFor();
@@ -318,6 +327,9 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   page = await application.firstWindow(); page.setDefaultTimeout(12000);
   await page.locator('#connectionDialog[open]').waitFor();
   const restoredTransfers = await page.evaluate(() => window.remoteDesktop.listTransfers());
+  const restoredDefaults = await page.evaluate(() => window.remoteDesktop.getSettings());
+  assert.equal(restoredDefaults.defaultUploadDirectory, '', 'disconnected UI does not reuse another account upload path');
+  assert.equal(restoredDefaults.defaultDownloadDirectory, fixture.downloads);
   assert.ok(restoredTransfers.some(task => task.id === downloadedTask.id && task.status === 'complete'), 'download history survives app relaunch');
   assert.ok(restoredTransfers.some(task => task.id === 'electron-upload' && task.status === 'complete'), 'upload history survives app relaunch');
   assert.equal(await page.evaluate(id => window.remoteDesktop.removeTransfer(id), downloadedTask.id), true);
@@ -328,6 +340,7 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('#sshPassword').fill(fixture.password); await page.locator('#connectSubmit').click();
   await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#desktopPath').textContent(), '/outside/shared workspace', 'desktop choice survives app relaunch');
+  assert.equal((await page.evaluate(() => window.remoteDesktop.getSettings())).defaultUploadDirectory, transferDefaults.defaultUploadDirectory, 'upload destination returns only after authenticating the same server and account');
   fixture.deniedDirectories.add('/outside/shared workspace');
   await page.evaluate(() => window.remoteDesktop.disconnect());
   await page.locator('#connectButton').click();

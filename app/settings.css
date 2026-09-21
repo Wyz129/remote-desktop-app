@@ -6,14 +6,14 @@
 .settings-dialog .window-title { position: absolute; left: 50%; transform: translateX(-50%); max-width: calc(100% - 240px); color: #efeeec; font-size: 14px; }
 .settings-dialog .window-controls { margin-left: auto; }
 .settings-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
-.settings-dialog .settings-tabs { display: flex; flex-direction: column; flex: 0 0 198px; gap: 4px; padding: 14px 9px; border: 0; border-right: 1px solid #424242; background: #2b2b2b; overflow-y: auto; }
-.settings-dialog .settings-tabs button { display: flex; align-items: center; flex: none; gap: 11px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; border-radius: 8px; color: #e4e2e1; background: transparent; text-align: left; font-size: 13px; line-height: 1.4; }
-.settings-dialog .settings-tabs button:hover { background: #3a3a3a; }
-.settings-dialog .settings-tabs button[aria-selected="true"] { color: #faf0e8; background: #654234; border: 0; }
+.category-panel .settings-tabs { display: flex; flex-direction: column; flex: 0 0 198px; gap: 4px; padding: 14px 9px; border: 0; border-right: 1px solid #424242; background: #2b2b2b; overflow-y: auto; }
+.category-panel .settings-tabs button { display: flex; align-items: center; flex: none; gap: 11px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; border-radius: 8px; color: #e4e2e1; background: transparent; text-align: left; font-size: 13px; line-height: 1.4; }
+.category-panel .settings-tabs button:hover { background: #3a3a3a; }
+.category-panel .settings-tabs button[aria-selected="true"] { color: #faf0e8; background: #654234; border: 0; }
 .settings-nav-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; color: #bfbcc1; }
 .settings-nav-icon .tool-icon { width: 17px; height: 17px; }
-.settings-dialog .settings-tabs button[aria-selected="true"] .settings-nav-icon { color: #e4c9b9; }
-.settings-dialog .settings-content { flex: 1; min-width: 0; min-height: 0; padding: 24px 26px; background: #242424; overflow: auto; scrollbar-gutter: stable; }
+.category-panel .settings-tabs button[aria-selected="true"] .settings-nav-icon { color: #e4c9b9; }
+.category-panel .settings-content { flex: 1; min-width: 0; min-height: 0; padding: 24px 26px; background: #242424; overflow: auto; scrollbar-gutter: stable; }
 .settings-page { min-width: 0; max-width: 880px; margin: 0 auto; padding: 0; }
 .settings-page-title { margin: 0 0 18px; color: #f0efec; font-size: 17px; font-weight: 650; line-height: 1.4; }
 .settings-card { overflow: hidden; margin: 0 0 16px; border: 1px solid #424242; border-radius: 11px; background: #2d2d2d; }
@@ -48,9 +48,9 @@
 .settings-dialog .system-info dt:last-of-type, .settings-dialog .system-info dd:last-of-type { border-bottom: 0; }
 .settings-dialog .system-settings-note { padding: 0; }
 @container (max-width: 650px) {
-  .settings-dialog .settings-tabs { flex-basis: 164px; padding: 12px 6px; }
-  .settings-dialog .settings-tabs button { gap: 8px; padding: 10px 9px; font-size: 12px; }
-  .settings-dialog .settings-content { padding: 20px 17px; }
+  .category-panel .settings-tabs { flex-basis: 164px; padding: 12px 6px; }
+  .category-panel .settings-tabs button { gap: 8px; padding: 10px 9px; font-size: 12px; }
+  .category-panel .settings-content { padding: 20px 17px; }
   .settings-row { align-items: stretch; flex-direction: column; gap: 9px; padding: 12px; }
   .settings-row > select { flex: none; width: 100%; }
   .settings-row:has(.settings-switch) { align-items: center; flex-direction: row; }
@@ -60,14 +60,40 @@
   .settings-dialog .system-info dd { padding-top: 0; }
 }
 @container (max-width: 460px) {
-  .settings-dialog .settings-tabs { flex-basis: 50px; padding: 10px 5px; }
-  .settings-dialog .settings-tabs button { justify-content: center; padding: 10px 4px; }
-  .settings-dialog .settings-tabs button > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .settings-dialog .settings-content { padding: 16px 12px; }
+  .category-panel .settings-tabs { flex-basis: 50px; padding: 10px 5px; }
+  .category-panel .settings-tabs button { justify-content: center; padding: 10px 4px; }
+  .category-panel .settings-tabs button > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .category-panel .settings-content { padding: 16px 12px; }
   .settings-dialog .window-title { max-width: calc(100% - 180px); }
   .settings-dialog .desktop-path-picker { flex-wrap: wrap; }
   .settings-dialog .desktop-path-picker input { flex-basis: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-switch, .settings-switch::before { transition: none; }
+}
+
+/* Transfer Center shares the settings category rail and content template. */
+.downloads-panel.category-panel { display: flex; flex-direction: column; width: min(830px, calc(100vw - 90px)); height: min(610px, calc(100vh - 72px)); max-height: none; padding: 0; overflow: hidden; background: #242424; container-type: inline-size; }
+.downloads-panel.category-panel[hidden] { display: none; }
+.downloads-panel.category-panel > header { flex: none; min-height: 45px; padding: 0 12px 0 19px; border-bottom: 1px solid #424242; background: #303030; }
+.downloads-panel.category-panel > header h2 { font-size: 14px; }
+.downloads-panel.category-panel .settings-tabs { flex-basis: 158px; }
+.downloads-panel.category-panel .settings-content { padding: 22px; }
+.downloads-panel.category-panel .transfer-controls { padding: 0 0 18px; border-bottom-color: #424242; gap: 14px; }
+.downloads-panel.category-panel .transfer-buttons button { border-radius: 7px; }
+.downloads-panel.category-panel .transfer-history-heading { margin: 0 0 16px; align-items: flex-start; }
+.downloads-panel.category-panel .transfer-history-heading h3 { margin: 0; font-size: 17px; }
+.downloads-panel.category-panel .transfer-history-heading button { flex: none; border-radius: 7px; }
+.downloads-panel.category-panel .download-item { padding: 14px; margin: 12px 0; border: 1px solid #424242; border-radius: 9px; background: #2d2d2d; }
+.transfer-empty { color: #b7b4b1; font-size: 12px; line-height: 1.7; padding: 18px 0; }
+#transferError:empty { display: none; }
+#downloadsPanel .settings-tabs .category-link { margin-top: auto; border: 0; box-shadow: none; background: transparent; }
+#downloadsPanel .settings-tabs .category-link:hover { background: #3a3a3a; }
+@container (max-width: 550px) {
+  .downloads-panel.category-panel .settings-tabs { flex-basis: 120px; }
+  .downloads-panel.category-panel .settings-content { padding: 16px 12px; }
+  .downloads-panel.category-panel .transfer-history-heading { flex-direction: column; }
+}
+@container (max-width: 460px) {
+  .downloads-panel.category-panel .settings-tabs { flex-basis: 50px; }
 }

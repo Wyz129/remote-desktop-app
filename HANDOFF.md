@@ -1,6 +1,14 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-21。独立应用版本：1.1.10。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-21。独立应用版本：1.1.11。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.11 当前状态：资源管理器增加固定 Root/Home/Desktop/Log/Trash 和自定义目录侧栏，标题栏中央为可点击面包屑，根侧溢出折叠，空白/省略号/Ctrl+L/F4 进入完整路径编辑。新增 app/explorer.js/css。Desktop 沿用桌面与外观中的设置；Log/Trash/自定义目录及排序在“目录与侧栏”配置，由 lib/interface-preferences.cjs 规范化，通过 saveWorkspacePreferences 按主机/端口/账号/指纹隔离保存。默认初始化 ~/.rdesktop/{desktop,log,download,trash}；Trash 是目录入口，删除仍为原生确认后的永久删除。修改 Log 实际重绑日志，不搬移旧文件，活跃命令和已有终端保留原日志上下文直至结束；自定义目录不 chmod。详情见 docs/EXPLORER.md 与 docs/ACTIVITY_LOG.md。
+
+传输中心复用 app/settings.css 的分类模板，分任务/历史记录/高级设置；高级设置转到 filesSettingsPanel。默认上传目录由 transferUploadDirectories 按服务器身份保存，本机默认下载目录全局保存，适用于 GUI 选择器、CLI 缺省下载和浏览器保存框。GUI 上传继续仅普通文件，目录上传仅高级 CLI 支持。新增 lib/transfer-preferences.cjs；真实传输、历史和权限保护保持，见 docs/TRANSFERS.md。
+
+新增 app/activity-transcript.js/css，将原始 SSH 命令、PTY 按键和 SFTP 元数据与回复按操作聚合成 In/Out 块；本地 highlight.js、ansi_up 经 vendor-workbench.cjs 打包，DOMPurify 清理高亮输出。新增 app/shell-ui.js/css 与 app/interface-settings.js，提供顶栏退出、按钮显示/排序、默认简约服务器本地时钟及详细格式、通知历史和日历；顶栏默认隐藏浏览器，程序页仍可启动。退出经 quitSafely，保留 Monaco 未保存确认。通知从时间下方滑入，历史仅保留本次运行最近 200 条，不等同远程操作日志。shellPreferences 保存在本机 settings.json；隐藏设置后仍可从程序页进入。
+
+本轮完整 npm test 已通过：语法 48 文件、后端 103、模块 84、Vim 7、UI 55、工作台 14、Electron 5、工作区 1、浏览器 2、CLI 1、视频 1。新增 test/interface-electron.test.cjs 验证双回环服务器的目录隔离、无效目录不提交、自定义 Log 实际写入及终端连续性、重启偏好恢复和退出。只使用隔离进程、临时目录和回环服务，未操作用户现有实例或生产服务器。最终打包结果与哈希以 docs/RELEASE-1.1.11.md 为准。产物入口 artifacts/electron-1.1.11/win-unpacked/Remote Desktop.exe；回退分支 checkpoint/pre-navigation-notifications-1.1.10。本轮本地提交与打包，不推送 GitHub，等待用户明确指令。下方各版记录保留作历史参考，本节与当前源码优先。
 
 1.1.10：全桌面“程序”网格替代工具箱，十个内建入口、搜索、常用/全部、右键添加或移除收藏；左栏语义为收藏夹，按用户最终要求不显示栏标题和九点图标下方小字，保留悬停提示与可访问名称。收藏及使用次数由 lib/program-preferences.cjs 规范化，通过 app:program-preferences 固定 IPC 串行保存到本机 settings.json，不与远程 pinnedApps 混合；旧固定终端和动态窗口仍保留。更新偏好与重排网格时保持键盘焦点，移除最后一个收藏回到程序按钮。新增 app/programs.css、app/settings.css；设置分 desktop/files/system 三类，文件阈值表单移到 filesSettingsPanel，切换保留输入。窗口按钮默认透明、悬停显底色，保留 focus-visible。浏览器标签在地址栏之上，辅助选项默认折叠；可信工具栏上报 81–360px 的整数高度，主进程同步网页 bounds 与后台图像。回退分支 checkpoint/pre-programs-favorites-1.1.9；本地提交、打包，不推送。验证和交付入口见 docs/RELEASE-1.1.10.md。
 

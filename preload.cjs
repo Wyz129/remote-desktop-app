@@ -3,12 +3,16 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const subscribe = (channel, callback) => { const listener = (_, value) => callback(value); ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener); };
 contextBridge.exposeInMainWorld('remoteDesktop', {
   getSettings: () => ipcRenderer.invoke('app:get-settings'),
+  quit: () => ipcRenderer.invoke('app:quit'),
+  saveShellPreferences: input => ipcRenderer.invoke('app:save-shell-preferences', input),
+  saveWorkspacePreferences: (input, identity) => ipcRenderer.invoke('app:save-workspace-preferences', input, identity),
   updateProgramPreferences: (action, id) => ipcRenderer.invoke('app:program-preferences', action, id),
   saveServer: input => ipcRenderer.invoke('app:save-server', input),
   getSystemInfo: () => ipcRenderer.invoke('ssh:system-info'),
   setDesktop: remotePath => ipcRenderer.invoke('ssh:set-desktop', remotePath),
   checkFileAccess: remotePath => ipcRenderer.invoke('ssh:file-access', remotePath),
   saveSettings: patch => ipcRenderer.invoke('app:save-settings', patch),
+  chooseDefaultDownloadDirectory: () => ipcRenderer.invoke('app:choose-download-directory'),
   choosePrivateKey: () => ipcRenderer.invoke('app:choose-private-key'),
   quitFullscreen: () => ipcRenderer.invoke('app:quit-fullscreen'),
   connect: input => ipcRenderer.invoke('ssh:connect', input),
