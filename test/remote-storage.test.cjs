@@ -25,7 +25,7 @@ test('real SFTP creates all default application directories using private mkdir 
   const result = await ensureRemoteStorage(backend);
   assert.deepEqual(result, {
     root: `${fixture.home}/.rdesktop`, desktop: `${fixture.home}/.rdesktop/desktop`,
-    log: `${fixture.home}/.rdesktop/log`, download: `${fixture.home}/.rdesktop/download`, trash: `${fixture.home}/.rdesktop/trash`
+    log: `${fixture.home}/.rdesktop/log`, download: `${fixture.home}/.rdesktop/download`, trash: `${fixture.home}/.rdesktop/trash`, config: `${fixture.home}/.rdesktop/config`
   });
   for (const target of Object.values(result)) assert.ok((await fs.stat(fixture.mapPath(target))).isDirectory());
   // Windows cannot enforce POSIX directory modes. Verify the mode passed over
@@ -42,12 +42,14 @@ test('repeated initialization keeps existing files, directories, and old desktop
   await fixture.put('.rdesktop/log/keep.jsonl', 'old log data');
   await fixture.put('.rdesktop/download/keep.bin', Buffer.from([0, 1, 255]));
   await fixture.put('.rdesktop/trash/keep.txt', 'keep trash');
+  await fixture.put('.rdesktop/config/keep.json', '{"retained":true}');
   const before = fixture.calls.sftp.length;
   const first = await ensureRemoteStorage(backend), second = await ensureRemoteStorage(backend);
   assert.deepEqual(second, first);
   assert.ok(!fixture.calls.sftp.slice(before).some(call => ['MKDIR', 'REMOVE', 'RMDIR', 'RENAME', 'OPEN'].includes(call[0])));
   assert.equal(await fs.readFile(fixture.mapPath(`${first.desktop}/keep.txt`), 'utf8'), 'user desktop data');
   assert.equal(await fs.readFile(fixture.mapPath(`${first.log}/keep.jsonl`), 'utf8'), 'old log data');
+  assert.equal(await fs.readFile(fixture.mapPath(`${first.config}/keep.json`), 'utf8'), '{"retained":true}');
   assert.deepEqual(await fs.readFile(fixture.mapPath(`${first.download}/keep.bin`)), Buffer.from([0, 1, 255]));
   assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/Desktop/old.txt`), 'utf8'), 'old desktop');
 });
@@ -61,7 +63,7 @@ test('a symlink HOME is canonicalized before constructing application directorie
   assert.ok(fixture.calls.sftp.filter(call => call[0] === 'MKDIR').every(call => call[1].startsWith(`${fixture.home}/.rdesktop`)));
 });
 
-for (const relative of ['.rdesktop', '.rdesktop/desktop', '.rdesktop/log', '.rdesktop/download', '.rdesktop/trash']) {
+for (const relative of ['.rdesktop', '.rdesktop/desktop', '.rdesktop/log', '.rdesktop/download', '.rdesktop/trash', '.rdesktop/config']) {
   test(`existing file conflict is reported and preserved: ${relative}`, options, async t => {
     const { fixture, backend } = await realContext(t);
     const remote = await fixture.put(relative, 'preserve conflict data');

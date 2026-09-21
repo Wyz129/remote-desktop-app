@@ -36,7 +36,9 @@ function renderTabs(tabs) {
   for (const tab of tabs || []) {
     const item = document.createElement('div'); item.className = `browser-tab${tab.active ? ' active' : ''}`; item.dataset.tabId = tab.id;
     const select = document.createElement('button'); select.type = 'button'; select.className = 'tab-select'; select.textContent = tab.title || '新标签页'; select.title = tab.url || tab.title; select.setAttribute('role', 'tab'); select.setAttribute('aria-selected', String(tab.active)); select.addEventListener('click', () => void invoke('selectTab', { id: tab.id }));
-    const close = document.createElement('button'); close.type = 'button'; close.className = 'tab-close'; close.textContent = '×'; close.title = '关闭标签页'; close.setAttribute('aria-label', `关闭 ${tab.title || '标签页'}`); close.addEventListener('click', () => void invoke('closeTab', { id: tab.id }));
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'tab-close'; close.title = '关闭标签页'; close.setAttribute('aria-label', `关闭 ${tab.title || '标签页'}`); close.addEventListener('click', () => void invoke('closeTab', { id: tab.id }));
+    const closeIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); closeIcon.setAttribute('viewBox', '0 0 20 20'); closeIcon.setAttribute('aria-hidden', 'true');
+    const closePath = document.createElementNS('http://www.w3.org/2000/svg', 'path'); closePath.setAttribute('d', 'M5 5l10 10M15 5L5 15'); closeIcon.append(closePath); close.append(closeIcon);
     item.append(select, close); $('tabs').append(item);
     if (tab.active) item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }

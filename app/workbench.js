@@ -14,7 +14,7 @@
   function detectLanguage(name) { const extension = name.split('.').pop().toLowerCase(); return ({ py: 'python', c: 'cpp', h: 'cpp', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp', f: 'fortran', for: 'fortran', f90: 'fortran', f95: 'fortran', f03: 'fortran', f08: 'fortran', html: 'html', htm: 'html', js: 'javascript', css: 'css', json: 'json', ipynb: 'json', md: 'markdown', sh: 'shell' })[extension] || 'plaintext'; }
   const editorOptions = () => ({ theme: 'vs-dark', automaticLayout: true, fontSize: 14, lineNumbers: 'on', folding: true, showFoldingControls: 'always', minimap: { enabled: false }, wordWrap: 'off', scrollBeyondLastLine: false, readOnly: Boolean(documentInfo?.readOnly || !connected || fileBusy), renderWhitespace: 'selection', tabSize: 4 });
   function updateFileControls() {
-    $('#filePath').textContent = documentInfo.path || '未命名文件 · 尚未保存'; $('#readOnly').hidden = !documentInfo.readOnly;
+    $('#readOnly').hidden = !documentInfo.readOnly;
     $('#open').disabled = $('#saveAs').disabled = !connected || fileBusy;
     $('#save').disabled = documentInfo.readOnly || !connected || fileBusy; $('#reload').disabled = documentInfo.untitled || !connected || fileBusy;
     sourceEditor?.updateOptions({ readOnly: editorOptions().readOnly }); notebookEditors.forEach(item => item.editor.updateOptions({ readOnly: editorOptions().readOnly }));

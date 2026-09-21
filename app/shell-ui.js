@@ -21,7 +21,7 @@ window.DesktopShell = class DesktopShell {
     this.preferences = preferences;
     const ids = ['connectButton', 'downloadsButton', 'activityButton', 'homeShortcut', 'desktopSettings', 'fullscreen', 'exitButton', 'browserButton'];
     const order = [...new Set([...(preferences.toolbarOrder || []).filter(id => ids.includes(id)), ...ids])];
-    const hidden = new Set(preferences.toolbarHidden || ['browserButton']);
+    const hidden = new Set(preferences.toolbarHidden || ['browserButton', 'exitButton']);
     const actions = document.querySelector('.toolbar-actions');
     for (const id of order) { const button = document.getElementById(id); if (button) { button.hidden = hidden.has(id); actions.append(button); } }
     document.getElementById('connection').hidden = hidden.has('connectButton');

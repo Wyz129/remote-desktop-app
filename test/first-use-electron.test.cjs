@@ -10,7 +10,7 @@ const { desktopIdentity } = require('../lib/desktop-preferences.cjs');
 const { listInstances, requestInstance } = require('../lib/instance-bridge.cjs');
 const project = path.resolve(__dirname, '..');
 
-test('first connection creates private storage, resets old desktop preference, saves secret-free profiles and displays raw command activity', { timeout: 120000 }, async t => {
+test('first connection creates private storage, resets old desktop preference, saves secret-free profiles and separates summarized system activity from raw terminal and CLI commands', { timeout: 120000 }, async t => {
   const fixture = await createSshFixture({ desktop: false });
   let application;
   t.after(async () => {
@@ -87,7 +87,7 @@ test('first connection creates private storage, resets old desktop preference, s
   await page.locator('#connectSubmit').click();
   await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
   await page.waitForFunction(expected => document.getElementById('desktopPath').textContent === expected, `${storageRoot}/desktop`);
-  for (const directory of [storageRoot, `${storageRoot}/desktop`, `${storageRoot}/log`, `${storageRoot}/download`]) {
+  for (const directory of [storageRoot, ...['desktop', 'log', 'download', 'trash', 'config'].map(name => `${storageRoot}/${name}`)]) {
     assert.equal((await fs.stat(fixture.mapPath(directory))).isDirectory(), true, directory);
     assert.ok(fixture.calls.sftp.some(call => call[0] === 'MKDIR' && call[1] === directory), `server created ${directory}`);
   }
@@ -96,11 +96,13 @@ test('first connection creates private storage, resets old desktop preference, s
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
 
   assert.equal(await page.locator('#accountName').count(), 0);
-  assert.equal(await page.locator('#connection').textContent(), `${fixture.username}·已连接`);
+  assert.equal(await page.locator('#connection').textContent(), fixture.username);
+  assert.equal(await page.locator('#connectionIndicator').evaluate(element => element.classList.contains('connected')), true);
   await page.locator('#connectButton').click();
-  assert.equal(await page.locator('#connectedUsername').textContent(), fixture.username);
+  assert.equal(await page.locator('#connectedAddress').textContent(), `${fixture.username}@127.0.0.1:${fixture.config.port}`);
   for (const selector of ['#sshUsername', '#sshPassword', '#connectionAdvanced', '#serverSwitcher', '#connectSubmit']) assert.equal(await page.locator(selector).isVisible(), false, selector);
-  for (const selector of ['#disconnectButton', '#reconnectButton', '#switchAccountButton']) assert.equal(await page.locator(selector).isVisible(), true, selector);
+  assert.equal(await page.locator('#disconnectButton, #connectedUsername').count(), 0);
+  for (const selector of ['#connectionExitButton', '#reconnectButton', '#switchAccountButton']) assert.equal(await page.locator(selector).isVisible(), true, selector);
   await page.screenshot({ path: path.join(project, 'artifacts', executablePath ? 'packaged-account.png' : 'electron-account.png') });
   await page.locator('#switchAccountButton').click();
   assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'advanced');
@@ -117,7 +119,7 @@ test('first connection creates private storage, resets old desktop preference, s
   await page.locator('#sshPassword').fill(fixture.password);
   await page.locator('#connectSubmit').click();
   await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
-  assert.equal(await page.locator('#connection').textContent(), `${fixture.username}·已连接`);
+  assert.equal(await page.locator('#connection').textContent(), fixture.username);
   const afterReconnect = await fs.readFile(path.join(userData, 'settings.json'), 'utf8');
   assert.ok(!afterReconnect.includes(fixture.password));
 
@@ -146,11 +148,13 @@ test('first connection creates private storage, resets old desktop preference, s
   await page.locator('.browser-window [data-window-action=close]').click();
 
   await page.locator('#activityButton').click();
-  await page.locator('.activity-session').selectOption('system');
+  await page.locator('[data-activity-category=system]').click();
   await page.evaluate(() => window.remoteDesktop.getSystemInfo());
   const systemCommand = fixture.calls.exec.findLast(command => command.startsWith('# remote-desktop-system-info-v1\n'));
   assert.ok(systemCommand);
-  await page.waitForFunction(command => document.querySelector('.activity-events')?.textContent.includes(command), systemCommand);
+  await page.waitForFunction(() => document.querySelector('.activity-events')?.textContent.includes('#读取系统信息') && document.querySelector('.activity-events')?.textContent.includes('Ubuntu 24.04'));
+  assert.equal(await page.locator('.activity-events').textContent().then(text => text.includes(systemCommand)), false, 'predefined GUI commands show operation names instead of implementation scripts');
+  await page.locator('[data-activity-category=terminal]').click();
   await page.evaluate(() => { window.fixtureTerminalEvents = []; window.remoteDesktop.onMessage(message => window.fixtureTerminalEvents.push(message)); });
   await page.keyboard.press('Control+Alt+t');
   await page.waitForFunction(() => window.fixtureTerminalEvents.some(message => message.type === 'terminalOpened'));
@@ -161,9 +165,10 @@ test('first connection creates private storage, resets old desktop preference, s
   const snapshot = await page.evaluate(() => window.remoteDesktop.getActivitySnapshot());
   assert.ok(snapshot.entries.some(entry => entry.scope === 'system' && entry.type === 'terminal-input' && entry.data === terminalInput));
   assert.ok(snapshot.entries.some(entry => entry.scope === 'system' && entry.type === 'terminal-command' && entry.command.includes('exec')));
-  const rawSystemCommand = snapshot.entries.findLast(entry => entry.scope === 'system' && entry.type === 'command' && entry.command === systemCommand);
-  assert.ok(rawSystemCommand);
-  assert.ok(snapshot.entries.some(entry => entry.operationId === rawSystemCommand.operationId && entry.type === 'stdout' && entry.data.includes('Ubuntu 24.04')));
+  const systemOperation = snapshot.entries.findLast(entry => entry.scope === 'system' && entry.type === 'operation' && entry.action === 'ssh:system-info');
+  assert.ok(systemOperation);
+  assert.ok(snapshot.entries.some(entry => entry.operationId === systemOperation.operationId && entry.type === 'result' && entry.status === 'success' && entry.result.os.includes('Ubuntu 24.04')));
+  assert.ok(!snapshot.entries.some(entry => entry.command === systemCommand));
   assert.ok(snapshot.entries.filter(entry => ['terminal-input', 'terminal-output', 'command'].includes(entry.type)).every(entry => !Number.isNaN(Date.parse(entry.time))));
   assert.ok(snapshot.systemLogPath.startsWith(`${storageRoot}/log/`));
   const [instance] = await listInstances(userData); assert.ok(instance);
@@ -171,6 +176,7 @@ test('first connection creates private storage, resets old desktop preference, s
   const result = await requestInstance(instance, 'exec', { command });
   assert.deepEqual({ stdout: result.stdout, stderr: result.stderr, code: result.code }, { stdout: 'remote command reply\n', stderr: 'fixture diagnostic\n', code: 7 });
   await page.locator('#activityButton').click();
+  await page.locator('[data-activity-category=cli]').click();
   await page.locator('.activity-session').selectOption('');
   await page.waitForFunction(() => document.querySelector('.activity-events')?.textContent.includes('remote command reply'));
   const activity = await page.evaluate(() => window.remoteDesktop.getActivitySnapshot());
@@ -182,8 +188,9 @@ test('first connection creates private storage, resets old desktop preference, s
   await page.evaluate(() => window.remoteDesktop.disconnect());
   const systemLog = await fs.readFile(fixture.mapPath(snapshot.systemLogPath), 'utf8');
   const savedRecords = systemLog.trim().split('\n').map(line => JSON.parse(line));
-  assert.ok(savedRecords.some(record => record.type === 'command' && record.command === systemCommand));
-  assert.ok(savedRecords.some(record => record.operationId === rawSystemCommand.operationId && record.type === 'stdout' && record.data.includes('Ubuntu 24.04')));
+  assert.ok(savedRecords.some(record => record.type === 'operation' && record.operationId === systemOperation.operationId && record.input === '#读取系统信息'));
+  assert.ok(savedRecords.some(record => record.operationId === systemOperation.operationId && record.type === 'result' && record.output === '#成功' && record.result.os.includes('Ubuntu 24.04')));
+  assert.ok(!systemLog.includes(systemCommand), 'predefined commands are omitted from system logs too');
   assert.ok(savedRecords.some(record => record.type === 'terminal-input' && record.data === terminalInput));
   assert.ok(savedRecords.some(record => record.type === 'terminal-output' && record.data.includes('fixture-echo:printf raw-input-check')));
   assert.ok(!systemLog.includes(command), 'CLI command body belongs only to its dedicated log');

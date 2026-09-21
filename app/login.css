@@ -18,7 +18,14 @@
 .login-dialog #closeConnection { margin-left:auto; }
 .login-identity { text-align:center; }
 .login-avatar { display:grid; place-items:center; width:106px; height:106px; margin:8px auto 18px; border:3px solid #645567; border-radius:50%; overflow:hidden; background:linear-gradient(140deg,#71384c,#bd4a2c); }
-.login-avatar svg { width:100%; height:100%; display:block; fill:#f3efef; }
+.login-avatar svg { width:86%; height:86%; display:block; fill:none; stroke:#f3efef; stroke-width:3.8; stroke-linecap:round; stroke-linejoin:round; }
+.login-avatar svg circle { fill:#f3efef; stroke:none; }
+.server-name-row { display:flex; justify-content:center; align-items:center; gap:9px; }
+.server-name-row h3 { min-width:0; }
+.login-dialog .login-symbol-button { flex:none; display:grid; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:50%; color:#ddd6e1; background:transparent; }
+.login-dialog .login-symbol-button:hover { background:#ffffff18; }
+.login-dialog .login-symbol-button .tool-icon { display:block; width:18px; height:18px; }
+.login-dialog .login-symbol-button[hidden], .login-dialog [hidden] { display:none; }
 #serverDisplayName { margin:0; font-size:22px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; }
 #serverDisplayAddress { margin:7px 0 24px; font-size:12px; color:#aaa0ae; overflow-wrap:anywhere; }
 .login-credentials { display:flex; flex-direction:column; gap:12px; }
@@ -44,8 +51,17 @@
 .connected-account { display:flex; align-items:center; flex-direction:column; gap:9px; margin:0; color:#bdb3c1; text-align:center; overflow-wrap:anywhere; }
 .connected-account strong { color:#eeeeee; font-size:22px; font-weight:500; }
 .connected-account > :last-child { font-size:12px; }
-.login-dialog[data-mode="connected"] .login-actions button { padding:8px 13px; border:1px solid #65576a; border-radius:18px; background:#413345; color:#e6dfe8; }
+.login-dialog[data-mode="connected"] .login-actions #switchAccountButton { padding:8px 18px; border:1px solid #65576a; border-radius:18px; background:#413345; color:#e6dfe8; }
 .login-dialog[data-mode="connected"] #switchAccountButton { background:#554151; }
+.login-dialog[data-mode="connected"] .login-actions { align-items:center; gap:12px; margin-top:26px; }
+.login-dialog[data-mode="connected"] .connected-account { margin-top:14px; }
+.login-dialog[data-mode="connected"] #connectionHint, .login-dialog[data-mode="connected"] #serverDisplayAddress { display:none; }
+.toolbar-actions #connectButton { display:flex; align-items:center; gap:8px; width:auto; max-width:220px; padding:4px 10px; border-radius:18px; font:600 13px/19px "Segoe UI", "Noto Sans", sans-serif; letter-spacing:.1px; }
+.toolbar-actions #connectButton[hidden] { display:none; }
+#connectButton .connection { font:inherit; color:#fafafa; }
+.connection-indicator { width:8px; height:8px; flex:none; border-radius:50%; background:#e36969; box-shadow:0 0 0 1px #0002; }
+.connection-indicator.connected { background:#67c78c; }
+#settingsConnectionTarget { overflow-wrap:anywhere; color:#d6d0d8; }
 .login-dialog #reconnectKeyCredentials { margin-top:12px; }
 .login-dialog #reconnectKeyCredentials label { font-size:12px; color:#bcb1c0; }
 .login-dialog #reconnectPassphrase { border:1px solid #6b5a6e; background:#493a4c; border-radius:22px; padding:12px 16px; color:#eeeeee; font:inherit; }

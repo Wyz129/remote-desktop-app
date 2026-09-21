@@ -20,10 +20,9 @@ button:hover { background: #484848; border-color: #707070; }
 button:disabled { opacity: .4; cursor: default; }
 #address { flex: 1; min-width: 80px; height: 32px; padding: 5px 14px; border-radius: 18px; border-color: #494949; }
 .navigation-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; font-size: 19px; line-height: 1; }
-#toggleDetails { font-size: 24px; }
-#toggleDetails span { transform: translateY(-3px); }
+#toggleDetails svg { display: block; width: 20px; height: 20px; fill: currentColor; }
 #toggleDetails[aria-expanded="true"] { background: #48403c; color: #f1c2ae; }
-#toggleDetails[aria-expanded="true"] span { transform: rotate(180deg) translateY(-3px); }
+#toggleDetails[aria-expanded="true"] svg { transform: rotate(180deg); }
 #browserDetails { border-top: 1px solid var(--line); padding-top: 4px; }
 .settings { min-height: 36px; flex-wrap: wrap; padding: 2px 0; }
 .settings label { white-space: nowrap; }
@@ -41,5 +40,6 @@ button:disabled { opacity: .4; cursor: default; }
 .browser-tab .tab-select { min-width: 0; flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .browser-tab .tab-close { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 23px; height: 23px; min-height: 23px; margin-right: 4px; padding: 0; font-size: 19px; line-height: 1; border-radius: 50%; }
 .browser-tab .tab-close:hover { background: #63514c; }
-.tab-strip #newTab { flex: none; align-self: center; width: 28px; height: 28px; min-height: 28px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; font-size: 20px; line-height: 1; }
+.tab-strip #newTab { display: inline-flex; align-items: center; justify-content: center; flex: none; align-self: flex-end; width: 28px; height: 28px; min-height: 28px; margin-bottom: 1px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; }
+.tab-strip #newTab svg, .tab-close svg { display: block; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .tab-strip #newTab:hover { background: #484848; border-color: #707070; }

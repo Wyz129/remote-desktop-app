@@ -61,7 +61,7 @@ test('commands and CLI requests started while a log target initializes retain co
   log.system({ type: 'end', operationId: 'during-change', code: 0 }, original); release();
   log.cli(cli.id, { type: 'stdout', data: 'cli-migration' }); log.cli(cli.id, { type: 'end', result: { code: 0 } });
   await log.flush();
-  assert.deepEqual(fixture.lines(originalPath).filter(record => record.operationId === 'during-change').map(record => record.type), ['command', 'stdout', 'end']);
+  assert.deepEqual(fixture.lines(originalPath).filter(record => record.operationId === 'during-change').map(record => record.type), ['operation', 'stdout', 'result']);
   assert.deepEqual(fixture.lines(cli.logPath).map(record => record.type), ['connection', 'command', 'stdout', 'end']);
   assert.ok(!fixture.allLines('/other/.log/').some(record => record.operationId === 'during-change' || record.operationId === cli.id));
   assert.equal(log.contexts.size, 1);
@@ -84,7 +84,7 @@ test('failed or stale log relocation leaves the previous writable context intact
   assert.equal(log.capture(), original);
   assert.equal(log.system({ type: 'command', command: 'still-recording' }), true);
   await log.flush();
-  assert.ok(fixture.lines(originalPath).some(record => record.command === 'still-recording'));
+  assert.ok(fixture.lines(originalPath).some(record => record.type === 'operation' && record.operationName === 'SSH 操作'));
   assert.equal(log.contexts.size, 1);
   await log.disconnect();
 });
@@ -282,11 +282,12 @@ test('explicit storage directory keeps desktop changes away from legacy desktop 
   log.system({ type: 'command', command: 'uname -r', operationId: 'query' });
   await log.flush();
   assert.equal(fixture.nodes.has('/other/.log'), false);
-  assert.ok(fixture.allLines('/storage/log/').some(record => record.command === 'uname -r'));
+  assert.ok(fixture.allLines('/storage/log/').some(record => record.operationId === 'query' && record.operationName === '读取系统信息'));
+  assert.ok(!fixture.allLines('/storage/log/').some(record => record.command === 'uname -r'));
   await log.disconnect();
 });
 
-test('system commands and PTY input enter the ordered bounded live stream with matching persisted timestamps', async () => {
+test('system operation summaries and raw PTY input keep ordered timestamps and separate categories', async () => {
   const fixture = memoryBackend(), events = [], log = new ActivityLog({ maxEntries: 4, onEvent: event => events.push(event) });
   await log.attach(fixture.backend, '/desktop');
   const records = [
@@ -301,7 +302,9 @@ test('system commands and PTY input enter the ordered bounded live stream with m
   const live = events.filter(event => event.type === 'entry').map(event => event.entry);
   const persisted = fixture.lines(log.snapshot().systemLogPath).slice(1);
   assert.equal(live.length, records.length);
-  assert.deepEqual(live.map(record => record.type), records.map(record => record.type));
+  assert.deepEqual(live.map(record => record.type), ['operation', 'stdout', 'result', 'terminal-input', 'terminal-output']);
+  assert.deepEqual(live.map(record => record.category), ['system', 'system', 'system', 'terminal', 'terminal']);
+  assert.equal(live[0].command, undefined); assert.equal(live[0].input, '#SSH 操作'); assert.equal(live[2].output, '#成功');
   assert.equal(log.snapshot().entries.length, 4);
   assert.ok(live.every(record => record.scope === 'system' && record.source === 'system' && record.sessionId === 'system' && record.operationId && Number.isFinite(Date.parse(record.time))));
   assert.deepEqual(live.map(record => record.time), persisted.map(record => record.time));

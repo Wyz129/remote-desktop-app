@@ -48,7 +48,7 @@ test('HTML source split preview grants explicit root and isolates scripts',async
 
 test('Monaco launcher opens untitled text and Ctrl+S asks for an absolute remote save path', async t => {
   const page = await pageFor(t, 'Untitled.txt', '', false, { untitled: true, path: '' });
-  assert.match(await page.locator('.brand').textContent(), /Monaco Editor/);
+  assert.equal(await page.locator('header, #filePath, .brand').count(), 0, 'file title is owned by the virtual window titlebar');
   assert.equal(await page.locator('#reload').isDisabled(), true);
   await page.evaluate(() => monaco.editor.getModels()[0].setValue('print("new document")\n'));
   await page.locator('.monaco-editor textarea').first().focus(); await page.keyboard.press('Control+s');
@@ -56,7 +56,7 @@ test('Monaco launcher opens untitled text and Ctrl+S asks for an absolute remote
   assert.equal(await page.locator('#inputValue').inputValue(), '/home/test/rdesktop/Untitled.txt');
   await page.locator('#inputValue').fill('/shared/new.py'); await page.locator('#inputForm button[type=submit]').click();
   await page.waitForFunction(() => document.querySelector('#status').textContent === '已另存为。');
-  assert.equal(await page.locator('#filePath').textContent(), '/shared/new.py');
+  assert.equal(await page.evaluate(() => window.doc.path), '/shared/new.py');
   assert.equal(await page.locator('#language').inputValue(), 'python'); assert.equal(await page.locator('#dirty').textContent(), '');
   assert.equal(await page.evaluate(() => window.calls.some(item => item.action === 'save')), false);
   await page.evaluate(() => monaco.editor.getModels()[0].setValue('print("updated")\n'));
@@ -70,7 +70,7 @@ test('untitled save cancellation and failed save-as preserve edits, and close re
   await page.locator('#inputDialog[open]').waitFor(); await page.locator('#inputValue').fill('/shared/existing.txt'); await page.locator('#inputForm button[type=submit]').click();
   await page.getByRole('status').getByText('目标已存在，不会覆盖').waitFor();
   assert.equal(await page.evaluate(() => monaco.editor.getModels()[0].getValue()), 'keep my edits');
-  assert.equal(await page.locator('#save').isEnabled(), true); assert.match(await page.locator('#filePath').textContent(), /未命名/);
+  assert.equal(await page.locator('#save').isEnabled(), true); assert.equal(await page.evaluate(() => window.doc.untitled), true);
 });
 test('remote open keeps current edits on cancellation or permission failure and supports read-only files', async t => {
   const page = await pageFor(t, 'current.py', 'keep current');
@@ -79,7 +79,7 @@ test('remote open keeps current edits on cancellation or permission failure and 
   await openPath('/shared/cancelled.txt'); assert.equal(await page.evaluate(() => monaco.editor.getModels()[0].getValue()), 'unsaved content');
   await page.evaluate(() => { window.cancelOpen = false; window.openError = '无访问权限：/restricted'; });
   await openPath('/restricted'); await page.getByRole('status').getByText('无访问权限：/restricted').waitFor();
-  assert.equal(await page.locator('#filePath').textContent(), '/shared/current.py');
+  assert.equal(await page.evaluate(() => window.doc.path), '/shared/current.py');
   await page.evaluate(() => { window.openError = ''; window.nextDocument = { name: 'readonly.f90', text: 'program hello\nend program', readOnly: true, revision: 'next' }; });
   await openPath('/shared/readonly.f90'); assert.equal(await page.locator('#language').inputValue(), 'fortran');
   assert.equal(await page.locator('#save').isDisabled(), true); assert.equal(await page.locator('#saveAs').isEnabled(), true);

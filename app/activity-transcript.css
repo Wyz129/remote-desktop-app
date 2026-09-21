@@ -14,3 +14,10 @@
 .activity-command .hljs-comment { color: #928399; }
 .activity-command .hljs-variable, .activity-command .hljs-attr { color: #92bfda; }
 .activity-command .hljs-number, .activity-command .hljs-literal { color: #dfb38a; }
+.activity-category-tabs { display: flex; align-items: center; flex: none; gap: 6px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); background: var(--surface); }
+.activity-category-tabs button { flex: 1; max-width: 180px; padding: 10px 12px; border: 0; border-bottom: 3px solid transparent; border-radius: 5px 5px 0 0; background: transparent; color: var(--muted); }
+.activity-category-tabs button:hover { background: #ffffff09; color: var(--text); }
+.activity-category-tabs button[aria-selected="true"] { border-bottom-color: #bc6042; color: var(--text); background: #ffffff08; }
+.activity-category-tabs button:focus-visible { outline: 2px solid #c47a58; outline-offset: -3px; }
+.activity-toolbar label[hidden] { display: none; }
+.activity-operation-status { color: #a8c79b; }

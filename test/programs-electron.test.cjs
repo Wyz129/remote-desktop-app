@@ -16,7 +16,7 @@ test('program favorites and usage persist across isolated Electron restarts with
     downloadThreshold: 1048576, storageVersion: 2,
     host: '192.0.2.20', port: 2222, username: 'programs-test', alias: '离线测试服务器',
     knownHosts: { '192.0.2.20:2222': 'SHA256:isolated-test-fingerprint' },
-    serverProfiles: [{ id: 'offline-profile', host: '192.0.2.20', port: 2222, username: 'programs-test', alias: '离线测试服务器', privateKeyPath: '' }],
+    serverProfiles: [{ id: 'offline-profile', host: '192.0.2.20', port: 2222, username: 'programs-test', alias: '离线测试服务器', aliasAuto: false, privateKeyPath: '' }],
     selectedServerId: 'offline-profile'
   };
   await fs.writeFile(settingsPath, JSON.stringify(initial));

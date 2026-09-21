@@ -4,6 +4,7 @@ const subscribe = (channel, callback) => { const listener = (_, value) => callba
 contextBridge.exposeInMainWorld('remoteDesktop', {
   getSettings: () => ipcRenderer.invoke('app:get-settings'),
   quit: () => ipcRenderer.invoke('app:quit'),
+  saveConnectionPort: (port, identity) => ipcRenderer.invoke('app:connection-port', port, identity),
   saveShellPreferences: input => ipcRenderer.invoke('app:save-shell-preferences', input),
   saveWorkspacePreferences: (input, identity) => ipcRenderer.invoke('app:save-workspace-preferences', input, identity),
   updateProgramPreferences: (action, id) => ipcRenderer.invoke('app:program-preferences', action, id),

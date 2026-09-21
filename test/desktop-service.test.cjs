@@ -6,7 +6,7 @@ const fsp = require('node:fs').promises;
 const path = require('node:path');
 const { Readable, PassThrough } = require('node:stream');
 const { SshBackend } = require('../lib/ssh-backend.cjs');
-const { DesktopService } = require('../lib/desktop-service.cjs');
+const { DesktopService, configLocation } = require('../lib/desktop-service.cjs');
 const { createSshFixture } = require('./helpers/ssh-fixture.cjs');
 
 const options = { timeout: 20000 };
@@ -131,13 +131,14 @@ test('configuration lookup honors all four legacy candidates in order', options,
   for (let index = candidates.length - 1; index >= 0; index--) {
     await fixture.put(candidates[index].slice(fixture.home.length + 1), JSON.stringify({ viewMode: 'icons', selected: index }));
     const config = await service.loadConfig();
-    assert.equal(config.selected, index); assert.equal(service.configPath, candidates[index]);
+    assert.equal(config.selected, index); assert.equal(service.configSourcePath, candidates[index]);
+    assert.equal(service.configPath, configLocation(`${fixture.home}/.rdesktop/config`, desktop));
   }
 });
 
 test('configuration save retains changes made externally after the last read', options, async t => {
   const { fixture, service, desktop } = await setup(t);
-  const configPath = `${desktop}/.remote-desktop.json`;
+  const configPath = service.configPath, legacyPath = `${desktop}/.remote-desktop.json`;
   await fixture.put('Desktop/.remote-desktop.json', JSON.stringify({ viewMode: 'icons', wallpaper: 'teal', custom: 'original' }));
   await service.loadConfig();
   await fixture.put('Desktop/.remote-desktop.json', JSON.stringify({ viewMode: 'details', wallpaper: 'purple', custom: 'external', shortcuts: [{ kind: 'command', command: 'legacy-command' }] }));
@@ -146,15 +147,21 @@ test('configuration save retains changes made externally after the last read', o
   assert.deepEqual(result.shortcuts, [{ kind: 'command', command: 'legacy-command' }]);
   assert.equal(result.showHiddenFiles, false);
   assert.deepEqual(await readJson(fixture, configPath), result);
+  assert.equal((await readJson(fixture, legacyPath)).showHiddenFiles, undefined, 'migration never changes the legacy file');
+  assert.ok(fixture.calls.sftp.some(call => call[0] === 'RENAME' && call[2] === configPath));
+  await fsp.writeFile(fixture.mapPath(configPath), JSON.stringify({ ...result, custom: 'central external change' }));
+  await service.saveConfig({ wallpaper: 'teal' });
+  assert.equal((await readJson(fixture, configPath)).custom, 'central external change');
   assert.ok(fixture.calls.sftp.some(call => call[0] === 'POSIX_RENAME' && call[2] === configPath));
 });
 
 test('serialized configuration patches do not lose each other and first save creates the file', options, async t => {
   const { fixture, service, desktop } = await setup(t);
   await Promise.all([service.saveConfig({ wallpaper: 'slate' }), service.saveConfig({ viewMode: 'icons' }), service.saveConfig({ showHiddenFiles: false })]);
-  const config = await readJson(fixture, `${desktop}/.remote-desktop.json`);
+  const config = await readJson(fixture, service.configPath);
   assert.deepEqual(config, { wallpaper: 'slate', viewMode: 'icons', showHiddenFiles: false });
-  assert.equal((await fsp.readdir(fixture.mapPath(desktop))).some(name => name.includes('.tmp-')), false);
+  assert.deepEqual(await fsp.readdir(fixture.mapPath(desktop)), []);
+  assert.equal((await fsp.readdir(fixture.mapPath(path.posix.dirname(service.configPath)))).some(name => name.includes('.tmp-')), false);
 });
 
 test('invalid configuration stops fallback and cannot be overwritten by an unrelated save', options, async t => {
@@ -163,21 +170,22 @@ test('invalid configuration stops fallback and cannot be overwritten by an unrel
   await fixture.put('Desktop/.remote-desktop.json', '{not valid json');
   assert.deepEqual(await service.loadConfig(), {});
   assert.match(service.configError, /无法载入/);
-  assert.equal(service.configPath, `${desktop}/.remote-desktop.json`);
+  assert.equal(service.configSourcePath, `${desktop}/.remote-desktop.json`);
   await assert.rejects(service.saveConfig({ viewMode: 'icons' }));
-  assert.equal(await fsp.readFile(fixture.mapPath(service.configPath), 'utf8'), '{not valid json');
+  assert.equal(await fsp.readFile(fixture.mapPath(service.configSourcePath), 'utf8'), '{not valid json');
+  await assert.rejects(fsp.stat(fixture.mapPath(service.configPath)), missing);
   assert.equal((await fsp.readdir(fixture.mapPath(desktop))).some(name => name.includes('.tmp-')), false);
 });
 
 test('config validation and failed atomic replacement retain the original bytes', options, async t => {
   const { fixture, service, desktop } = await setup(t);
   const original = '{"wallpaper":"teal","custom":17}\n';
-  await fixture.put('Desktop/.remote-desktop.json', original); await service.loadConfig();
+  await fsp.writeFile(fixture.mapPath(service.configPath), original); await service.loadConfig();
   await assert.rejects(service.saveConfig({ wallpaper: 'invalid' }), /背景/);
-  fixture.failRenames.add(`${desktop}/.remote-desktop.json`);
+  fixture.failRenames.add(service.configPath);
   await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), /rename/i);
-  assert.equal(await fsp.readFile(fixture.mapPath(`${desktop}/.remote-desktop.json`), 'utf8'), original);
-  assert.equal((await fsp.readdir(fixture.mapPath(desktop))).some(name => name.includes('.tmp-')), false);
+  assert.equal(await fsp.readFile(fixture.mapPath(service.configPath), 'utf8'), original);
+  assert.equal((await fsp.readdir(fixture.mapPath(path.posix.dirname(service.configPath)))).some(name => name.includes('.tmp-')), false);
 });
 
 test('oversized and non-object configuration files are rejected before save', options, async t => {
@@ -189,6 +197,71 @@ test('oversized and non-object configuration files are rejected before save', op
     await assert.rejects(service.saveConfig({ showHiddenFiles: true }));
     assert.equal(await fsp.readFile(fixture.mapPath(`${desktop}/.remote-desktop.json`), 'utf8'), bytes);
   }
+});
+
+test('central configuration takes precedence and never reads a conflicting legacy desktop file', options, async t => {
+  const { fixture, service } = await setup(t);
+  await fixture.put('Desktop/.remote-desktop.json', '{invalid legacy data');
+  await fsp.writeFile(fixture.mapPath(service.configPath), JSON.stringify({ wallpaper: 'slate', custom: 'central' }));
+  const config = await service.loadConfig();
+  assert.deepEqual(config, { wallpaper: 'slate', custom: 'central' });
+  assert.equal(service.configSourcePath, service.configPath); assert.equal(service.configError, null);
+  await service.saveConfig({ viewMode: 'details' });
+  assert.equal(await fsp.readFile(fixture.mapPath(`${fixture.home}/Desktop/.remote-desktop.json`), 'utf8'), '{invalid legacy data');
+});
+
+test('a legacy configuration created after discovery is preserved by the first save', options, async t => {
+  const { fixture, service } = await setup(t);
+  await fixture.put('Desktop/.remote-desktop.json', JSON.stringify({ wallpaper: 'purple', external: 'created later' }));
+  await service.saveConfig({ viewMode: 'details' });
+  assert.equal((await readJson(fixture, service.configPath)).external, 'created later');
+});
+
+test('failed first migration preserves legacy bytes and cleans only its new temporary file', options, async t => {
+  const { fixture, service } = await setup(t);
+  const original = '{"wallpaper":"purple","custom":"legacy"}\n';
+  const legacy = await fixture.put('Desktop/.remote-desktop.json', original);
+  await service.loadConfig(); fixture.failRenames.add(service.configPath);
+  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), /rename/i);
+  assert.equal(await fsp.readFile(fixture.mapPath(legacy), 'utf8'), original);
+  await assert.rejects(fsp.stat(fixture.mapPath(service.configPath)), missing);
+  assert.deepEqual(await fsp.readdir(fixture.mapPath(path.posix.dirname(service.configPath))), []);
+  assert.equal(service.config.wallpaper, 'purple');
+});
+
+test('central configuration rejects regular-directory and symbolic-link file conflicts without touching targets', options, async t => {
+  const { fixture, service } = await setup(t);
+  const target = await fixture.put('kept-config.json', '{"wallpaper":"purple"}');
+  fixture.link(service.configPath, target);
+  assert.deepEqual(await service.loadConfig(), {});
+  assert.match(service.configError, /符号链接/);
+  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), /符号链接/);
+  assert.equal(await fsp.readFile(fixture.mapPath(target), 'utf8'), '{"wallpaper":"purple"}');
+  assert.equal(fixture.links.get(service.configPath), target);
+  fixture.links.delete(service.configPath);
+  await fsp.mkdir(fixture.mapPath(service.configPath));
+  assert.deepEqual(await service.loadConfig(), {});
+  assert.match(service.configError, /普通文件/);
+  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), /普通文件/);
+  assert.deepEqual(await fsp.readdir(fixture.mapPath(service.configPath)), []);
+});
+
+test('cached config directory cannot be redirected by a later symlink replacement', options, async t => {
+  const { fixture, backend, service } = await setup(t);
+  const directory = backend.remoteStorage.config;
+  fixture.link(directory, '/outside');
+  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), /符号链接/);
+  await assert.rejects(service.loadConfig(), /符号链接/);
+  assert.deepEqual(await fsp.readdir(fixture.outsideRoot), []);
+});
+
+test('config directory write denial preserves loaded settings and names the failing operation', options, async t => {
+  const { fixture, backend, service } = await setup(t);
+  await service.saveConfig({ wallpaper: 'purple' });
+  fixture.readOnlyPaths.add(backend.remoteStorage.config);
+  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), error => error.code === 3 && /Permission denied/.test(error.message));
+  assert.equal((await readJson(fixture, service.configPath)).wallpaper, 'purple');
+  assert.equal(service.config.wallpaper, 'purple');
 });
 
 test('public directories can be browsed and edited while protected roots cannot be mutated', options, async t => {
@@ -237,7 +310,7 @@ test('unreadable desktop selection preserves previous path and configuration wit
   let persisted = false;
   await assert.rejects(backend.setDesktop('/outside', { beforeCommit: async () => { persisted = true; } }), error => error.code === 3 && /Permission denied/.test(error.message));
   assert.equal(persisted, false); assert.equal(backend.desktop, desktop);
-  assert.equal(service.configPath, `${desktop}/.remote-desktop.json`); assert.equal(service.config.wallpaper, 'purple');
+  assert.equal(service.configPath, configLocation(`${fixture.home}/.rdesktop/config`, desktop)); assert.equal(service.config.wallpaper, 'purple');
   await assert.rejects(service.entries('/outside'), error => error.code === 3);
   assert.equal((await service.inspect()).rootPath, desktop);
 });
@@ -248,7 +321,8 @@ test('desktop persistence failure rolls back and read-only desktop remains usabl
   assert.equal(backend.desktop, desktop);
   fixture.readOnlyPaths.add('/outside');
   assert.equal((await backend.setDesktop('/outside')).rootPath, '/outside');
-  await assert.rejects(service.saveConfig({ wallpaper: 'slate' }), error => error.code === 3 && /Permission denied/.test(error.message));
+  assert.equal((await service.saveConfig({ wallpaper: 'slate' })).wallpaper, 'slate');
+  assert.equal((await readJson(fixture, service.configPath)).wallpaper, 'slate');
   assert.equal((await service.inspect()).rootPath, '/outside');
   assert.deepEqual(await fsp.readdir(fixture.outsideRoot), []);
 });
@@ -259,8 +333,8 @@ test('desktop switches serialize with configuration saves to keep each location 
   const switchDesktop = backend.setDesktop('/outside');
   const newSave = service.saveConfig({ wallpaper: 'slate' });
   await Promise.all([oldSave, switchDesktop, newSave]);
-  assert.equal((await readJson(fixture, `${desktop}/.remote-desktop.json`)).wallpaper, 'purple');
-  assert.equal((await readJson(fixture, '/outside/.remote-desktop.json')).wallpaper, 'slate');
+  assert.equal((await readJson(fixture, configLocation(`${fixture.home}/.rdesktop/config`, desktop))).wallpaper, 'purple');
+  assert.equal((await readJson(fixture, configLocation(`${fixture.home}/.rdesktop/config`, '/outside'))).wallpaper, 'slate');
   assert.equal(backend.desktop, '/outside');
 });
 
@@ -338,7 +412,7 @@ test('system settings information uses the authenticated SSH channel and real lo
   assert.equal((await service.serverInfo()).hostname, 'fixture-host');
 });
 
-const systemFields = ['os', 'kernel', 'architecture', 'cpu', 'hostname', 'username', 'disk', 'memory', 'dateTime', 'timeZone', 'locale', 'shell', 'network'];
+const systemFields = ['os', 'kernel', 'architecture', 'cpu', 'hostname', 'username', 'uid', 'disk', 'memory', 'dateTime', 'timeZone', 'locale', 'shell', 'network'];
 const systemReply = values => systemFields.map(key => `${key}\0${values[key] || ''}\0`).join('');
 
 test('system settings queries never include caller text and unavailable fields degrade individually', async () => {
@@ -407,7 +481,7 @@ test('SSH PTY shell carries real channel input, echo, resize and close', options
 test('pin operations preserve external fields, deduplicate by program and restore after reconnect', options, async t => {
   const { fixture, backend, service } = await setup(t);
   await service.updatePinned({ program: 'shell', label: 'Shell' });
-  await fixture.put('Desktop/.remote-desktop.json', JSON.stringify({ ...service.config, external: 'retained', wallpaper: 'slate' }));
+  await fsp.writeFile(fixture.mapPath(service.configPath), JSON.stringify({ ...service.config, external: 'retained', wallpaper: 'slate' }));
   await Promise.all([service.updatePinned({ program: 'vim', label: 'Vim' }), service.updatePinned({ program: 'htop', label: 'htop' })]);
   let config = await service.updatePinned({ program: 'shell', label: 'Terminal' });
   assert.equal(config.external, 'retained'); assert.equal(config.wallpaper, 'slate');

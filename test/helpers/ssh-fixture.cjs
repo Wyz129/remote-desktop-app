@@ -219,6 +219,22 @@ async function createSshFixture(options = {}) {
       session.on('exec', (acceptExec, _reject, info) => {
         calls.exec.push(info.command); const stream = acceptExec(); stream.on('error', () => {});
         void (async () => {
+          if (info.command.startsWith('# remote-desktop-archive-v1\n')) {
+            if (!options.archivePython) { stream.stderr.write('服务器未安装 python3，无法使用压缩与解压功能。'); stream.exit(127); stream.end(); return; }
+            // Run only the repository's exact archive helper, with paths mapped
+            // into this isolated fixture. Never execute arbitrary SSH text.
+            const { helper } = require('../../lib/archive-service.cjs');
+            const { posixQuote } = require('../../lib/ssh-backend.cjs');
+            const prefix = 'python3 -I -c ' + posixQuote(helper) + ' ';
+            const start = info.command.indexOf(prefix);
+            if (start < 0) throw new Error('Unrecognized archive helper');
+            const request = JSON.parse(unquote(info.command.slice(start + prefix.length)));
+            checkWritable(request.parent); request.paths.forEach(checkReadable);
+            const mapped = { ...request, parent: mapPath(request.parent), paths: request.paths.map(mapPath) };
+            const { stdout } = await require('node:util').promisify(require('node:child_process').execFile)(options.archivePython, ['-I', '-c', helper, JSON.stringify(mapped)], { windowsHide: true, maxBuffer: 65536 });
+            const result = JSON.parse(stdout);
+            stream.write(JSON.stringify({ paths: result.paths.map(target => path.posix.join(request.parent, path.basename(target))) })); stream.exit(0); stream.end(); return;
+          }
           if (info.command === 'fixture-command') { stream.write('remote command reply\n'); stream.stderr.write('fixture diagnostic\n'); stream.exit(7); stream.end(); return; }
           const uploadPrefix = 'umask 077; set -C; cat > ';
           if (info.command.startsWith(uploadPrefix)) {
@@ -248,7 +264,8 @@ async function createSshFixture(options = {}) {
           }
           if (info.command.startsWith('# remote-desktop-system-info-v1\n')) {
             const values = { os: 'Ubuntu 24.04 LTS (fixture)', kernel: '6.8.0-fixture', architecture: 'x86_64', cpu: 'Fixture CPU', hostname: 'fixture-host', username, disk: 'Filesystem Size Used Avail Use% Mounted on\nfixture 100G 25G 75G 25% /', memory: 'Mem: 16Gi 4Gi 12Gi', dateTime: '2026-09-18 12:00:00 UTC', timeZone: 'Etc/UTC', locale: 'LANG=C.UTF-8', shell: '/bin/bash', network: '192.0.2.10' };
-            stream.write(Object.entries(values).map(([key, value]) => `${key}\0${value}\0`).join('')); stream.exit(0); stream.end(); return;
+            const ordered = { ...values }; const keys = Object.keys(values); keys.splice(keys.indexOf('username') + 1, 0, 'uid'); ordered.uid = username === 'root' ? '0' : '1000';
+            stream.write(keys.map(key => `${key}\0${ordered[key]}\0`).join('')); stream.exit(0); stream.end(); return;
           }
           if (info.command.startsWith('cat -- ')) {
             const remote = unquote(info.command.slice(7));

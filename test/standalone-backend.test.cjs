@@ -7,6 +7,7 @@ const fsp = fs.promises;
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { SshBackend } = require('../lib/ssh-backend.cjs');
+const { configLocation } = require('../lib/desktop-service.cjs');
 const { createSshFixture } = require('./helpers/ssh-fixture.cjs');
 
 // These tests exchange real SSH/SFTP packets over 127.0.0.1. The endpoint is a
@@ -271,6 +272,23 @@ test('config lookup follows legacy priority and preserves unrelated JSON propert
   result = await backend.discoverDesktop();
   assert.match(result.configError, /配置/);
   assert.deepEqual(result.config, {});
+});
+
+test('backend config API saves in the account config directory and clears cached paths at disconnect', options, async t => {
+  const { backend, fixture } = await connected(t);
+  const legacy = await fixture.put('Desktop/.remote-desktop.json', JSON.stringify({ wallpaper: 'purple', retained: 'legacy' }));
+  const selected = await backend.discoverDesktop();
+  const expected = configLocation(`${fixture.home}/.rdesktop/config`, selected.path);
+  assert.equal(selected.configPath, expected); assert.equal(selected.configSourcePath, legacy);
+  const saved = await backend.saveDesktopConfig({ viewMode: 'details' });
+  assert.equal(saved.configPath, expected);
+  assert.deepEqual(JSON.parse(await fsp.readFile(fixture.mapPath(expected), 'utf8')), { wallpaper: 'purple', retained: 'legacy', viewMode: 'details' });
+  assert.deepEqual(JSON.parse(await fsp.readFile(fixture.mapPath(legacy), 'utf8')), { wallpaper: 'purple', retained: 'legacy' });
+  assert.equal((await backend.loadDesktopConfig()).config.retained, 'legacy');
+  assert.ok(backend.remoteStorage);
+  await backend.disconnect(); assert.equal(backend.remoteStorage, null);
+  await backend.connect(fixture.config); assert.equal(backend.remoteStorage, null);
+  assert.equal((await backend.discoverDesktop()).config.viewMode, 'details');
 });
 
 test('Windows filenames are sanitized, including reserved names and trailing dots', () => {

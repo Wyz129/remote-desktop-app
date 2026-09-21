@@ -1,0 +1,5 @@
+.application-art { display: block; width: 32px; height: 32px; flex: none; filter: drop-shadow(0 2px 2px #0003); }
+.favorite-app > .application-art, .window-tab > .application-art, .pinned-app > .application-art { width: 30px; height: 30px; }
+.application-icon:has(.application-art) { background: transparent !important; box-shadow: none; }
+.application-icon > .application-art { width: 100%; height: 100%; }
+.applications-button > .application-art { width: 30px; height: 30px; }

@@ -37,7 +37,7 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   await application.evaluate(({dialog})=>{globalThis.answers=[];globalThis.promptLog=[];dialog.showMessageBox=async(_win,options)=>{globalThis.promptLog.push(options);return {response:globalThis.answers.shift()??options.cancelId??0};};});
   const answer=response=>application.evaluate((_electron,value)=>globalThis.answers.push(value),response);
   const closeDocument=()=>page.locator('.workbench-window [data-window-action=close]').last().click();
-  const currentEditor=async()=>{await page.locator('.workbench-frame').last().waitFor();const frame=await page.locator('.workbench-frame').last().elementHandle().then(handle=>handle.contentFrame());await frame.waitForFunction(()=>window.monaco?.editor.getModels().length>0 && document.getElementById('filePath').textContent);await application.evaluate(async({BrowserWindow})=>{await BrowserWindow.getAllWindows()[0].webContents.capturePage(undefined,{stayHidden:true,stayAwake:true});});await frame.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));return frame;};
+  const currentEditor=async()=>{await page.locator('.workbench-frame').last().waitFor();const frame=await page.locator('.workbench-frame').last().elementHandle().then(handle=>handle.contentFrame());await frame.waitForFunction(()=>window.monaco?.editor.getModels().length>0 && document.getElementById('status').textContent !== '正在加载编辑器…');await application.evaluate(async({BrowserWindow})=>{await BrowserWindow.getAllWindows()[0].webContents.capturePage(undefined,{stayHidden:true,stayAwake:true});});await frame.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));return frame;};
   await page.locator('#connectionDialog[open]').waitFor();await page.locator('#sshPassword').fill(fixture.password);await page.locator('#connectSubmit').click();await page.locator('#connectionDialog').waitFor({state:'hidden'});
   await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/public-link"]`).dblclick();
   await page.locator('.window .entry').getByText('shared.txt',{exact:true}).waitFor();assert.equal(await page.locator('.window-path').inputValue(),'/outside');
@@ -56,21 +56,23 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   if (!await page.locator('#downloadsPanel').isVisible()) await page.locator('#downloadsButton').click();
   await page.locator('#transferHistoryTab').click(); await page.locator('#transferHistoryItems').getByText(/cli-upload.txt/).first().waitFor();
   await page.locator('#closeDownloads').click();
-  async function openDocument(name){await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/${name}"]`).dblclick();const work=await currentEditor();await work.waitForFunction(()=>document.getElementById('filePath').textContent.startsWith('/'));return work;}
+  async function openDocument(name){await page.locator(`#icons [data-path="${fixture.home}/.rdesktop/desktop/${name}"]`).dblclick();const work=await currentEditor();await page.waitForFunction(()=>document.querySelector('.workbench-window .window-title').textContent.startsWith('/'));return work;}
   await page.locator('#applicationsButton').click(); await page.locator('[data-application=editor]').click();
   const untitled = await currentEditor();
   await untitled.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
   const editorTitle = () => page.locator('.workbench-window .window-title').last().textContent();
-  await untitled.locator('#filePath').getByText('未命名文件 · 尚未保存', { exact: true }).waitFor();
-  assert.match(await editorTitle(), /Untitled.txt — Monaco Editor/);
+  assert.equal(await untitled.locator('header, #filePath').count(), 0);
+  assert.equal(await editorTitle(), 'Untitled.txt');
+  const titleGeometry = await page.locator('.workbench-window').evaluate(element => { const windowBounds = element.getBoundingClientRect(), titleBounds = element.querySelector('.window-title').getBoundingClientRect(); return { center: titleBounds.x + titleBounds.width / 2, windowCenter: windowBounds.x + windowBounds.width / 2 }; });
+  assert.ok(Math.abs(titleGeometry.center - titleGeometry.windowCenter) < 1, 'file path is centered in the virtual titlebar');
   await untitled.evaluate(() => monaco.editor.getModels()[0].setValue('print("new from launcher")\n'));
   await answer(0); await closeDocument(); await untitled.locator('#inputDialog[open]').waitFor();
   await untitled.locator('#inputValue').fill(`${fixture.home}/.rdesktop/desktop/launcher.py`); await untitled.locator('#inputForm button[type=submit]').click();
   try { await untitled.waitForFunction(() => document.getElementById('status').textContent === '已另存为。'); } catch (error) { console.error('SaveAs diagnostics', await untitled.locator('body').innerText(), await page.evaluate(()=>remoteDesktop.listDocuments())); throw error; }
   assert.equal(await fs.readFile(fixture.mapPath(`${fixture.home}/.rdesktop/desktop/launcher.py`), 'utf8'), 'print("new from launcher")\n');
-  assert.match(await editorTitle(), /^launcher.py — Monaco Editor$/);
+  assert.equal(await editorTitle(), `${fixture.home}/.rdesktop/desktop/launcher.py`);
   await untitled.locator('#open').click(); await untitled.locator('#inputValue').fill(`${fixture.home}/.rdesktop/desktop/source.py`); await untitled.locator('#inputForm button[type=submit]').click();
-  await untitled.waitForFunction(() => document.getElementById('filePath').textContent.endsWith('/source.py'));
+  await page.waitForFunction(() => document.querySelector('.workbench-window .window-title').textContent.endsWith('/source.py'));
   assert.equal(await untitled.evaluate(() => monaco.editor.getModels()[0].getValue()), 'print("original")\n');
   await closeDocument(); await page.locator('.workbench-window').waitFor({state:'detached'});
   const editor=await openDocument('source.py');assert.equal(await editor.locator('#language').inputValue(),'python');
@@ -92,7 +94,7 @@ test('integrated shortcut target, CLI upload/exec, Monaco conflict and HTML/note
   await answer(2);await closeDocument();await new Promise(resolve=>setTimeout(resolve,150));assert.equal(editor.isDetached(),false,JSON.stringify(await application.evaluate(()=>({prompts:globalThis.promptLog,answers:globalThis.answers}))));
   await answer(1);await closeDocument();await page.locator('.workbench-window').waitFor({state:'detached'});
   await page.evaluate(remotePath=>window.remoteDesktop.openDocument(remotePath),`${fixture.home}/.rdesktop/desktop/site/index.html`);const html=await currentEditor();await html.waitForFunction(()=>window.monaco?.editor.getModels().length>0);
-  await html.locator('#filePath').filter({hasText:'/site/index.html'}).waitFor(); await html.locator('[data-mode=split]').click();const preview=html.frameLocator('#preview');try { await preview.locator('#hello').getByText('remote resource loaded',{exact:true}).waitFor(); } catch(error) { console.error('Preview diagnostics',await html.locator('#status').textContent(), await html.locator('#preview').getAttribute('src'),page.frames().map(frame=>frame.url()));throw error; }
+  await page.locator('.workbench-window .window-title').filter({hasText:'/site/index.html'}).waitFor(); await html.locator('[data-mode=split]').click();const preview=html.frameLocator('#preview');try { await preview.locator('#hello').getByText('remote resource loaded',{exact:true}).waitFor(); } catch(error) { console.error('Preview diagnostics',await html.locator('#status').textContent(), await html.locator('#preview').getAttribute('src'),page.frames().map(frame=>frame.url()));throw error; }
   assert.equal(await preview.locator('#hello').evaluate(el=>getComputedStyle(el).color),'rgb(1, 120, 30)');
   assert.equal(await preview.locator('#pixel').evaluate(el=>el.naturalWidth),1);
   assert.deepEqual(await preview.locator('body').evaluate(()=>({node:typeof window.require,workbench:typeof window.workbench,desktop:typeof window.remoteDesktop})),{node:'undefined',workbench:'undefined',desktop:'undefined'});

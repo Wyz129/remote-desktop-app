@@ -147,7 +147,8 @@ test('initial_profile_loading_cannot_clear_an_entered_password', () => scenario(
 
 test('login_validation_keyboard_and_compact_layout', () => scenario('login-layout', async page => {
   assert.equal(await page.locator('#connectionDialog').getAttribute('data-mode'), 'login');
-  assert.equal(await page.locator('#connectionDialog input:visible').count(), 2);
+  assert.equal(await page.locator('#connectionDialog input:visible').count(), 0, 'a fresh login has no credentials until a target is configured');
+  await page.locator('#switchAccountButton').click();
   await page.locator('#sshUsername').fill('tester');
   await page.locator('#sshPassword').fill('memory-only');
   await page.locator('#sshPassword').press('Enter');
@@ -170,7 +171,9 @@ test('login_validation_keyboard_and_compact_layout', () => scenario('login-layou
   await page.screenshot({ path: path.join(root, 'artifacts', 'login-advanced-compact-1.1.9.png') });
   await page.locator('#backToLogin').click();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
-  await page.screenshot({ path: path.join(root, 'artifacts', 'login-compact-1.1.9.png') });
+  assert.equal(await page.locator('#connectionDialog input:visible').count(), 0);
+  await page.screenshot({ path: path.join(root, 'artifacts', 'login-compact-1.1.12.png') });
+  await page.locator('#switchAccountButton').click();
   await page.locator('#sshPassword').fill('memory-only');
   await page.locator('#sshPassword').press('Enter');
   await page.locator('#connectionDialog').waitFor({ state: 'hidden' });
@@ -349,19 +352,21 @@ test('windows_navigation_resize_drag_minimize_maximize', () => scenario('windows
   const win=page.locator('.window').first();await win.locator('.entry').first().waitFor();
   assert.equal(await win.locator('.window-path').inputValue(),`${desktop}/projects`);
   await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-details-1.1.9.png') });
-  await win.locator('[data-window-action="icons"]').click();
+  await win.locator('[data-window-action="toggle-view"]').click();
   await win.locator('.entry').first().click();
   await page.screenshot({ path: path.join(root, 'artifacts', 'explorer-icons-1.1.9.png') });
-  await win.locator('[data-window-action="details"]').click();
+  await win.locator('[data-window-action="toggle-view"]').click();
   await win.focus(); await win.press('Control+l'); await win.locator('.window-path').fill('~/Desktop/results');await win.locator('.window-path').press('Enter');
   await page.waitForFunction(()=>document.querySelector('.window-path').value==='/home/tester/Desktop/results');
   await win.locator('[data-window-action="back"]').click();await win.getByText('source.txt',{exact:true}).waitFor();
-  const before=await win.boundingBox();const title=await win.locator('.titlebar').boundingBox();
-  await page.mouse.move(title.x+74,title.y+22);await page.mouse.down();await page.mouse.move(title.x+204,title.y+84,{steps:8});await page.mouse.up();
+  const before=await win.boundingBox();const title=await win.locator('.address-slot').boundingBox();
+  await page.mouse.move(title.x+2,title.y+15);await page.mouse.down();await page.mouse.move(title.x+132,title.y+77,{steps:8});await page.mouse.up();
   const moved=await win.boundingBox();assert.ok(moved.x>before.x+80);
   const resize=await win.locator('[data-resize="se"]').boundingBox();await page.mouse.move(resize.x+3,resize.y+3);await page.mouse.down();await page.mouse.move(resize.x+90,resize.y+70,{steps:8});await page.mouse.up();
   assert.ok((await win.boundingBox()).width>moved.width+50);
   await win.locator('[data-window-action="maximize"]').click();assert.ok((await win.getAttribute('class')).includes('maximized'));
+  assert.deepEqual(await win.boundingBox(), await page.locator('#windows').boundingBox(), 'maximized windows fill every edge');
+  assert.equal(await win.evaluate(element => getComputedStyle(element).borderRadius), '0px');
   await win.locator('[data-window-action="maximize"]').click();
   await win.locator('[data-window-action="minimize"]').click();assert.equal(await win.isVisible(),false);
   await page.locator('#windowTabs .window-tab').click();assert.equal(await win.isVisible(),true);
@@ -609,7 +614,8 @@ test('home_without_desktop_browses_real_home_without_creating_or_faking_desktop'
   const win=page.locator('.window'); await win.getByText('profile.txt',{exact:true}).waitFor();
   assert.equal(await win.locator('.window-path').inputValue(),'/home/tester');
   assert.equal(await page.locator('#icons .icon').count(),0);
-  await win.locator('[data-window-action="refresh"]').click();
+  await win.locator('.listing').click({ button: 'right', position: { x: 10, y: 150 } });
+  await page.locator('#context [data-action="refresh"]').click();
   await win.getByText('profile.txt',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.messages.some(m=>m.type==='createDesktop'||m.type==='saveDesktopConfig'||m.type==='refreshRemote')),false);
   await page.locator('#desktopSettings').click();
@@ -700,7 +706,13 @@ test('explorer_breadcrumbs_prioritize_current_path_and_allow_full_address_editin
   const win = page.locator('.explorer-window');
   await win.locator('.entry').first().waitFor();
   assert.equal(await win.locator('.window-path').isVisible(), false);
+  assert.equal(await win.locator('[data-breadcrumb-path="/home/tester"]').textContent(), '~');
+  assert.equal(await win.locator('[data-breadcrumb-path="/"]').count(), 0, 'Home descendants begin at the home shortcut');
+  assert.equal(await win.locator('[data-window-action="refresh"]').count(), 0);
+  assert.equal(await win.locator('[data-window-action="up"]').isVisible(), true);
   const pathBounds = await win.locator('.address-box').boundingBox(), headerBounds = await win.locator('.titlebar').boundingBox();
+  const pathSlot = await win.locator('.address-slot').boundingBox();
+  assert.ok(pathBounds.width < pathSlot.width / 2, 'short path leaves the surrounding title row available for dragging');
   assert.ok(pathBounds.y >= headerBounds.y && pathBounds.y + pathBounds.height <= headerBounds.y + headerBounds.height, 'address belongs in the title row');
   assert.equal(await win.locator('.address-box').evaluate(box => getComputedStyle(box).cursor), 'text');
   await win.locator('.address-box').click({ position: { x: 2, y: 2 } });
@@ -834,7 +846,8 @@ test('desktop_switch_backend_timeout_keeps_previous_location_and_releases_contro
 test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery', () => scenario('saved-desktop-recovery', async page => {
   await page.evaluate(()=>{window.unavailableDesktop=true;window.directories['/shared/recovered']=[{name:'restored.txt',path:'/shared/recovered/restored.txt',type:'file'}];});
   await connect(page);
-  assert.equal(await page.locator('#connection').textContent(),'tester·已连接');
+  assert.equal(await page.locator('#connection').textContent(),'tester');
+  assert.equal(await page.locator('#connectionIndicator').evaluate(element => element.classList.contains('connected')), true);
   assert.match(await page.locator('#notice').textContent(),/无访问权限.*Permission denied/);
   await page.locator('#homeShortcut').click();
   await page.locator('.window').getByText('profile.txt',{exact:true}).waitFor();
@@ -846,7 +859,7 @@ test('unavailable_saved_desktop_keeps_home_and_settings_available_for_recovery',
   await page.locator('#settingsDesktopPath').fill('/shared/recovered');await page.locator('#applySettings').click();
   await page.locator('#settingsDialog').waitFor({state:'hidden'});
   assert.equal(await page.locator('#desktopPath').textContent(),'/shared/recovered');
-  assert.equal(await page.locator('#connection').textContent(),'tester·已连接');
+  assert.equal(await page.locator('#connection').textContent(),'tester');
   assert.equal(await page.locator('#icons [data-path="/shared/recovered/restored.txt"]').count(),1);
   await page.locator('#desktopSettings').click();assert.equal(await page.locator('#settingsError').textContent(),'');
 }));
@@ -868,6 +881,35 @@ test('clock_uses_server_zone_or_explicit_offset_without_client_timezone_fallback
   assert.match(await page.locator('#serverClock').textContent(),/08:49:05.*NPT.*UTC\+05:45/);
   await page.evaluate(()=>window.receive({type:'serverInfo',epochMs:Date.UTC(2026,0,2,3,4,5),timeZone:'SERVER-CUSTOM',remote:true}));
   assert.equal(await page.locator('#serverClock').textContent(),'服务器时间 —');
+}));
+
+test('clock_advances_from_one_snapshot_without_polling_and_only_warnings_create_notifications', () => scenario('clock-and-notifications-1.1.12', async page => {
+  await page.clock.install({ time: new Date('2026-09-21T10:00:00Z') });
+  await page.reload();
+  await connect(page);
+  assert.equal(await page.locator('.statusbar').count(), 0, 'desktop has no bottom status bar');
+  assert.equal(await page.locator('.toolbar #notice').count(), 1, 'operation status remains available at top left');
+  await page.evaluate(() => window.receive({ type: 'serverInfo', epochMs: Date.UTC(2026, 8, 21, 11, 27, 0), timeZone: 'Asia/Shanghai', utcOffsetMinutes: 480, timeZoneLabel: 'Asia/Shanghai (UTC+08:00)', remote: true }));
+  const requests = await page.evaluate(() => window.messages.filter(message => message.type === 'getServerInfo').length);
+  await page.clock.fastForward(120000);
+  assert.match(await page.locator('#serverClock').textContent(), /Sep 21 19:29/);
+  assert.equal(await page.evaluate(() => window.messages.filter(message => message.type === 'getServerInfo').length), requests, 'local clock ticks send no SSH time queries');
+  await page.locator('#serverClock').click(); await page.locator('.clear-notifications').click(); await page.keyboard.press('Escape');
+  await icon(page, 'projects').dblclick(); const explorer = page.locator('.explorer-window');
+  await explorer.getByText('source.txt', { exact: true }).waitFor();
+  await explorer.locator('[data-window-action="toggle-view"]').click();
+  await page.locator('#applicationsButton').click(); await page.locator('[data-application="image"]').click();
+  await page.locator('#serverClock').click();
+  assert.equal(await page.locator('.notification-history article').count(), 0, 'opening folders and applications does not add notifications');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.receive({ type: 'operationResult', requestId: 'warning-example', success: false, error: '无法移动：目标目录无访问权限' }));
+  await page.locator('#notificationToast').getByText('无法移动：目标目录无访问权限', { exact: true }).waitFor();
+  await page.locator('#serverClock').click();
+  assert.match(await page.locator('.notification-history').textContent(), /无法移动/);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.receive({ type: 'remoteState', status: 'disconnected', message: 'SSH 连接已断开：网络异常' }));
+  await page.locator('#notificationToast').getByText(/SSH 连接已断开/).waitFor();
+  assert.equal(await page.locator('#serverClock').textContent(), '本地时间 —');
 }));
 
 test('monaco_default_readonly_and_fixed_launcher_have_no_vim_file_route', () => scenario('workbench-open-routes', async page => {
@@ -1275,18 +1317,24 @@ test('browser_stays_live_without_overlap_and_previews_when_covered', () => scena
 test('shell_preferences_notifications_calendar_and_exit_keep_server_time', () => scenario('shell-next', async page => {
   await connect(page);
   assert.equal(await page.locator('#browserButton').isVisible(), false);
-  assert.equal(await page.locator('.toolbar-actions button:visible').last().getAttribute('id'), 'exitButton');
+  assert.equal(await page.locator('#exitButton').isVisible(), false, 'the account card owns the default exit action');
   await page.evaluate(() => window.receive({type:'serverInfo',epochMs:Date.UTC(2026,8,21,10,27,0),timeZone:'Asia/Shanghai',utcOffsetMinutes:480,timeZoneLabel:'Asia/Shanghai (UTC+08:00)',remote:true}));
   assert.match(await page.locator('#serverClock').textContent(),/Sep 21 18:27/);
   await page.locator('#desktopSettings').click(); await page.locator('#shellSettingsTab').click();
-  await page.locator('#show-browserButton').check(); await page.locator('#show-activityButton').uncheck(); await page.locator('#settingsClockMode').selectOption('detailed');
+  await page.locator('#show-browserButton').check(); await page.locator('#show-exitButton').check(); await page.locator('#show-activityButton').uncheck(); await page.locator('#settingsClockMode').selectOption('detailed');
   await page.locator('#settingsToolbarList li').filter({has:page.locator('#show-exitButton')}).getByRole('button',{name:'上移'}).click();
   await page.locator('#shellPreferencesForm button[type=submit]').click();
   assert.equal(await page.locator('#browserButton').isVisible(),true); assert.equal(await page.locator('#activityButton').isVisible(),false);
   assert.match(await page.locator('#serverClock').textContent(),/2026.*Asia\/Shanghai/);
-  await page.locator('#closeSettings').click(); await page.locator('#serverClock').click();
+  await page.locator('#closeSettings').click();
+  await page.evaluate(() => { window.directories['/restricted'] = []; window.deniedDirectory = '/restricted'; });
+  await page.locator('#homeShortcut').click(); const explorer = page.locator('.explorer-window');
+  await explorer.focus(); await explorer.press('Control+l'); await explorer.locator('.window-path').fill('/restricted'); await explorer.locator('.window-path').press('Enter');
+  await explorer.locator('.window-error').getByText(/无访问权限/).waitFor();
+  await page.locator('#serverClock').click();
   await page.locator('#notificationPanel').waitFor();
-  assert.match(await page.locator('.notification-history').textContent(),/上栏设置已保存/);
+  assert.match(await page.locator('.notification-history').textContent(),/无访问权限/);
+  assert.doesNotMatch(await page.locator('.notification-history').textContent(),/上栏设置已保存|已打开|已刷新|正在读取/);
   assert.equal(await page.locator('.calendar-days .today').textContent(),'21');
   assert.equal(await page.locator('.calendar-days span').count(),42);
   await page.screenshot({path:path.join(root,'artifacts','notifications-1.1.11.png')});
@@ -1324,8 +1372,9 @@ test('workspace_preferences_save_failure_preserves_places_and_custom_order_is_ap
 
 test('activity_cells_group_raw_commands_and_ansi_output_without_html_execution', () => scenario('activity-cells-next', async page => {
   await connect(page); await page.locator('#activityButton').click();
+  await page.getByRole('tab', { name: '虚拟终端', exact: true }).click();
   await page.evaluate(()=> {
-    const base={scope:'system',source:'system',sessionId:'system',operationId:'raw-command-1',time:'2026-09-21T10:27:00Z',protocol:'SSH exec'};
+    const base={scope:'system',source:'system',category:'terminal',sessionId:'system',operationId:'raw-command-1',time:'2026-09-21T10:27:00Z',protocol:'SSH exec'};
     for(const entry of [{...base,id:'cmd-1',seq:1,type:'command',command:'printf "hello\\n"'}, {...base,id:'out-1',seq:2,type:'stdout',data:'\u001b[32mgreen\u001b[0m\n<img src=x onerror=alert(1)>'}, {...base,id:'end-1',seq:3,type:'end',code:0}]) window.activityEvent({type:'entry',entry});
   });
   await page.waitForFunction(()=>document.querySelector('.activity-stdout')?.textContent.includes('green'));
@@ -1334,4 +1383,36 @@ test('activity_cells_group_raw_commands_and_ansi_output_without_html_execution',
   assert.match(await page.locator('.activity-stdout span').first().getAttribute('style'),/color/);
   assert.doesNotMatch(await page.locator('.activity-command').textContent(),/指令:|操作:/);
   await page.screenshot({path:path.join(root,'artifacts','activity-cells-1.1.11.png')});
+}));
+
+test('activity_categories_separate_summarized_gui_operations_raw_cli_and_virtual_terminal', () => scenario('activity-categories-1.1.12', async page => {
+  await connect(page); await page.locator('#activityButton').click();
+  await page.evaluate(() => {
+    const base = { scope: 'system', source: 'system', sessionId: 'system', time: '2026-09-21T10:27:00Z' };
+    const records = [
+      { ...base, id: 'gui-in', seq: 1, type: 'operation', operationId: 'gui', category: 'system', operationName: '访问目录', path: '/shared' },
+      { ...base, id: 'gui-out', seq: 2, type: 'result', operationId: 'gui', category: 'system', operationName: '访问目录', status: 'success', result: { resolvedPath: '/shared', count: 4 } },
+      { ...base, id: 'term-in', seq: 3, type: 'terminal-input', operationId: 'terminal', terminalId: 'terminal', data: 'pwd\r' },
+      { ...base, id: 'term-out', seq: 4, type: 'terminal-output', operationId: 'terminal', terminalId: 'terminal', data: '/home/tester' },
+      { ...base, scope: 'cli', source: 'cli', sessionId: 'external', id: 'cli-in', seq: 5, type: 'command', operationId: 'external', command: 'printf external' },
+      { ...base, scope: 'cli', source: 'cli', sessionId: 'external', id: 'cli-out', seq: 6, type: 'stdout', operationId: 'external', data: 'external reply' },
+      { ...base, id: 'failed-in', seq: 7, type: 'operation', operationId: 'failed', category: 'system', operationName: '移动文件' },
+      { ...base, id: 'failed-out', seq: 8, type: 'error', operationId: 'failed', category: 'system', operationName: '移动文件', status: 'failure', error: { message: 'Permission denied' } }
+    ];
+    for (const entry of records) window.activityEvent({ type: 'entry', entry });
+  });
+  const events = page.locator('.activity-events');
+  await page.waitForFunction(() => document.querySelector('.activity-events').textContent.includes('#成功'));
+  assert.match(await events.textContent(), /#访问目录.*#成功/s); assert.match(await events.textContent(), /resolvedPath.*shared/s);
+  assert.match(await events.textContent(), /#移动文件.*#失败.*Permission denied/s); assert.doesNotMatch(await events.textContent(), /printf external|pwd/);
+  assert.equal(await page.locator('.activity-session').isVisible(), false);
+  await page.getByRole('tab', { name: '第三方访问', exact: true }).click();
+  assert.match(await events.textContent(), /printf external.*external reply/s); assert.doesNotMatch(await events.textContent(), /#访问目录|pwd/);
+  assert.equal(await page.locator('.activity-session').isVisible(), true);
+  await page.getByRole('tab', { name: '第三方访问', exact: true }).press('ArrowRight');
+  assert.equal(await page.getByRole('tab', { name: '虚拟终端', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.match(await events.textContent(), /pwd.*home\/tester/s); assert.doesNotMatch(await events.textContent(), /external|#访问目录/);
+  await page.screenshot({ path: path.join(root, 'artifacts', 'activity-terminal-1.1.12.png') });
+  await page.getByRole('tab', { name: '系统操作', exact: true }).click();
+  await page.screenshot({ path: path.join(root, 'artifacts', 'activity-system-1.1.12.png') });
 }));

@@ -2,7 +2,7 @@
   "name": "remote-desktop-app",
   "displayName": "Remote Desktop App",
   "description": "独立 SSH Monaco Editor、浏览器、传输中心与命令行实例",
-  "version": "1.1.11",
+  "version": "1.1.12",
   "private": true,
   "main": "./main.cjs",
   "license": "UNLICENSED",
@@ -12,15 +12,16 @@
     "dev": "node scripts/start-app.cjs --enable-logging",
     "check": "node scripts/check-syntax.cjs",
     "test:backend": "node --test test/standalone-backend.test.cjs test/desktop-service.test.cjs test/terminal-close.test.cjs test/server-clock.test.cjs test/desktop-preferences.test.cjs test/remote-storage.test.cjs test/server-profiles.test.cjs",
-    "test:ui": "node --test test/standalone-ui.test.cjs",
+    "test:ui": "node --test test/standalone-ui.test.cjs test/session-ui.test.cjs",
     "test:vim": "node --test test/real-vim.test.cjs",
-    "test:electron": "node --test test/electron.test.cjs test/first-use-electron.test.cjs test/video-app-electron.test.cjs test/programs-electron.test.cjs test/interface-electron.test.cjs",
+    "test:electron": "node --test test/electron.test.cjs test/first-use-electron.test.cjs test/video-app-electron.test.cjs test/programs-electron.test.cjs test/interface-electron.test.cjs test/session-electron.test.cjs test/archive-electron.test.cjs",
     "test:modules": "node --test test/upload-service.test.cjs test/instance-bridge.test.cjs test/document-service.test.cjs test/jupyter-client.test.cjs test/ssh-network.test.cjs test/preview-server.test.cjs test/activity-log.test.cjs test/activity-audit.test.cjs test/transfer-center.test.cjs test/transfer-targets.test.cjs test/local-picker.test.cjs test/command-trace.test.cjs test/video-service.test.cjs test/program-preferences.test.cjs test/interface-preferences.test.cjs test/transfer-preferences.test.cjs",
     "test:workbench": "node --test test/workbench-ui.test.cjs",
     "test:workspace": "node --test test/workspace-electron.test.cjs",
     "test:browser": "node --test test/browser-electron.test.cjs",
     "test:cli": "node --test test/cli-packaged.test.cjs",
-    "test": "npm run check && npm run test:backend && npm run test:modules && npm run test:vim && npm run test:ui && npm run test:workbench && npm run test:electron && npm run test:workspace && npm run test:browser && npm run test:cli && npm run test:video",
+    "test": "npm run check && npm run test:backend && npm run test:modules && npm run test:archives && npm run test:vim && npm run test:ui && npm run test:workbench && npm run test:electron && npm run test:workspace && npm run test:browser && npm run test:cli && npm run test:video",
+    "test:archives": "node --test test/archive-service.test.cjs",
     "package": "electron-builder --dir",
     "assets:workbench": "node scripts/vendor-workbench.cjs",
     "postinstall": "npm run assets:workbench",
@@ -49,7 +50,7 @@
     "appId": "com.wyz.remote-desktop",
     "productName": "Remote Desktop",
     "directories": {
-      "output": "artifacts/electron-1.1.11"
+      "output": "artifacts/electron-1.1.12"
     },
     "files": [
       "main.cjs",

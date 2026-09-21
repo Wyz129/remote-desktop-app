@@ -1,12 +1,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle } = require('../lib/server-profiles.cjs');
+const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle, automaticServerAlias } = require('../lib/server-profiles.cjs');
 const profile = { host: '192.0.2.10', port: 2222, username: 'tester', alias: '计算服务器', privateKeyPath: 'C:\\keys\\id' };
 test('profiles exclude all credentials and preserve the selected public settings', () => {
   const patch = upsertProfile([], { ...profile, password: 'secret', passphrase: 'key-secret', privateKey: 'bytes', token: 'token' });
   assert.equal(patch.serverProfiles.length, 1);
-  assert.deepEqual(Object.keys(patch.serverProfiles[0]).sort(), ['id', ...Object.keys(profile)].sort());
+  assert.deepEqual(Object.keys(patch.serverProfiles[0]).sort(), ['id', 'aliasAuto', ...Object.keys(profile)].sort());
   assert.equal(patch.selectedServerId, patch.serverProfiles[0].id);
   const changed = upsertProfile(patch.serverProfiles, { ...profile, alias: '新别名' });
   assert.equal(changed.serverProfiles.length, 1); assert.equal(changed.selectedServerId, patch.selectedServerId);
@@ -26,4 +26,18 @@ test('legacy server settings migrate without credentials; old desktop locations 
 test('window title uses the connected address, port and optional alias', () => {
   assert.equal(connectionTitle(profile, '::ffff:192.0.2.11'), 'Remote Desktop - ssh tester@192.0.2.11:2222 计算服务器');
   assert.equal(connectionTitle({ ...profile, alias: '' }, '2001:db8::1'), 'Remote Desktop - ssh tester@[2001:db8::1]:2222');
+});
+
+test('only empty aliases use automatic server identity, while manually chosen names survive', () => {
+  const automatic = serverProfile({ ...profile, alias: '' });
+  assert.equal(automatic.alias, 'Unknown Server'); assert.equal(automatic.aliasAuto, true);
+  const renamed = serverProfile({ ...automatic, alias: automaticServerAlias({ os: 'Ubuntu 23.10', uid: '1000' }) });
+  assert.equal(renamed.alias, 'Ubuntu 23.10 User'); assert.equal(renamed.aliasAuto, true);
+  assert.equal(serverProfile({ ...profile, alias: 'Unknown Server' }).aliasAuto, false);
+  assert.equal(serverProfile(profile).aliasAuto, false);
+  assert.equal(automaticServerAlias({ os: 'Debian GNU/Linux 12', uid: 0 }), 'Debian GNU/Linux 12 Root');
+  assert.equal(automaticServerAlias({ os: 'Ubuntu 24.04', uid: '' }), 'Unknown Server');
+  assert.equal(automaticServerAlias({ os: '', uid: '0' }), 'Unknown Server');
+  assert.ok(automaticServerAlias({ os: 'x'.repeat(500), uid: 1000 }).length <= 100);
+  assert.doesNotMatch(automaticServerAlias({ os: 'Ubuntu\n24.04', uid: 1 }), /[\r\n]/);
 });

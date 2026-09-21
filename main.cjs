@@ -10,7 +10,7 @@ const { desktopIdentity, desktopLocations } = require('./lib/desktop-preferences
 const crypto = require('node:crypto');
 const net = require('node:net');
 const { ActivityLog } = require('./lib/activity-log.cjs');
-const { createAuditor, safeUrl } = require('./lib/activity-audit.cjs');
+const { createAuditor, safeUrl, createSystemCommandLogger } = require('./lib/activity-audit.cjs');
 const { UploadService } = require('./lib/upload-service.cjs');
 const { InstanceBridge, executeRemote } = require('./lib/instance-bridge.cjs');
 const { TransferCenter } = require('./lib/transfer-center.cjs');
@@ -21,7 +21,7 @@ const { createWorkbenchManager } = require('./lib/workbench-manager.cjs');
 const { createBrowserManager } = require('./lib/browser-manager.cjs');
 const { ensureRemoteStorage } = require('./lib/remote-storage.cjs');
 const { VideoService } = require('./lib/video-service.cjs');
-const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle } = require('./lib/server-profiles.cjs');
+const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle, automaticServerAlias } = require('./lib/server-profiles.cjs');
 const { normalizeProgramPreferences, updateProgramPreferences } = require('./lib/program-preferences.cjs');
 const { workspacePreferences, workspaceLocations, shellPreferences } = require('./lib/interface-preferences.cjs');
 
@@ -92,14 +92,8 @@ function send(channel, payload) { if (windowRef && !windowRef.isDestroyed()) win
 function post(payload) { send('desktop:message', payload); }
 function bindCommandLogger(source) {
   if (source.commandLogContexts) return;
-  source.commandLogContexts = new Map();
-  source.onCommandActivity = record => {
-    if (!currentSession(source)) return;
-    let operation = source.commandLogContexts.get(record.operationId);
-    if (!operation) { const context = activityLog.capture(); operation = { context, release: activityLog.retain(context) }; source.commandLogContexts.set(record.operationId, operation); }
-    activityLog.system(record, operation.context);
-    if (record.type === 'end') { operation.release(); source.commandLogContexts.delete(record.operationId); }
-  };
+  source.onCommandActivity = createSystemCommandLogger(activityLog, () => currentSession(source));
+  source.commandLogContexts = source.onCommandActivity.operations;
 }
 function bridgeActivity(event) {
   const id = event.connection.id;
@@ -204,7 +198,13 @@ async function inspect(create = false, allowTransition = false) {
 }
 async function serverInfo() {
   const source = backend, service = desktopService;
-  try { if (source?.connected && service) { const result = await service.serverInfo(); if (currentSession(source)) post(result); } }
+  try {
+    if (source?.connected && service) {
+      source.clockSnapshot ||= service.serverInfo().then(value => ({ ...value, localCapturedAt: Date.now() }));
+      const result = await source.clockSnapshot;
+      if (currentSession(source)) post({ ...result, epochMs: result.epochMs + Date.now() - result.localCapturedAt });
+    }
+  }
   catch (error) { if (currentSession(source)) post({ type: 'serverInfo', remote: true, available: false, error: error.message }); }
 }
 async function setDesktop(remotePath) {
@@ -275,7 +275,14 @@ async function handleDesktopMessage(message) {
     post({ type: 'configUpdated', config });
   } else if (type === 'fileOperation') {
     try {
-      const result = await audit('fileOperation', { protocol: 'SFTP', operation: message.operation, paths: message.paths || message.clipboard?.paths, mode: message.clipboard?.mode, parent: message.parent, name: message.name }, () => desktopService.operate(message, async paths => {
+      if (message.operation === 'compress' && !message.format) {
+        const source = requireBackend();
+        const answer = await dialog.showMessageBox(windowRef, { type: 'question', title: '压缩文件', message: '选择服务器压缩格式', detail: '压缩文件将生成在当前目录，同名自动编号。', buttons: ['取消', '.tar.gz', '.zip'], defaultId: 1, cancelId: 0, noLink: true });
+        if (!answer.response) { post({ type: 'operationResult', requestId: message.requestId, cancelled: true }); return; }
+        if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，未开始压缩。');
+        message = { ...message, format: answer.response === 1 ? 'tar.gz' : 'zip' };
+      }
+      const result = await audit('fileOperation', { protocol: ['compress', 'extract'].includes(message.operation) ? 'SSH exec' : 'SFTP', operation: message.operation, paths: message.paths || message.clipboard?.paths, mode: message.clipboard?.mode, parent: message.parent, name: message.name }, () => desktopService.operate(message, async paths => {
         const answer = await dialog.showMessageBox(windowRef, { type: 'warning', title: '永久删除远程文件', message: `永久删除 ${paths.length} 个项目？`, detail: `${paths.slice(0, 8).join('\n')}\n远程文件不进入回收站。符号链接只删除链接本身。`, buttons: ['取消', '永久删除'], defaultId: 0, cancelId: 0, noLink: true });
         return answer.response === 1;
       }));
@@ -286,7 +293,7 @@ async function handleDesktopMessage(message) {
     if (sessionTransition) throw new Error('正在关闭或切换连接，请稍后打开终端。');
     const token = {}, terminalBackend = backend, service = desktopService;
     const operationId = crypto.randomUUID(), terminalContext = activityLog.capture();
-    const terminalLog = record => { if (currentSession(terminalBackend)) activityLog.system({ ...record, operationId, protocol: 'SSH exec + PTY' }, terminalContext); };
+    const terminalLog = record => { if (currentSession(terminalBackend)) activityLog.system({ ...record, category: 'terminal', operationId, protocol: 'SSH exec + PTY' }, terminalContext); };
     if (terminalStarts.has(message.id)) throw new Error('终端 ID 已存在。');
     terminalStarts.set(message.id, token);
     const releaseTerminalLog = activityLog.retain(terminalContext); let terminalStarted = false;
@@ -344,7 +351,7 @@ async function connectSsh(input, trustedLocal = false) {
       terminalStarts.clear(); await backend?.disconnect(); desktopService = null;
       post({ type: 'remoteState', status: 'disconnected', message: '正在建立新的 SSH 连接。' });
       const profile = serverProfile({ ...input, id: input.profileId });
-      const { host, port, username, alias } = profile;
+      const { host, port, username } = profile;
       const hostKey = `${host.toLowerCase()}:${port}`, known = settings.knownHosts[hostKey];
       if (known && input.hostKeyFingerprint && input.hostKeyFingerprint.replace(/=+$/, '') !== known) throw new Error('输入指纹与本机保存的指纹不同。连接已拒绝。');
       let privateKey;
@@ -371,8 +378,12 @@ async function connectSsh(input, trustedLocal = false) {
       uploader = new UploadService(backend);
       videoService = new VideoService(backend);
       backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
-      await saveSettings(current => ({ host, port, username, alias, privateKeyPath: input.privateKeyPath || null, ...upsertProfile(current.serverProfiles, profile), hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...current.knownHosts, [hostKey]: result.hostFingerprint } }));
-      result = { ...result, alias, port, address: backend.client?._sock?.remoteAddress || host };
+      if (profile.aliasAuto && profile.alias === 'Unknown Server') {
+        try { profile.alias = automaticServerAlias(await desktopService.systemInfo()); }
+        catch { /* Keep Unknown Server when system metadata is unavailable. */ }
+      }
+      await saveSettings(current => ({ host, port, username, alias: profile.alias, privateKeyPath: input.privateKeyPath || null, ...upsertProfile(current.serverProfiles, profile), hostKeyFingerprint: result.hostFingerprint, knownHosts: { ...current.knownHosts, [hostKey]: result.hostFingerprint } }));
+      result = { ...result, alias: profile.alias, aliasAuto: profile.aliasAuto, port, address: backend.client?._sock?.remoteAddress || host };
       windowRef.setTitle(connectionTitle(profile, result.address));
       backend.connectionProfile = { ...profile, address: result.address };
       post({ type: 'connectionInfo', profile: backend.connectionProfile });
@@ -450,6 +461,17 @@ function registerIpc() {
     const profile = serverProfile(input);
     if (profile.privateKeyPath && !selectedKeys.has(profile.privateKeyPath) && !settings.serverProfiles.some(saved => saved.privateKeyPath === profile.privateKeyPath && saved.host === profile.host && saved.port === profile.port && saved.username === profile.username)) throw new Error('请使用“选择私钥”按钮选择本地文件。');
     return saveSettings(current => upsertProfile(current.serverProfiles, profile));
+  });
+  handle('app:connection-port', async (port, identity) => {
+    const source = requireBackend();
+    if (sessionTransition || identity !== source.desktopIdentity) throw new Error('SSH 连接已改变，请重新打开设置。');
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('SSH 端口必须为 1–65535 的整数。');
+    const profile = serverProfile({ ...source.connectionProfile, port });
+    const saved = await saveSettings(current => {
+      if (!currentSession(source) || sessionTransition) throw new Error('SSH 连接已改变，端口未保存。');
+      return upsertProfile(current.serverProfiles, profile);
+    });
+    return { settings: saved, profile };
   });
   handle('app:save-settings', async patch => {
     const threshold = Number(patch?.downloadThreshold);

@@ -1,5 +1,7 @@
 /* Shared desktop shell preferences and notification popover. */
 .toolbar { position: relative; z-index: 2500; }
+.brand { min-width: 0; overflow: hidden; }
+#notice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #bbb5bd; }
 .server-clock { display: block; cursor: pointer; border-radius: 18px; padding: 4px 13px; font: 600 13px/19px "Segoe UI", "Noto Sans", sans-serif; letter-spacing: .1px; color: #fafafa; text-align: center; }
 .server-clock:hover, .server-clock[aria-expanded="true"] { background: #ffffff22; }
 .server-clock:focus-visible { outline: 2px solid #ce8966; }

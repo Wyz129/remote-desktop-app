@@ -6,9 +6,9 @@ window.RemoteExplorer = (() => {
     const header = element.querySelector('.titlebar');
     const pathbar = element.querySelector('.pathbar');
     header.insertBefore(pathbar, element.querySelector('.window-controls'));
-    pathbar.append(pathbar.querySelector('[data-window-action="refresh"]'));
     element.classList.add('explorer-window');
     const box = element.querySelector('.address-box');
+    const slot = element.querySelector('.address-slot');
     const input = element.querySelector('.window-path');
     const breadcrumbs = element.querySelector('.window-breadcrumbs');
     const places = element.querySelector('.explorer-places');
@@ -16,7 +16,7 @@ window.RemoteExplorer = (() => {
 
     function fitBreadcrumbs() {
       frame = 0;
-      if (disposed || input.hidden === false || !breadcrumbs.clientWidth) return;
+      if (disposed || input.hidden === false || !slot.clientWidth) return;
       const trail = breadcrumbs.firstElementChild;
       if (!trail) return;
       const overflow = trail.querySelector('.breadcrumb-overflow');
@@ -28,7 +28,7 @@ window.RemoteExplorer = (() => {
       // leading ancestors. The final segment may ellipsize only if it alone is wide.
       trail.classList.add('measuring');
       let hidden = 0;
-      while (trail.scrollWidth > breadcrumbs.clientWidth && hidden < segments.length - 1) {
+      while (trail.scrollWidth > Math.max(20, slot.clientWidth - 24) && hidden < segments.length - 1) {
         segments[hidden++].hidden = true;
         overflow.hidden = false;
       }
@@ -74,18 +74,22 @@ window.RemoteExplorer = (() => {
       }
     });
     const observer = new ResizeObserver(scheduleFit);
-    observer.observe(box);
+    observer.observe(slot);
 
     function render(path, locations) {
-      if (currentPath !== path) {
-        currentPath = path;
+      const home = locations.find(location => location.id === 'home')?.path?.replace(/\/$/, '') || '/';
+      const insideHome = path === home || path.startsWith(home === '/' ? '/' : home + '/');
+      const pathKey = `${home}\n${path}`;
+      if (currentPath !== pathKey) {
+        currentPath = pathKey;
         const trail = document.createElement('div'); trail.className = 'breadcrumb-trail';
         const overflow = document.createElement('button'); overflow.type = 'button'; overflow.className = 'breadcrumb-overflow';
         overflow.textContent = '…'; overflow.setAttribute('aria-label', '编辑完整路径'); overflow.hidden = true;
         overflow.addEventListener('click', startEditing); trail.append(overflow);
-        const segments = [{ path: '/', label: 'Root' }];
-        let parent = '';
-        for (const label of path.split('/').filter(Boolean)) { parent += '/' + label; segments.push({ path: parent, label }); }
+        const segments = [{ path: insideHome ? home : '/', label: insideHome ? '~' : 'Root' }];
+        let parent = insideHome && home !== '/' ? home : '';
+        const remainder = insideHome ? path.slice(home.length) : path;
+        for (const label of remainder.split('/').filter(Boolean)) { parent += '/' + label; segments.push({ path: parent, label }); }
         segments.forEach((segment, index) => {
           const item = document.createElement('span'); item.className = 'breadcrumb-segment'; item.dataset.path = segment.path;
           if (index) { const separator = document.createElement('span'); separator.className = 'breadcrumb-separator'; separator.textContent = '›'; separator.setAttribute('aria-hidden', 'true'); item.append(separator); }

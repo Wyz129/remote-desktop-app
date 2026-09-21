@@ -1,6 +1,18 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-21。独立应用版本：1.1.11。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+更新日期：2026-09-21。独立应用版本：1.1.12。入口为 Electron `main.cjs`，不再依赖 VS Code。当前源码和用户的新要求优先于本文中的状态快照。
+
+1.1.12 当前状态：顶栏账号显示用户名及连接圆点，已连接面板仅显示服务器别名、完整账号地址、重连图标、切换账号、退出桌面，独立顶栏退出默认隐藏但可在偏好中显示。没有保存服务器时登录页不显示凭据框，头像改为磁盘图标。空别名保存为 Unknown Server，首次成功连接按系统名/UID 生成 `<OS> User/Root`，手工别名保持。设置新增 connection 分类，saveConnectionPort 校验当前 workspaceIdentity、端口和已认证配置，只更改客户端目标后重新认证，不操作 sshd；密码重输，已保存私钥可重用，提交认证前保留现有连接。新增 test/session-ui.test.cjs、test/session-electron.test.cjs。
+
+底部桌面状态栏移除，状态在左上角显示，正常导航/刷新/保存/传输完成不生成弹窗，错误和第三方连接保留通知。服务器时钟每个连接只取一次快照，主进程缓存 localCapturedAt，前端用时间差推进；重连重新校准，不再轮询 date。监听分系统操作/第三方访问/虚拟终端，GUI 封装操作用 `#操作名称` 与成功/失败摘要，CLI 和 PTY 保留原始指令、按键及回复。lib/activity-audit.cjs 的 AsyncLocalStorage 使摘要作用域只覆盖当前 GUI 操作，不抑制并发 CLI/终端。参见 docs/ACTIVITY_LOG.md。
+
+远程初始化新增 ~/.rdesktop/config。DesktopService 将远程外观/位置/pinnedApps 配置写入该目录的 desktop-<桌面路径 SHA-256 前 24 位>.json，每个桌面独立。先读新配置，再读旧四级来源；旧配置只读，首次保存合并未知字段写入新目录，不删除或覆盖旧文件。每次检查 app-owned config 目录及目标文件，拒绝符号链接替换，保留 64 KiB 限制及既有配置的 OpenSSH 原子替换要求。桌面路径、连接、收藏、上栏等本机偏好仍在 userData/settings.json，不能把所有设置都描述为迁至服务器。
+
+新增 lib/archive-service.cjs、lib/remote-archive.py 和 test/archive-service.test.cjs。右键压缩使用原生对话框选择 tar.gz/zip，解压接受 zip/tar.gz/tgz/tar。通过现有 SSH 运行服务器 Python 3.8+ 标准库，缺失不安装；所有输出在源目录独占创建、同名编号。拒绝链接/特殊文件、穿越路径和重复/父子冲突成员；1000 个顶层选择、100000 项、100 GiB、15 分钟上限。普通失败尝试清理本次新输出；断网、超时或进程中止不能保证清理，用户应检查未完成输出，见 docs/ARCHIVES.md。测试解释器遵循全局 Python 规则并可用 REMOTE_DESKTOP_TEST_PYTHON 指定。
+
+窗口最大化贴合可用桌面且直角；资源管理器 Home 面包屑从 ~ 开始，保留标题空白拖动，增加上一级，视图合为单按钮，刷新移至 F5/右键。浏览器折叠按钮用实心三角，加号和关闭使用居中 SVG，标签关闭留在同一行。Monaco 完整文件路径居中于虚拟标题栏，iframe 不再重复显示头部，脏/只读提示保留。app/application-icons.js/css 为左侧收藏夹及程序页提供本地固定彩色 SVG；没有把收藏夹移动到右边。详情见 docs/EXPLORER.md、docs/WORKBENCH.md。
+
+本轮完整 npm test 已通过：语法 50 文件，后端 113/113、模块 85/85、本机 Vim 7/7、UI 60/60、工作台 14/14、源码 Electron 7/7、工作区 1/1、浏览器 2/2、CLI 1/1、视频 1/1。最终审查后的归档 10/10、归档 Electron 1/1、布局定向 6/6 通过。最终包 EXE 11/11，258 个包内文件及 3 个外部 CLI 资源逐字节一致，结果与哈希见 docs/RELEASE-1.1.12.md。仅使用隔离进程、临时目录和回环服务，未接入用户现有实例或生产服务器。程序 artifacts/electron-1.1.12/win-unpacked/Remote Desktop.exe；回退分支 checkpoint/pre-session-layout-1.1.11。本轮只本地提交、打包，不推送 GitHub。下方版本记录均为历史快照，本节与当前源码优先。
 
 1.1.11 当前状态：资源管理器增加固定 Root/Home/Desktop/Log/Trash 和自定义目录侧栏，标题栏中央为可点击面包屑，根侧溢出折叠，空白/省略号/Ctrl+L/F4 进入完整路径编辑。新增 app/explorer.js/css。Desktop 沿用桌面与外观中的设置；Log/Trash/自定义目录及排序在“目录与侧栏”配置，由 lib/interface-preferences.cjs 规范化，通过 saveWorkspacePreferences 按主机/端口/账号/指纹隔离保存。默认初始化 ~/.rdesktop/{desktop,log,download,trash}；Trash 是目录入口，删除仍为原生确认后的永久删除。修改 Log 实际重绑日志，不搬移旧文件，活跃命令和已有终端保留原日志上下文直至结束；自定义目录不 chmod。详情见 docs/EXPLORER.md 与 docs/ACTIVITY_LOG.md。
 

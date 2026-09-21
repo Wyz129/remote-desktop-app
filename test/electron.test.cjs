@@ -211,7 +211,8 @@ test('real isolated Electron process, preload IPC, SSH desktop, image, download 
   await page.locator('.workbench-frame').waitFor();
   const editor = await page.locator('.workbench-frame').elementHandle().then(handle => handle.contentFrame());
   await editor.waitForFunction(() => window.monaco?.editor.getModels().length > 0);
-  assert.equal(await editor.locator('.brand').textContent(), 'Monaco Editor');
+  assert.equal(await editor.locator('.brand, #filePath').count(), 0);
+  assert.equal(await page.locator('.workbench-window .window-title').textContent(), `${fixture.home}/.rdesktop/desktop/notes.txt`);
   assert.equal(await editor.evaluate(()=>window.monaco.editor.getModels()[0].getValue()), 'Real Electron -> IPC -> SSH fixture\n');
   assert.equal(await page.locator('.terminal-window').count(), 0);
   await page.locator('.workbench-window [data-window-action=close]').click(); await page.locator('.workbench-window').waitFor({state:'detached'});

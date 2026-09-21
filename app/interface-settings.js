@@ -24,7 +24,7 @@ window.InterfaceSettings = class InterfaceSettings {
     this.draftIdentity = this.saved.workspaceIdentity || '';
     const source = this.saved.workspacePreferences || {};
     this.draft = { logPath: source.logPath || '', trashPath: source.trashPath || '', shortcuts: (source.shortcuts || []).map(item => ({ ...item })), placeOrder: [...new Set([...(source.placeOrder || []), 'root', 'home', 'desktop', 'log', 'trash'])] };
-    this.shellDraft = { clockMode: this.saved.shellPreferences?.clockMode || 'compact', toolbarOrder: [...new Set([...(this.saved.shellPreferences?.toolbarOrder || []), ...this.toolbar().map(([id]) => id)])], toolbarHidden: [...(this.saved.shellPreferences?.toolbarHidden || ['browserButton'])] };
+    this.shellDraft = { clockMode: this.saved.shellPreferences?.clockMode || 'compact', toolbarOrder: [...new Set([...(this.saved.shellPreferences?.toolbarOrder || []), ...this.toolbar().map(([id]) => id)])], toolbarHidden: [...(this.saved.shellPreferences?.toolbarHidden || ['browserButton', 'exitButton'])] };
     document.getElementById('settingsLogPath').value = this.draft.logPath; document.getElementById('settingsTrashPath').value = this.draft.trashPath;
     document.getElementById('settingsClockMode').value = this.shellDraft.clockMode;
     document.getElementById('placesPreferencesError').textContent = document.getElementById('shellPreferencesError').textContent = '';

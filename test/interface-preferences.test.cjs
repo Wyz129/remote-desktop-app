@@ -15,8 +15,8 @@ test('workspace choices are isolated by complete verified server identity', () =
   const result=workspaceLocations({[first]:{logPath:'/one'},[second]:{logPath:'/two'},invalid:{logPath:'/ignored'}});
   assert.equal(result[first].logPath,'/one');assert.equal(result[second].logPath,'/two');assert.equal(result.invalid,undefined);
 });
-test('toolbar defaults hide browser and use compact time while preserving valid custom order', () => {
-  assert.deepEqual(shellPreferences().toolbarHidden,['browserButton']); assert.equal(shellPreferences().clockMode,'compact');
+test('toolbar defaults hide browser and exit and use compact time while preserving valid custom order', () => {
+  assert.deepEqual(shellPreferences().toolbarHidden,['browserButton','exitButton']); assert.equal(shellPreferences().clockMode,'compact');
   const result=shellPreferences({clockMode:'detailed',toolbarOrder:['exitButton','bogus','exitButton'],toolbarHidden:['browserButton','bogus','browserButton']});
   assert.equal(result.toolbarOrder[0],'exitButton');assert.equal(result.toolbarOrder.length,8);assert.deepEqual(result.toolbarHidden,['browserButton']);assert.equal(result.clockMode,'detailed');
 });

@@ -121,6 +121,14 @@ test('embedded browser uses desktop child views, opens popup links and POST in f
   assert.deepEqual(initial.toolbar, { x: 40, y: 50, width: 600, height: 81 }); assert.deepEqual(initial.view, { x: 40, y: 131, width: 600, height: 369 });
   const compactChrome = JSON.parse(await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`JSON.stringify({ detailsHidden: document.getElementById('browserDetails').hidden, statusHidden: document.getElementById('status').hidden, expanded: document.getElementById('toggleDetails').getAttribute('aria-expanded'), tabsAboveAddress: document.querySelector('.tab-strip').getBoundingClientRect().bottom <= document.getElementById('navigation').getBoundingClientRect().top })`)));
   assert.deepEqual(compactChrome, { detailsHidden: true, statusHidden: true, expanded: 'false', tabsAboveAddress: true });
+  const symbolGeometry = JSON.parse(await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`JSON.stringify((() => {
+    const center = selector => { const box = document.querySelector(selector).getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
+    return { add: center('#newTab'), addIcon: center('#newTab svg'), close: center('.tab-close'), closeIcon: center('.tab-close svg'), options: center('#toggleDetails'), triangle: center('#toggleDetails svg') };
+  })())`)));
+  for (const [button, icon] of [['add', 'addIcon'], ['close', 'closeIcon'], ['options', 'triangle']]) {
+    assert.ok(Math.abs(symbolGeometry[button].x - symbolGeometry[icon].x) < 1 && Math.abs(symbolGeometry[button].y - symbolGeometry[icon].y) < 1, `${button} symbol is centered`);
+  }
+  assert.ok(Math.abs(symbolGeometry.add.y - symbolGeometry.close.y) < 1, 'new-tab and tab-close centers share one horizontal line');
   await application.evaluate(() => [...browserManager.windows.values()][0].toolbar.webContents.executeJavaScript(`document.getElementById('toggleDetails').click()`));
   await waitFor(application, () => [...browserManager.windows.values()][0].toolbarHeight > 81);
   const expandedChrome = await application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return { height: state.toolbarHeight, toolbar: state.toolbar.getBounds(), view: state.view.getBounds() }; });

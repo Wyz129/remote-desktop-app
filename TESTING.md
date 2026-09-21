@@ -1,8 +1,14 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.11，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.12，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+1.1.12 完整 `npm test` 已通过：语法 50 文件、后端 113/113、模块 85/85、本机 Vim 7/7、UI 60/60、工作台 14/14、源码 Electron 7/7、工作区 1/1、浏览器 2/2、CLI 1/1、视频 1/1。最终审查后压缩/解压 10/10、归档 Electron 1/1、布局定向 6/6 均通过。最终打包 EXE 11/11，258 个包内文件及 3 个外部 CLI 资源逐字节核验通过；记录为 `artifacts/full-test-1.1.12.log`、`archive-final-1.1.12.log`、`shell-final-ui-1.1.12.log`、`packaged-test-1.1.12.log`，完整范围与哈希见 [1.1.12 交付记录](docs/RELEASE-1.1.12.md)。
+
+本轮覆盖独立 config 目录及旧配置保留、符号链接替换拒绝、账号与端口/别名校验、按操作隔离的监听摘要、真实 CLI/PTY 原文保留。压缩测试通过回环 SSH 夹具运行真实本机 Python 标准库，验证 tar.gz/zip 字节往返、空目录、编号不覆盖、路径穿越/绝对路径/链接/重复成员/损坏包拒绝及缺失 Python、权限失败；它不等同生产服务器上的 Python 环境与大型归档验收。
+
+界面和 Electron 场景新增空服务器登录、磁盘头像/账号状态、精简已连接面板、自动与手工别名、端口保存后重新认证、状态左上显示与正常操作不弹通知、时钟单次校准、三个监听分类、最大化几何、资源管理器工具栏和 Monaco 路径标题。`test/session-electron.test.cjs` 使用两个不同端口的独立回环 SSH 服务验证真实重新认证及秘密不落盘；`test/archive-electron.test.cjs` 实际点击菜单选择 zip、解压并核对监听不含内部代码，两项定向集成已通过。测试不操作用户现有实例或生产服务器。
 
 1.1.11 已完成完整 `npm test`：语法检查 48 个文件、后端 103/103、模块 84/84、真实本机 Vim 7/7、UI 55/55、工作台 14/14、Electron 5/5、工作区 1/1、浏览器 2/2、CLI 1/1、视频 1/1。最终打包验证、程序哈希和实际范围见 [1.1.11 交付记录](docs/RELEASE-1.1.11.md)。测试使用隔离 Chrome/Electron、临时设置与回环 SSH，不接管用户现有实例，不连接生产服务器。
 
@@ -64,7 +70,7 @@ npm.cmd run test:ui
 npm.cmd run test:electron
 ```
 
-也可运行 `npm.cmd test`，按 check → backend → modules → vim → ui → workbench → electron → workspace → browser → cli → video 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。本次七项均实际执行，无跳过。
+也可运行 `npm.cmd test`，按 check → backend → modules → archives → vim → ui → workbench → electron → workspace → browser → cli → video 顺序执行。当前无头 UI 使用 `playwright.chromium.launch({ channel: 'chrome', headless: true })`，需要本机 Google Chrome；它启动独立测试进程，不接管已有浏览器。Electron 测试使用安装的 Electron 运行时，并移除子进程的 `ELECTRON_RUN_AS_NODE`。真实 Vim 测试默认使用 Git for Windows 的 Vim；其他位置可设置 `REMOTE_DESKTOP_TEST_VIM`，找不到时明确跳过。压缩测试可用 `REMOTE_DESKTOP_TEST_PYTHON` 指定符合全局 Python 环境规则的解释器；Windows 默认使用 `C:/ProgramData/anaconda3/python.exe`，依赖仅 Python 标准库，找不到时会跳过，不能计为通过。本轮压缩四项均实际执行、未跳过。
 
 后端与 Electron 测试使用系统临时目录及隔离的用户数据，不需要管理员权限、用户服务器密码或远程安装软件。Electron 通过 `--smoke-test` 隐藏测试窗口并配置独立 `--user-data-dir`，不覆盖用户日常应用设置。
 
@@ -72,8 +78,8 @@ npm.cmd run test:electron
 
 ```powershell
 npm.cmd run package
-$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.11\win-unpacked\Remote Desktop.exe').Path
-node --test test/electron.test.cjs test/first-use-electron.test.cjs test/programs-electron.test.cjs test/interface-electron.test.cjs test/video-app-electron.test.cjs test/workspace-electron.test.cjs test/browser-electron.test.cjs test/cli-packaged.test.cjs
+$env:REMOTE_DESKTOP_TEST_EXE = (Resolve-Path 'artifacts\electron-1.1.12\win-unpacked\Remote Desktop.exe').Path
+node --test test/electron.test.cjs test/first-use-electron.test.cjs test/programs-electron.test.cjs test/interface-electron.test.cjs test/session-electron.test.cjs test/archive-electron.test.cjs test/video-app-electron.test.cjs test/workspace-electron.test.cjs test/browser-electron.test.cjs test/cli-packaged.test.cjs
 Remove-Item Env:REMOTE_DESKTOP_TEST_EXE
 ```
 

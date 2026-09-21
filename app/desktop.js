@@ -34,7 +34,6 @@ const terminals = new Map();
 const PROGRAM_LABELS = { shell: '终端', vim: 'Vim', htop: 'htop' };
 let serverInfo = null;
 let serverClockAnchor = null;
-let lastServerResponseAt = null;
 let connectionStatus = '正在连接…';
 let authenticatedProfile = null, connectionProfiles = null, connectionPanelMode = 'login';
 const workbenchFrames = new Map();
@@ -94,30 +93,34 @@ function save() {
   // A restored webview must never restart a shell or application without a click.
   host.setState({ ...state, windows: state.windows.filter(win => !win.kind).map(({ pendingNavigation, error, ...win }) => win) });
 }
-function notify(text) { $('notice').textContent = text; $('notice').title = text; shellUi?.add(text); }
+function notify(text) {
+  $('notice').textContent = text; $('notice').title = text;
+  const routine = /^(?:正在|已(?:刷新|打开|复制|剪切|添加|从|将|取消|切换全屏)|桌面(?:配置|设置|图标)|文件操作已完成|目录与侧栏已保存|上栏设置已保存|应用设置已保存|下载完成|上传完成)/.test(text);
+  if (!routine) shellUi?.add(text);
+}
 function applyInterfacePreferences(saved) {
   extensionSettings = { ...extensionSettings, ...saved };
   shellUi?.apply(extensionSettings.shellPreferences); interfaceSettings?.apply(extensionSettings);
   refreshExplorerPlaces(); updateClock();
 }
 function calendarTime() {
-  const anchor = serverClockAnchor, available = anchor && performance.now() - anchor.receivedAt < 90000;
-  const instant = available ? new Date(anchor.epochMs + performance.now() - anchor.receivedAt + anchor.offsetMs) : new Date();
+  const anchor = serverClockAnchor, available = Boolean(anchor);
+  const instant = available ? new Date(Date.now() + anchor.localDeltaMs + anchor.offsetMs) : new Date();
   const zone = available ? anchor.formatter.resolvedOptions().timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(instant).map(item => [item.type, item.value]));
   return { date: { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) }, zone: available ? `服务器 · ${anchor.label}` : `本机 · ${zone}` };
 }
 function showOperationCommand(command, status = 'success', detail = '') {
-  $('operationCommand').textContent = command || '—';
-  $('operationCommand').title = `${command || '—'}${detail ? `\n${detail}` : ''}`;
-  $('operationStatus').textContent = { success: '完成', error: '失败', cancelled: '已取消' }[status] || '';
-  $('operationStatus').dataset.status = status;
-  $('operationStatus').title = detail;
+  // Operation summaries are available in the activity window.
 }
 function showInterfaceAction(text) { showOperationCommand(`# ${text}（界面操作，无 Linux 指令）`); }
 function shellQuote(value) { return `'${String(value).replace(/'/g, `'"'"'`)}'`; }
 function renderServerInfo() {
-  $('connection').textContent = connectionStatus;
+  const username = authenticatedProfile?.username || serverInfo?.username || connectionProfiles?.current()?.username || $('sshUsername').value || '未登录';
+  const connected = Boolean(authenticatedProfile || remoteMode);
+  $('connection').textContent = username;
+  $('connectionIndicator').classList.toggle('connected', connected);
+  $('connectButton').setAttribute('aria-label', `账号与连接 · ${username} · ${connected ? '已连接' : '未连接'}`);
   if (serverInfo?.error) $('connection').title = serverInfo.error;
   else $('connection').title = serverInfo?.hostname || '';
   updateClock();
@@ -125,15 +128,12 @@ function renderServerInfo() {
 function updateClock() {
   const clock = $('serverClock');
   const remote = serverInfo ? serverInfo.remote !== false : remoteMode;
-  const stale = lastServerResponseAt !== null && performance.now() - lastServerResponseAt > 90000;
-  const username = authenticatedProfile?.username || serverInfo?.username;
-  $('connection').textContent = remote && stale && connectionStatus.includes('已连接') ? `${username || 'SSH'}·等待响应` : (authenticatedProfile || remoteMode) && username ? `${username}·已连接` : connectionStatus;
-  if (!serverClockAnchor || performance.now() - serverClockAnchor.receivedAt > 90000) {
+  if (!serverClockAnchor) {
     clock.textContent = `${remote ? '服务器' : '本地'}时间 —`;
     clock.removeAttribute('datetime');
     return;
   }
-  const current = new Date(serverClockAnchor.epochMs + performance.now() - serverClockAnchor.receivedAt);
+  const current = new Date(Date.now() + serverClockAnchor.localDeltaMs);
   const display = new Date(current.getTime() + serverClockAnchor.offsetMs);
   clock.textContent = shellUi ? shellUi.formatClock(serverClockAnchor, display) : `${serverClockAnchor.formatter.format(display)} · ${serverClockAnchor.label}`;
   clock.dateTime = current.toISOString();
@@ -142,7 +142,6 @@ function updateClock() {
 }
 function receiveServerInfo(message) {
   serverInfo = message;
-  lastServerResponseAt = performance.now();
   serverClockAnchor = null;
   if (message.available !== false && Number.isFinite(message.epochMs)) {
     const options = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
@@ -151,9 +150,9 @@ function receiveServerInfo(message) {
     const label = message.timeZoneLabel || [message.timeZone, offsetLabel].filter(Boolean).join(' · ');
     try {
       if (typeof message.timeZone !== 'string' || !message.timeZone) throw new Error('No IANA zone');
-      serverClockAnchor = { epochMs: message.epochMs, receivedAt: performance.now(), offsetMs: 0, label, formatter: new Intl.DateTimeFormat('zh-CN', { ...options, timeZone: message.timeZone }) };
+      serverClockAnchor = { epochMs: message.epochMs, localDeltaMs: message.epochMs - Date.now(), receivedAt: performance.now(), offsetMs: 0, label, formatter: new Intl.DateTimeFormat('zh-CN', { ...options, timeZone: message.timeZone }) };
     } catch {
-      if (offset !== null) serverClockAnchor = { epochMs: message.epochMs, receivedAt: performance.now(), offsetMs: offset * 60000, label: label || offsetLabel, formatter: new Intl.DateTimeFormat('zh-CN', { ...options, timeZone: 'UTC' }) };
+      if (offset !== null) serverClockAnchor = { epochMs: message.epochMs, localDeltaMs: message.epochMs - Date.now(), receivedAt: performance.now(), offsetMs: offset * 60000, label: label || offsetLabel, formatter: new Intl.DateTimeFormat('zh-CN', { ...options, timeZone: 'UTC' }) };
     }
   }
   renderServerInfo();
@@ -307,6 +306,7 @@ function setSettingsTab(name) {
   }
   $('settingsDialog').querySelector('.settings-content').scrollTop = 0;
   if (name === 'system') loadSystemInfo();
+  if (name === 'connection') renderConnectionSettings();
 }
 function resetSystemInfo() {
   systemInfoRequest++; systemInfoLoading = false;
@@ -438,7 +438,7 @@ function renderFavorites() {
     button.title = application.label; button.setAttribute('aria-label', application.label);
     button.setAttribute('aria-disabled', String(Boolean(application.remote && !remoteMode)));
     const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = application.label;
-    button.append(toolIcon(application.icon), label);
+    button.append(RemoteApplicationIcons.create(application.id), label);
     bindProgramMenu(button, application);
     button.addEventListener('click', () => { void launchApplication(application, true); });
     $('favoriteApps').append(button);
@@ -486,9 +486,10 @@ async function launchApplication(application, restoreExisting = false) {
   catch (error) { notify(error.message || String(error)); }
 }
 function initializeApplications() {
+  $('applicationsButton').replaceChildren(RemoteApplicationIcons.create('programs'));
   for (const application of APPLICATIONS) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'application-tile'; button.dataset.application = application.id;
-    const icon = document.createElement('span'); icon.className = 'application-icon'; icon.append(toolIcon(application.icon));
+    const icon = document.createElement('span'); icon.className = 'application-icon'; icon.append(RemoteApplicationIcons.create(application.id));
     const label = document.createElement('span'); label.className = 'application-label'; label.textContent = application.label;
     const description = document.createElement('span'); description.className = 'application-description'; description.textContent = application.description;
     button.append(icon, label, description); button.addEventListener('click', () => { void launchApplication(application); }); bindProgramMenu(button, application); $('applicationsGrid').append(button);
@@ -866,7 +867,7 @@ function renderIcons() {
   if (editor?.scope === 'desktop') { editor.needsRefresh = true; return; }
   const scroll = $('icons').scrollTop;
   $('icons').replaceChildren();
-  const entries = desktopAvailable ? [...(directories[rootPath] || []), ...state.shortcuts.map(commandItem)].filter(visibleEntry) : [];
+  const entries = desktopAvailable ? [...(directories[rootPath] || []), ...state.shortcuts.map(commandItem)].filter(item => item.name !== '.remote-desktop.json' && visibleEntry(item)) : [];
   const occupied = new Set();
   entries.forEach((item, index) => {
     const element = makeDesktopIcon(item);
@@ -875,7 +876,6 @@ function renderIcons() {
     $('icons').append(element);
   });
   $('icons').scrollTop = scroll;
-  $('cacheStatus').textContent = `${entries.length} 项`;
   syncSelection();
 }
 function arrange() {
@@ -1081,6 +1081,12 @@ api.onBrowserEvent?.(event => {
     surface.classList.add('has-snapshot');
   }
 });
+function setWorkbenchTitle(win, descriptor) {
+  win.documentTitle = `${descriptor.dirty ? '● ' : ''}${descriptor.name || basename(descriptor.path || '') || 'Untitled.txt'}`;
+  const path = descriptor.path || descriptor.name || '未命名文件';
+  const title = windowElements.get(win.id)?.querySelector('.window-title');
+  if (title) { title.textContent = `${descriptor.dirty ? '● ' : ''}${path}`; title.title = path; }
+}
 function mountWorkbench(descriptor) {
   let win = state.windows.find(current => current.kind === 'workbench' && current.documentId === descriptor.id);
   if (win) { focusWindow(win.id); return win; }
@@ -1089,10 +1095,10 @@ function mountWorkbench(descriptor) {
   element.classList.add('workbench-window'); element.dataset.windowId = win.id; element.setAttribute('aria-label', 'Monaco Editor');
   for (const child of [...element.children]) if (!child.classList.contains('titlebar')) child.remove();
   const icon = element.querySelector('.window-app-icon'); icon.className = 'window-app-icon'; icon.replaceChildren(toolIcon('FileCode'));
-  element.querySelector('.window-title').textContent = descriptor.title;
   element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭 Monaco Editor');
   const iframe = document.createElement('iframe'); iframe.className = 'workbench-frame'; iframe.title = 'Monaco Editor 文档'; element.append(iframe);
   renderToolIcons(element); state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
+  setWorkbenchTitle(win, descriptor);
   const bridge = RemoteWorkbenchFrame.mount({ iframe, id: descriptor.id, url: descriptor.url, call: (action, payload) => api.workbenchCall(descriptor.id, action, payload), onFocus: () => focusWindow(win.id), onError: error => notify(error.message) });
   workbenchFrames.set(descriptor.id, bridge);
   element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
@@ -1105,7 +1111,7 @@ api.onWorkbenchEvent?.(event => {
   if (!win) return;
   if (event.type === 'message') workbenchFrames.get(event.id)?.send(event.event);
   else if (event.type === 'closed') void windowAction('close-confirmed', win);
-  else if (event.type === 'title') { win.documentTitle = event.title; windowElements.get(win.id).querySelector('.window-title').textContent = event.title; renderDock(); }
+  else if (event.type === 'title') { setWorkbenchTitle(win, event); renderDock(); }
 });
 function activityText(value) {
   const text = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
@@ -1126,7 +1132,7 @@ function mergeActivitySessions(sessions, preferExisting = false) {
     merged.set(session.id, preferExisting ? { ...safe, ...merged.get(session.id) } : { ...merged.get(session.id), ...safe });
   }
   activity.sessions = [...merged.values()].slice(-ACTIVITY_SESSION_LIMIT);
-  if (activity.selected && activity.selected !== 'system' && !activity.sessions.some(session => session.id === activity.selected)) activity.selected = '';
+  if (activity.selected && !activity.sessions.some(session => session.id === activity.selected)) activity.selected = '';
 }
 function mergeActivityEntries(entries) {
   const merged = new Map(activity.entries.map(entry => [entry.key, entry]));
@@ -1139,7 +1145,7 @@ function mergeActivityEntries(entries) {
     const fields = Object.entries(content).flatMap(([name, value]) => name === 'args' && value && typeof value === 'object' ? Object.entries(value) : [[name, value]]);
     const text = fields.filter(([name]) => name !== 'stream').map(([name, value]) => name === 'data' ? activityText(value) : `${labels[name] || name}: ${activityText(value)}`).join('\n');
     const raw = Object.fromEntries(Object.entries(content).map(([name, value]) => [name, typeof value === 'string' ? activityText(value) : value && typeof value === 'object' ? activityText(JSON.stringify(value)) : value]));
-    const entry = { key, seq: record.seq, sessionId: record.sessionId, scope: record.scope || record.source || 'cli', time: record.time, type: record.type, content: activityText(text), stream: record.stream, raw };
+    const entry = { key, seq: record.seq, sessionId: record.sessionId, scope: record.scope || record.source || 'cli', category: record.category, time: record.time, type: record.type, content: activityText(text), stream: record.stream, raw };
     entry.bytes = (entry.content.length + JSON.stringify(raw).length) * 2 + 256;
     merged.set(key, entry);
   }
@@ -1166,32 +1172,38 @@ function renderActivityWindow() {
   const element = windowElements.get('activity-window');
   if (!element) return;
   const select = element.querySelector('.activity-session');
+  const category = activity.category || 'system';
+  for (const tab of element.querySelectorAll('[data-activity-category]')) {
+    const selected = tab.dataset.activityCategory === category; tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
+  }
+  select.closest('label').hidden = category !== 'cli';
   select.replaceChildren();
-  for (const [value, text] of [['', '全部活动'], ['system', '系统与终端']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; select.append(option); }
+  const all = document.createElement('option'); all.value = ''; all.textContent = '全部第三方连接'; select.append(all);
   for (const session of activity.sessions.slice().reverse()) {
     const option = document.createElement('option'); option.value = session.id;
     option.textContent = `${activityTime(session.time)} · ${session.action || 'CLI'}`; select.append(option);
   }
   select.value = activity.selected; select.disabled = false;
-  const session = activity.sessions.find(current => current.id === activity.selected);
+  const session = category === 'cli' && activity.sessions.find(current => current.id === activity.selected);
   element.querySelector('.activity-status').textContent = activity.connected ? '监听已自动开启 · 关闭窗口不停止记录' : '当前连接已断开 · 可查看本次应用运行期间的记录';
   const paths = session?.logPaths?.length ? session.logPaths.join('\n') : session?.logPath || '尚无命令行日志';
-  element.querySelector('.activity-metadata').textContent = session ? `IP：${activityIp(session)}\n连接时间：${activityTime(session.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `显示系统操作、终端输入及本地命令行的指令与回复。\n系统日志：${activity.systemLogPath || '尚未创建'}`;
+  const description = { system: '系统操作以操作名称、成功或失败及返回值显示。', terminal: '虚拟终端保留原始启动指令、按键与服务器回复。', cli: '第三方通过本应用发送的原始指令和回复，按连接单独记录。' }[category];
+  element.querySelector('.activity-metadata').textContent = session ? `IP：${activityIp(session)}\n连接时间：${activityTime(session.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `${description}\n系统日志：${activity.systemLogPath || '尚未创建'}`;
   const error = element.querySelector('.activity-error'); error.textContent = [activity.error, session?.error].filter(Boolean).join('\n'); error.hidden = !error.textContent;
   const events = element.querySelector('.activity-events');
   const follow = element.querySelector('.activity-follow').checked;
   const scrollTop = events.scrollTop;
   events.replaceChildren();
-  const entries = activity.entries.filter(entry => !activity.selected || (activity.selected === 'system' ? entry.scope === 'system' : entry.sessionId === activity.selected));
+  const entries = activity.entries.filter(entry => ActivityTranscript.category(entry) === category && (category !== 'cli' || !activity.selected || entry.sessionId === activity.selected));
   if (!entries.length) {
-    const empty = document.createElement('p'); empty.className = 'activity-empty'; empty.textContent = session ? '等待指令与回复…' : '通过应用执行操作后将在这里显示原始指令与回复。'; events.append(empty);
+    const empty = document.createElement('p'); empty.className = 'activity-empty'; empty.textContent = category === 'system' ? '通过应用执行操作后将在这里显示操作名称与结果。' : '等待指令与回复…'; events.append(empty);
   }
   if (entries.length) ActivityTranscript.render(events, entries, activityTime);
   events.scrollTop = follow ? events.scrollHeight : scrollTop;
 }
 function openActivityWindow(sessionId) {
   $('activityToast').hidden = true; $('downloadsPanel').hidden = true; $('context').hidden = true; $('appContext').hidden = true;
-  if (typeof sessionId === 'string' && activity.sessions.some(session => session.id === sessionId)) activity.selected = sessionId;
+  if (typeof sessionId === 'string' && activity.sessions.some(session => session.id === sessionId)) { activity.selected = sessionId; activity.category = 'cli'; }
   let win = getWindow('activity-window');
   if (!win) {
     win = { id: 'activity-window', kind: 'activity', minimized: false, maximized: false, position: { x: 84, y: 42 }, size: { width: 850, height: 620 }, z: ++nextLayer };
@@ -1199,16 +1211,27 @@ function openActivityWindow(sessionId) {
     for (const child of [...element.children]) if (!child.classList.contains('titlebar') && !child.classList.contains('resize-handle')) child.remove();
     const icon = element.querySelector('.window-app-icon'); icon.className = 'window-app-icon activity-app-icon'; icon.replaceChildren(toolIcon('Activity'));
     element.querySelector('.window-title').textContent = '实时监听'; element.querySelector('[data-window-action="close"]').setAttribute('aria-label', '关闭实时监听窗口');
+    const tabs = document.createElement('div'); tabs.className = 'activity-category-tabs'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', '活动分类');
+    for (const [category, title] of [['system', '系统操作'], ['cli', '第三方访问'], ['terminal', '虚拟终端']]) {
+      const tab = document.createElement('button'); tab.type = 'button'; tab.dataset.activityCategory = category; tab.setAttribute('role', 'tab'); tab.textContent = title;
+      tab.addEventListener('click', () => { activity.category = category; renderActivityWindow(); }); tabs.append(tab);
+    }
+    tabs.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault(); const buttons = [...tabs.children], index = buttons.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].click(); buttons[next].focus();
+    });
     const toolbar = document.createElement('div'); toolbar.className = 'activity-toolbar';
-    const label = document.createElement('label'); label.append('活动 '); const select = document.createElement('select'); select.className = 'activity-session'; select.setAttribute('aria-label', '命令行连接'); label.append(select);
+    const label = document.createElement('label'); label.append('连接 '); const select = document.createElement('select'); select.className = 'activity-session'; select.setAttribute('aria-label', '命令行连接'); label.append(select);
     select.addEventListener('change', () => { activity.selected = select.value; renderActivityWindow(); });
     const followLabel = document.createElement('label'), follow = document.createElement('input'); follow.type = 'checkbox'; follow.checked = true; follow.className = 'activity-follow'; followLabel.append(follow, '自动滚动');
     const status = document.createElement('span'); status.className = 'activity-status'; toolbar.append(label, followLabel, status);
     const metadata = document.createElement('div'); metadata.className = 'activity-metadata';
     const error = document.createElement('p'); error.className = 'activity-error'; error.setAttribute('role', 'alert'); error.hidden = true;
     const events = document.createElement('div'); events.className = 'activity-events'; events.setAttribute('aria-label', '实时指令与回复'); events.tabIndex = 0;
-    const footer = document.createElement('div'); footer.className = 'window-footer'; footer.textContent = '最近 600 条记录按请求合并为 In / Out；Shell 高亮与 ANSI 颜色。终端保留原始按键，SFTP 显示协议请求；二进制与超限输出另有标记。';
-    element.append(toolbar, metadata, error, events, footer); renderToolIcons(element);
+    const footer = document.createElement('div'); footer.className = 'window-footer'; footer.textContent = '最近 600 条记录按操作合并为 In / Out；第三方与虚拟终端保留原始指令及 ANSI 颜色，二进制与超限输出另有标记。';
+    element.append(tabs, toolbar, metadata, error, events, footer); renderToolIcons(element);
     state.windows.push(win); windowElements.set(win.id, element); $('windows').append(element);
     element.addEventListener('pointerdown', () => { if (state.activeWindow !== win.id) focusWindow(win.id); });
     element.addEventListener('click', event => { const action = event.target.closest('[data-window-action]')?.dataset.windowAction; if (action) void windowAction(action, win); });
@@ -1245,8 +1268,7 @@ function renderDock() {
     tab.dataset.windowId = win.id; tab.title = `${title}${win.minimized ? '（已最小化）' : ''}`;
     tab.setAttribute('aria-label', `${win.minimized ? '恢复' : '切换到'} ${title}`);
     const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = appTitle || (win.kind === 'terminal' ? PROGRAM_LABELS[win.program] : win.kind === 'image' ? win.imageName : basename(win.folder));
-    const appIcon = { browser: 'Globe', workbench: 'FileCode', settings: 'Settings', activity: 'Activity', image: 'Image', video: 'Film', terminal: 'Terminal' }[win.kind];
-    tab.append(appIcon ? toolIcon(appIcon) : glyph({ type: 'folder', name: '' }), label);
+    tab.append(RemoteApplicationIcons.create(win.kind === 'terminal' ? win.program : win.kind || 'folder'), label);
     tab.addEventListener('click', () => { win.minimized = false; focusWindow(win.id); save(); });
     if (win.kind === 'terminal') tab.addEventListener('contextmenu', event => showAppMenu(event, null, win));
     $('windowTabs').append(tab);
@@ -1259,7 +1281,7 @@ function renderPinnedApps() {
     button.className = 'pinned-app'; button.dataset.appId = app.id; button.dataset.program = app.program;
     button.title = `启动 ${app.label} · 右键从收藏夹移除`; button.setAttribute('aria-label', `启动 ${app.label}`);
     const label = document.createElement('span'); label.textContent = app.label; label.className = 'tab-label';
-    button.append(toolIcon(app.program === 'htop' ? 'Activity' : app.program === 'vim' ? 'FilePenLine' : 'Terminal'), label);
+    button.append(RemoteApplicationIcons.create(app.program), label);
     button.addEventListener('click', () => openTerminal(rootPath, app.program));
     button.addEventListener('contextmenu', event => showAppMenu(event, app));
     $('pinnedApps').append(button);
@@ -1365,10 +1387,10 @@ function positionWindow(win) {
   const bounds = $('windows');
   const fallback = win.kind === 'terminal' ? { width: 740, height: 500 } : { width: 650, height: 430 };
   const preferred = win.size || fallback;
-  const width = win.maximized ? Math.max(1, bounds.clientWidth - 8) : Math.min(Math.max(300, Number(preferred.width) || fallback.width), Math.max(1, bounds.clientWidth - 8));
-  const height = win.maximized ? Math.max(1, bounds.clientHeight - 8) : Math.min(Math.max(220, Number(preferred.height) || fallback.height), Math.max(1, bounds.clientHeight - 8));
+  const width = win.maximized ? Math.max(1, bounds.clientWidth) : Math.min(Math.max(300, Number(preferred.width) || fallback.width), Math.max(1, bounds.clientWidth - 8));
+  const height = win.maximized ? Math.max(1, bounds.clientHeight) : Math.min(Math.max(220, Number(preferred.height) || fallback.height), Math.max(1, bounds.clientHeight - 8));
   element.style.width = `${width}px`; element.style.height = `${height}px`;
-  const position = win.maximized ? { x: 4, y: 4 } : {
+  const position = win.maximized ? { x: 0, y: 0 } : {
     x: clamp(win.position?.x ?? 24, $('windows').clientWidth - element.offsetWidth),
     y: clamp(win.position?.y ?? 48, $('windows').clientHeight - element.offsetHeight)
   };
@@ -1556,10 +1578,11 @@ function updateView(win) {
   element.dataset.viewMode = win.viewMode;
   element.querySelector('.listing').classList.toggle('icon-view', win.viewMode === 'icons');
   element.querySelector('.column-headings').hidden = win.viewMode === 'icons';
-  for (const mode of ['details', 'icons']) {
-    const button = element.querySelector(`[data-window-action="${mode}"]`);
-    button.classList.toggle('active', win.viewMode === mode); button.setAttribute('aria-pressed', String(win.viewMode === mode));
-  }
+  const button = element.querySelector('[data-window-action="toggle-view"]');
+  const nextMode = win.viewMode === 'icons' ? 'details' : 'icons';
+  button.replaceChildren(toolIcon(nextMode === 'icons' ? 'LayoutGrid' : 'List'));
+  button.title = nextMode === 'icons' ? '切换到图标视图' : '切换到详情视图';
+  button.setAttribute('aria-label', button.title);
 }
 function renderWindow(win) {
   if (win.kind) return;
@@ -1646,7 +1669,7 @@ async function windowAction(action, win) {
     host.postMessage(pinned ? { type: 'unpinApp', id: pinned.id } : { type: 'pinApp', app: { label: PROGRAM_LABELS[win.program], program: win.program } });
   }
   else if (action === 'refresh') refreshDirectory(win.folder);
-  else if (action === 'icons' || action === 'details') { win.viewMode = action; state.viewMode = action; updateView(win); persistConfig({ viewMode: action }); showInterfaceAction(action === 'icons' ? '切换图标视图' : '切换详情视图'); }
+  else if (action === 'toggle-view' || action === 'icons' || action === 'details') { const mode = action === 'toggle-view' ? (win.viewMode === 'icons' ? 'details' : 'icons') : action; win.viewMode = mode; state.viewMode = mode; updateView(win); persistConfig({ viewMode: mode }); showInterfaceAction(mode === 'icons' ? '切换图标视图' : '切换详情视图'); }
   else performAction(action, contextFor(win.id));
 }
 function requestDirectory(path, options = {}) {
@@ -1684,6 +1707,8 @@ function showMenu(event, context) {
   buttons.querySelector('[data-action="rename"]').disabled = selected.length !== 1;
   buttons.querySelector('[data-action="shortcut"]').disabled = !files.length;
   buttons.querySelector('[data-action="download"]').disabled = !files.length;
+  buttons.querySelector('[data-action="compress"]').disabled = !files.length;
+  buttons.querySelector('[data-action="extract"]').disabled = files.length !== 1 || files[0].type === 'folder' || !/\.(?:zip|tar|tar\.gz|tgz)$/i.test(files[0].name);
   buttons.querySelector('[data-action="copy"]').disabled = !files.length;
   buttons.querySelector('[data-action="cut"]').disabled = !files.length;
   buttons.querySelector('[data-action="paste"]').disabled = !state.clipboard?.paths?.length;
@@ -1777,6 +1802,7 @@ function performAction(action, context) {
     if (paths.length) sendOperation({ operation: 'delete', parent: context.parent, paths });
   } else if (action === 'shortcut' && paths.length) sendOperation({ operation: 'shortcut', parent: rootPath, paths });
   else if (action === 'download') void runTransferWorkflow('download', paths);
+  else if (['compress', 'extract'].includes(action) && paths.length) sendOperation({ operation: action, parent: context.parent, paths });
   else if (action === 'terminal') openTerminal(context.parent);
   else if (action === 'refresh') { if (context.scope === 'desktop') refreshAll(); else refreshDirectory(context.parent); }
   else if (action === 'arrange') arrange();
@@ -2048,7 +2074,6 @@ window.addEventListener('resize', scheduleLayout);
 document.addEventListener('visibilitychange', () => { scheduleBrowserLayout(); if (!document.hidden) scheduleLayout(); });
 new MutationObserver(scheduleBrowserLayout).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open', 'hidden'] });
 setInterval(updateClock, 1000);
-setInterval(() => host.postMessage({ type: 'getServerInfo' }), 30000);
 
 const images = new Map(), videos = new Map();
 const downloadTasks = new Map();
@@ -2094,29 +2119,46 @@ function setConnectionPanelMode(mode) {
   $('connectionTitle').textContent = connected ? 'SSH 已连接' : advanced ? '切换账号' : mode === 'reconnect' ? '重新连接 SSH' : 'SSH 登录';
   $('serverSwitcher').hidden = !advanced;
   $('backToLogin').hidden = !advanced;
-  $('loginCredentials').hidden = connected;
+  const hasCredentials = advanced || mode === 'reconnect' || Boolean(connectionProfiles?.hasSaved());
+  $('loginCredentials').hidden = connected || !hasCredentials;
   $('connectedAccount').hidden = !connected;
   $('connectionAdvanced').hidden = !advanced;
-  $('connectSubmit').hidden = connected || advanced;
+  $('connectSubmit').hidden = connected || advanced || !hasCredentials;
   $('saveServer').hidden = $('advancedConnectSubmit').hidden = !advanced;
-  $('disconnectButton').hidden = $('reconnectButton').hidden = !connected;
+  $('reconnectButton').hidden = $('connectionExitButton').hidden = !connected;
   $('switchAccountButton').hidden = advanced;
   $('connectionError').textContent = '';
   if (connected) {
     connectionProfiles?.clearSecrets();
-    $('serverDisplayName').textContent = authenticatedProfile.alias || authenticatedProfile.host;
-    $('serverDisplayAddress').textContent = authenticatedProfile.host + ':' + authenticatedProfile.port;
-    $('connectedUsername').textContent = authenticatedProfile.username;
-    $('connectedAddress').textContent = authenticatedProfile.username + '@' + (authenticatedProfile.address || authenticatedProfile.host) + ':' + authenticatedProfile.port;
-    $('connectionHint').textContent = 'SSH 已连接';
+    $('serverDisplayName').textContent = authenticatedProfile.alias || 'Unknown Server';
+    $('serverDisplayAddress').textContent = '';
+    $('connectedAddress').textContent = connectionAddress(authenticatedProfile);
+    $('connectionHint').textContent = '';
   } else {
     connectionProfiles?.updateHeading();
     const label = mode === 'reconnect' ? '重新连接' : '登录';
     $('connectSubmit').setAttribute('aria-label', label); $('connectSubmit').title = label;
     $('sshUsername').readOnly = mode === 'reconnect';
-    $('connectionHint').textContent = advanced ? '选择已保存的服务器，或新建一个连接。' : mode === 'reconnect' ? '重新输入密码以连接当前服务器。' : $('sshHost').value ? '使用用户名和密码登录服务器' : '点击“切换账号”添加服务器。';
+    $('connectionHint').textContent = advanced ? '选择已保存的服务器，或新建一个连接。' : mode === 'reconnect' ? '重新输入密码以连接当前服务器。' : hasCredentials ? '使用用户名和密码登录服务器' : '点击“切换账号”添加服务器。';
   }
-  $('reconnectKeyCredentials').hidden = connected || advanced || !$('sshPrivateKey').value;
+  $('reconnectKeyCredentials').hidden = connected || advanced || !hasCredentials || !$('sshPrivateKey').value;
+}
+function connectionAddress(profile) {
+  const address = String(profile.address || profile.host || '').replace(/^::ffff:/, '');
+  return `${profile.username}@${address.includes(':') ? `[${address}]` : address}:${profile.port}`;
+}
+function renderConnectionSettings() {
+  const profile = authenticatedProfile;
+  $('settingsConnectionTarget').textContent = profile ? `${profile.alias || 'Unknown Server'} · ${connectionAddress(profile)}` : '请先连接 SSH';
+  $('settingsConnectionPort').value = profile?.port || 22;
+  $('settingsConnectionPort').disabled = $('saveConnectionPort').disabled = !profile;
+  $('connectionPortError').textContent = '';
+}
+function reconnectToProfile(profile, automatic = false) {
+  connectionProfiles.fill(profile || {}); setConnectionPanelMode('reconnect');
+  if (!$('connectionDialog').open) $('connectionDialog').showModal();
+  if (automatic && profile?.privateKeyPath) $('connectionForm').requestSubmit($('connectSubmit'));
+  else $('sshPassword').focus();
 }
 function setConnectionBusy(busy) {
   $('connectionForm').setAttribute('aria-busy', String(busy));
@@ -2136,14 +2178,28 @@ async function initializeConnection() {
   $('loginUserIcon').replaceChildren(toolIcon('UserRound')); $('loginPasswordIcon').replaceChildren(toolIcon('LockKeyhole'));
   $('connectSubmit').replaceChildren(toolIcon('ArrowRight')); $('backToLogin').replaceChildren(toolIcon('ArrowLeft')); $('closeConnection').replaceChildren(toolIcon('X'));
   $('closeDownloads').replaceChildren(toolIcon('X')); $('closeApplications').replaceChildren(toolIcon('X'));
-  $('connectButton').replaceChildren(toolIcon('Users'));
+  $('reconnectButton').replaceChildren(toolIcon('RotateCw')); $('connectionExitButton').replaceChildren(toolIcon('Power'));
   $('downloadsButton').replaceChildren(toolIcon('ArrowUpDown'));
   $('browserButton').replaceChildren(toolIcon('Globe'));
   $('browserButton').addEventListener('click', openServerBrowser);
   $('connectButton').addEventListener('click', showConnectionPanel);
   $('switchAccountButton').addEventListener('click', () => { if (connectionPanelMode === 'connected') profiles.fill(authenticatedProfile); else profiles.clearSecrets(); setConnectionPanelMode('advanced'); $('serverProfile').focus(); });
-  $('backToLogin').addEventListener('click', () => { profiles.clearSecrets(); setConnectionPanelMode('login'); $('sshUsername').focus(); });
-  $('reconnectButton').addEventListener('click', () => { profiles.fill(authenticatedProfile || {}); setConnectionPanelMode('reconnect'); $('sshPassword').focus(); });
+  $('backToLogin').addEventListener('click', () => { profiles.clearSecrets(); setConnectionPanelMode('login'); (profiles.hasSaved() ? $('sshUsername') : $('switchAccountButton')).focus(); });
+  $('reconnectButton').addEventListener('click', () => reconnectToProfile(authenticatedProfile));
+  $('connectionExitButton').addEventListener('click', async () => { try { await api.quit(); } catch (error) { $('connectionError').textContent = error.message; } });
+  $('connectionPortForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!$('connectionPortForm').reportValidity() || !authenticatedProfile) return;
+    const identity = extensionSettings.workspaceIdentity, port = Number($('settingsConnectionPort').value);
+    $('saveConnectionPort').disabled = $('settingsConnectionPort').disabled = true; $('connectionPortError').textContent = '';
+    try {
+      const result = await api.saveConnectionPort(port, identity);
+      if (result.cancelled) return;
+      applyInterfacePreferences(result.settings); profiles.refresh(result.settings, false);
+      closeSettings(); reconnectToProfile(result.profile, true);
+    } catch (error) { $('connectionPortError').textContent = error.message; }
+    finally { $('saveConnectionPort').disabled = $('settingsConnectionPort').disabled = !authenticatedProfile; }
+  });
   $('closeConnection').addEventListener('click', () => $('connectionDialog').close());
   $('connectionDialog').addEventListener('close', () => { $('reconnectPassphrase').value = ''; });
   $('connectionForm').addEventListener('submit', async event => {
@@ -2162,10 +2218,6 @@ async function initializeConnection() {
   });
   $('chooseKey').addEventListener('click', async () => { try { const value = await api.choosePrivateKey(); if (value) $('sshPrivateKey').value = value; } catch(error) { $('connectionError').textContent = error.message; } });
   $('clearKey').addEventListener('click', () => { $('sshPrivateKey').value = ''; $('sshPassphrase').value = ''; });
-  $('disconnectButton').addEventListener('click', async () => {
-    try { if (await api.disconnect() === false) { $('connectionError').textContent = '已取消断开，当前终端已保留。'; return; } clearRemoteDesktop(); notify('已断开 SSH'); }
-    catch(error) { $('connectionError').textContent = error.message; }
-  });
   $('skipDesktop').addEventListener('click', () => $('missingDesktopDialog').close());
   $('createDesktop').addEventListener('click', () => { $('missingDesktopDialog').close(); host.postMessage({ type: 'createDesktop' }); });
   $('downloadsButton').addEventListener('click', () => showTransferCenter($('downloadsPanel').hidden));
@@ -2178,7 +2230,8 @@ async function initializeConnection() {
   try { const saved = await api.getSettings(); applyInterfacePreferences(saved); applyProgramPreferences(saved.programPreferences); programPreferencesReady = true; profiles.refresh(saved); if (!authenticatedProfile) setConnectionPanelMode('login'); }
   catch(error) { $('connectionError').textContent = '应用设置读取失败：' + error.message; }
   finally { setConnectionBusy(false); }
-  if ($('connectionDialog').open && connectionPanelMode === 'login') ($('sshUsername').value ? $('sshPassword') : $('sshUsername')).focus();
+  renderServerInfo();
+  if ($('connectionDialog').open && connectionPanelMode === 'login') (profiles.hasSaved() ? ($('sshUsername').value ? $('sshPassword') : $('sshUsername')) : $('switchAccountButton')).focus();
   try { for (const descriptor of await api.listDocuments?.() || []) mountWorkbench(descriptor); }
   catch (error) { notify('无法恢复 Monaco Editor：' + error.message); }
 }

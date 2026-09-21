@@ -122,18 +122,10 @@ button:disabled { opacity: .4; cursor: default; }
 .icon-label { width: 100%; color: #f4f9fc; font-size: 12px; line-height: 16px; overflow: hidden; display: block; text-overflow: ellipsis; white-space: nowrap; text-align: center; text-shadow: 0 1px 3px #0008; }
 .icon.selected { z-index: 2; height: auto; min-height: 96px; background: var(--accent-soft); }
 .icon.selected .icon-label { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
-.statusbar { position: absolute; z-index: 400; bottom: 0; left: 0; right: 0; height: 36px; display: flex; align-items: center; gap: 15px; justify-content: space-between; padding: 6px 14px; border-top: 1px solid #ffffff18; background: #211d22f2; color: #d0c4c9; font-size: 11px; }
-.operation-display { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
-.operation-label { flex: none; color: #bcb1b4; }
-#operationCommand { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e9dbdf; font: 11px Consolas, monospace; user-select: text; }
-#operationStatus { flex: none; color: #dfc9bb; }
-#operationStatus[data-status="error"] { color: #f6a9a9; }
-#notice { max-width: 27%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#cacheStatus { flex: none; color: #dfc9bb; }
-#windows { position: absolute; inset: 0 0 36px; pointer-events: none; }
+#windows { position: absolute; inset: 0; pointer-events: none; }
 .window { position: absolute; width: 650px; height: 430px; display: flex; flex-direction: column; overflow: hidden; pointer-events: auto; background: var(--surface); border: 1px solid #393939; border-radius: 12px; box-shadow: 0 12px 32px #10091770; }
 .window.active { border-color: #505050; box-shadow: 0 16px 44px #100917a6; }
-.window.maximized { width: calc(100% - 8px); height: calc(100% - 8px); max-width: none; max-height: none; border-radius: 4px; }
+.window.maximized { width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; border: 0; box-shadow: none; }
 .titlebar { height: 39px; flex: none; display: flex; align-items: center; gap: 10px; padding-left: 12px; background: var(--header); border-bottom: 1px solid #ffffff10; user-select: none; touch-action: none; cursor: move; }
 .window-app-icon.glyph.folder { width: 17px; height: 12px; margin: 2px 0 0; border-radius: 2px; }
 .window-app-icon.glyph.folder::before { width: 8px; height: 3px; top: -3px; border-radius: 2px 2px 0 0; }
@@ -243,8 +235,6 @@ button:disabled { opacity: .4; cursor: default; }
   .column-headings { padding-inline: 12px; }
   .entry { padding-inline: 3px; }
   .entry-type, .entry-size { font-size: 10px; }
-  .statusbar { padding: 5px 8px; }
-  #cacheStatus { display: none; }
   #notice { display: none; }
   .terminal-launch-label { display: none; }
   .terminal-commandbar button { padding-inline: 5px; }
@@ -340,7 +330,7 @@ button:disabled { opacity: .4; cursor: default; }
 .applications-button .tool-icon { width: 26px; height: 26px; }
 .applications-dots { display: block; width: 4px; height: 4px; border-radius: 50%; background: currentColor; box-shadow: -8px -8px currentColor, 0 -8px currentColor, 8px -8px currentColor, -8px 0 currentColor, 8px 0 currentColor, -8px 8px currentColor, 0 8px currentColor, 8px 8px currentColor; }
 .applications-button[aria-expanded="true"] { background: #ffffff24; }
-.applications-panel { position: absolute; z-index: 2050; inset: 0 0 36px; display: flex; align-items: center; justify-content: center; padding: 28px; background: #1b1423cf; backdrop-filter: blur(10px); }
+.applications-panel { position: absolute; z-index: 2050; inset: 0; display: flex; align-items: center; justify-content: center; padding: 28px; background: #1b1423cf; backdrop-filter: blur(10px); }
 .applications-dialog, .applications-content { width: min(660px, 100%); max-height: 100%; overflow: auto; padding: 24px 30px 32px; border: 1px solid #48454b; border-radius: 20px; color: var(--text); background: #29282bf5; box-shadow: 0 22px 70px #0007; }
 .applications-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .applications-heading h2 { margin: 0; font-size: 20px; font-weight: 600; }
@@ -377,7 +367,9 @@ button.application-tile:active { background: #ffffff22; }
 
 /* Embedded documents and background browser previews participate in DOM stacking. */
 .workbench-window { display:flex; flex-direction:column; overflow:hidden; }
-.workbench-window > .titlebar { flex:none; }
+.workbench-window > .titlebar { flex:none; position:relative; }
+.workbench-window > .titlebar .window-title { position:absolute; left:110px; right:110px; text-align:center; pointer-events:none; }
+.workbench-window > .titlebar .window-controls { margin-left:auto; }
 .workbench-frame { display:block; width:100%; flex:1; min-width:0; min-height:0; border:0; background:#242424; }
 .browser-surface { position:relative; overflow:hidden; }
 .browser-snapshot { position:absolute; left:0; width:100%; pointer-events:none; object-fit:fill; display:none; }

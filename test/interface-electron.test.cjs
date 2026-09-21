@@ -66,9 +66,10 @@ test('account-scoped places and transfer defaults, real log relocation, shell pe
   assert.deepEqual(await page.locator('.explorer-place').evaluateAll(nodes=>nodes.map(node=>node.dataset.placeId)),preferences.placeOrder);
   await page.evaluate(()=>window.remoteDesktop.getSystemInfo());
   const snapshot=await page.evaluate(()=>window.remoteDesktop.getActivitySnapshot());assert.match(snapshot.systemLogPath,/custom-log/);
-  await page.waitForFunction(()=>window.remoteDesktop.getActivitySnapshot().then(value=>value.entries.some(record=>record.type==='stdout'&&record.data?.includes('Ubuntu'))));
+  await page.waitForFunction(()=>window.remoteDesktop.getActivitySnapshot().then(value=>value.entries.some(record=>record.type==='result'&&record.action==='ssh:system-info'&&record.result?.os?.includes('Ubuntu'))));
   await page.evaluate(()=>window.remoteDesktop.disconnect());
-  const log=await fs.readFile(first.mapPath(snapshot.systemLogPath),'utf8');assert.match(log,/"type":"command"/);assert.match(log,/Ubuntu/);
+  const log=await fs.readFile(first.mapPath(snapshot.systemLogPath),'utf8');assert.match(log,/"operationName":"读取系统信息"/);assert.match(log,/Ubuntu/);
+  assert.ok(!log.trim().split('\n').map(line=>JSON.parse(line)).some(record=>record.type==='command'),'internal SSH source is summarized in the system log');
   assert.match(await fs.readFile(first.mapPath(originalLog),'utf8'),/after-log-move/,'running terminal keeps its original log through a destination change');
   assert.equal(await fs.readFile(first.mapPath(`${first.home}/custom-log/keep.txt`),'utf8'),'keep');
   await page.evaluate(config=>window.remoteDesktop.connect(config),second.config);
