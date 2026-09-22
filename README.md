@@ -1,6 +1,6 @@
 # Remote Desktop App
 
-通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 1.1.13。应用使用 Electron 44.4.2，提供 Monaco Editor、浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
+通过 SSH 连接 Linux/类 Unix 服务器的独立桌面应用，版本 0.9.1-beta.1（Beta 0.9.1）。应用使用 Electron 44.4.2，提供 Monaco Editor、浏览器、双向传输中心与本地命令行接口，无需 VS Code、Remote-SSH 扩展或服务器端桌面软件。现有资源管理器、文件操作、Vim 和 xterm 终端继续保留。
 
 独立应用仓库为私有的 [Wyz129/remote-desktop-app](https://github.com/Wyz129/remote-desktop-app)。它由原扩展 0.0.7 的提交 `8c2e415f41759dca41d632c855347d539180e6ca` 克隆开发，保留迁移历史；插件仓库 `Wyz129/remote-desktop` 独立维护。本地工作目录为 `C:\0_myfiles\new_projects\remote-desktop-app`；旧 `upstream` 推送地址保持禁用，新仓库使用 `origin`。
 
@@ -16,7 +16,7 @@ npm.cmd start
 
 开发环境使用 Node.js 24 和 npm；首次安装/启动需要下载 Electron。启动脚本自动从子进程环境移除 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。`npm.cmd run dev` 启用 Electron 日志，不应将密码或私钥加入日志。
 
-本版打包目标：`artifacts/electron-1.1.13/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。实际打包验证结果见 [1.1.13 交付说明](docs/RELEASE-1.1.13.md)。
+本版打包目标：`artifacts/electron-beta-0.9.1/win-unpacked/Remote Desktop.exe`。直接双击即可，无需 Node.js 或 VS Code；请保留同目录全部文件。这是未签名的 Windows x64 展开目录，GitHub 仓库包含源码，不包含安装器。命令行入口位于同目录的 `resources/cli/scripts/rdesktop.cmd`，同样无需额外 Node.js。实际打包验证结果见 [Beta 0.9.1 交付说明](docs/RELEASE-BETA-0.9.1.md)。
 
 启动后显示 Ubuntu 风格的居中磁盘图标。尚未保存服务器时不显示用户名和密码输入框，点击“切换账号”新建目标；已有配置时显示用户名、密码，按 Enter 或点击密码框右侧箭头登录。服务器配置界面可选择已保存服务器，或点击“新建”设置地址、端口（默认 22）、用户名、别名和本地私钥。可直接“连接服务器”，也可“保存配置”后返回登录页；左上角返回箭头同样返回登录页。切换、返回和保存时清空密码及私钥口令；已配置私钥时登录页额外提供私钥口令输入。配置只保存非敏感连接信息及私钥路径，不保存密码或私钥内容。未填写别名时暂显示 `Unknown Server`，首次成功连接后按实际系统名称及账号 UID 自动命名，例如 `Ubuntu User` 或 `Ubuntu Root`；手工别名不会被覆盖。连接成功后窗口标题显示 `Remote Desktop - ssh 用户名@服务器IP:端口 别名`。
 
@@ -24,7 +24,7 @@ npm.cmd start
 
 全屏可通过顶栏 Fullscreen 图标或 F11 切换；Esc 和 Ctrl+Alt+F 不再切换桌面全屏，保留给当前窗口和远程程序。虚拟窗口最大化后贴合可用桌面边缘，以直角显示。顶栏账号按钮显示用户名与连接状态圆点，点按打开连接面板；已连接时仅显示服务器别名、`用户名@地址:端口`、别名旁的重连图标、切换账号和退出桌面，不再出现凭据输入或高级表单。重新连接需重新认证；切换账号进入服务器配置界面，在提交新的登录前保留现有连接。关闭应用会结束 SSH 和该应用打开的远程终端。
 
-1.1.13 增加快捷栏右键“打开本机终端”，复用已认证 SSH 连接与命令行接口；修复终端拖选/本机剪贴板，增加 Markdown/公式阅读分栏。Transfer Center 改为独立窗口，任务页提供服务器默认上传目录（默认 ~/.rdesktop/download）和本机下载目录；右键菜单按上下文精简并可在 Settings 自定义，Programs 和顶栏模块名称统一英文，修复连接切换期间 Exit 无响应。整体沿用炭灰内容区、灰紫文件夹和低饱和度棕橙选中态。窗口控件平时透明，仅悬停显示背景，键盘焦点仍有轮廓。浏览器未被遮挡时保持原生实时页面，重叠时显示约每 0.75 秒更新的背景预览，聚焦后恢复完整交互。详见 [1.1.13 交付说明](docs/RELEASE-1.1.13.md)；此前的目录导航与通知功能见 [1.1.11 交付说明](docs/RELEASE-1.1.11.md)。
+Beta 0.9.1 修复 RTerminal 粘贴，并保留 1.1.13 的快捷栏右键“打开本机终端”，复用已认证 SSH 连接与命令行接口；修复终端拖选/本机剪贴板，增加 Markdown/公式阅读分栏。Transfer Center 改为独立窗口，任务页提供服务器默认上传目录（默认 ~/.rdesktop/download）和本机下载目录；右键菜单按上下文精简并可在 Settings 自定义，Programs 和顶栏模块名称统一英文，修复连接切换期间 Exit 无响应。整体沿用炭灰内容区、灰紫文件夹和低饱和度棕橙选中态。窗口控件平时透明，仅悬停显示背景，键盘焦点仍有轮廓。浏览器未被遮挡时保持原生实时页面，重叠时显示约每 0.75 秒更新的背景预览，聚焦后恢复完整交互。详见 [Beta 0.9.1 交付说明](docs/RELEASE-BETA-0.9.1.md)；此前的目录导航与通知功能见 [1.1.11 交付说明](docs/RELEASE-1.1.11.md)。
 
 ## 远程桌面与文件
 
@@ -132,6 +132,6 @@ npm.cmd test
 npm.cmd run package
 ```
 
-`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、压缩解压、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-1.1.13/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Viewer.js、Video.js、Markdown、KaTeX、highlight.js、ansi_up 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
+`npm test` 执行语法、后端、传输/文档/Jupyter/网络模块、压缩解压、Vim、无头 UI 和真实 Electron 集成测试。`npm run package` 使用 `electron-builder --dir`，目标为 `artifacts/electron-beta-0.9.1/win-unpacked/Remote Desktop.exe` 及其依赖目录；运行时应保留完整目录。Monaco、Viewer.js、Video.js、Markdown、KaTeX、highlight.js、ansi_up 和清理库由安装/打包脚本复制为本地资源，不依赖运行时 CDN。
 
 结果和实际验证边界见 [TESTING.md](TESTING.md)，接手入口见 [HANDOFF.md](HANDOFF.md)。回环 SSH 与 Jupyter 协议夹具不能代表已验收用户服务器；本轮仅使用隔离测试服务，未操作现有服务器会话。原扩展说明保留在 [docs/extension-007-README.md](docs/extension-007-README.md)，仅供历史参考。

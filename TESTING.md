@@ -1,6 +1,6 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-21。对象为 `remote-desktop-app` 1.1.13，基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-09-21。对象为 `remote-desktop-app` Beta 0.9.1（内部版本 0.9.1-beta.1），基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
 

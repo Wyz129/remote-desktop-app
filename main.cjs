@@ -476,8 +476,8 @@ function registerIpc() {
     return audited[channel] ? audit(channel, audited[channel](...args), () => action(...args)) : action(...args);
   });
   handle('activity:snapshot', () => activityLog.snapshot());
-  handle('terminal:clipboard-read', () => clipboardText(clipboard.readText()));
-  handle('terminal:clipboard-write', text => { clipboard.writeText(clipboardText(text)); return true; });
+  handle('terminal:clipboard-read', async () => clipboardText(await clipboard.readText()));
+  handle('terminal:clipboard-write', async text => { await clipboard.writeText(clipboardText(text)); return true; });
   handle('app:get-settings', () => publicSettings());
   handle('terminal:open-local', async cwd => {
     const source = requireBackend();

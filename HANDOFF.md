@@ -1,8 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-21。当前独立应用版本：1.1.13。
+更新日期：2026-09-21。当前独立应用版本：0.9.1-beta.1（Beta 0.9.1）。
 
-1.1.13：快捷栏/目录空白右键“打开本机终端”调用固定 terminal:open-local IPC，lib/local-terminal.cjs 用隐藏 PowerShell 启动器与 Start-Process 分配独立 Windows 控制台，内层 -NoNewWindow -Wait 运行随包 rdesktop shell。直接 detached + stdio ignore 会失去 TTY，不能回退该实现。Electron GUI 子系统对 stdin 初始化不同；scripts/cli.cjs 的 interactiveInput 仅在 Electron/Windows、实际控制台输出、stdin 为字符设备时，以 r+ 重开 CONIN$ 获得 libuv 原始输入，不接管重定向文件/管道。lib/interactive-shell.cjs 复用现有 SSH PTY，instance-bridge 增加有大小/流量边界的双向 shell 帧，CLI raw mode、UTF-8 增量解码、resize、Ctrl+C 转发、Ctrl+] 关闭。日志进入第三方访问，系统日志仅保留连接引用。启动参数没有凭据/令牌。
+Beta 0.9.1：修复 Electron 44 异步剪贴板 IPC；快捷栏/目录空白右键“打开本机终端”调用固定 terminal:open-local IPC，lib/local-terminal.cjs 用隐藏 PowerShell 启动器与 Start-Process 分配独立 Windows 控制台，内层 -NoNewWindow -Wait 运行随包 rdesktop shell。直接 detached + stdio ignore 会失去 TTY，不能回退该实现。Electron GUI 子系统对 stdin 初始化不同；scripts/cli.cjs 的 interactiveInput 仅在 Electron/Windows、实际控制台输出、stdin 为字符设备时，以 r+ 重开 CONIN$ 获得 libuv 原始输入，不接管重定向文件/管道。lib/interactive-shell.cjs 复用现有 SSH PTY，instance-bridge 增加有大小/流量边界的双向 shell 帧，CLI raw mode、UTF-8 增量解码、resize、Ctrl+C 转发、Ctrl+] 关闭。日志进入第三方访问，系统日志仅保留连接引用。启动参数没有凭据/令牌。
 
 RTerminal 用本机选区与固定剪贴板 IPC 修复鼠标、Ctrl+C/V，Marked/DOMPurify/KaTeX 提供独立 Reading 分栏。Transfer Center 是与 Settings 一致的独立单例虚拟窗口；默认服务器上传位置按当前服务器身份保存，缺省 ~/.rdesktop/download；本机下载位置全局保存。Programs/顶栏模块英文；app/context-menu.js 共享白名单、按上下文显示与 Settings 自定义。路径热区悬停高亮。
 

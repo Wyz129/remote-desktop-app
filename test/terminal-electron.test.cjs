@@ -27,8 +27,8 @@ test('RTerminal connects keyboard clipboard IPC to SSH and renders returned Mark
   // user's OS clipboard is neither read nor changed by this integration test.
   await application.evaluate(({ clipboard }) => {
     globalThis.clipboardReadCount = 0; globalThis.clipboardWrites = [];
-    clipboard.readText = () => { globalThis.clipboardReadCount++; return 'clipboard via IPC'; };
-    clipboard.writeText = text => globalThis.clipboardWrites.push(text);
+    clipboard.readText = async () => { globalThis.clipboardReadCount++; return 'clipboard via IPC'; };
+    clipboard.writeText = async text => { globalThis.clipboardWrites.push(text); };
   });
   await page.locator('#switchAccountButton:not([disabled])').waitFor(); await page.locator('#switchAccountButton').click();
   await page.locator('#sshHost').fill(fixture.config.host); await page.locator('#sshPort').fill(String(fixture.config.port));
