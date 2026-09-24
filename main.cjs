@@ -707,7 +707,18 @@ app.whenReady().then(async () => {
     exec: (input, context) => { if (sessionTransition) throw new Error('SSH 连接正在切换。'); return executeRemote(requireBackend(), input, { ...context, onCommand: command => context.onProgress({ kind: 'command', data: command }) }); },
     upload: (input, context) => upload(input.localPath, input.remoteDirectory, { id: input.id, ...context, auditCommands: false }),
     download: (input, context) => download(input.remotePath, { id: input.id, destination: input.destination, ...context, auditCommands: false }),
-    cancel: async input => browserManager.cancel(input.id) || transferCenter.cancel(input.id)
+    cancel: async input => browserManager.cancel(input.id) || transferCenter.cancel(input.id),
+    screenshot: async input => {
+      if (!windowRef || windowRef.isDestroyed()) throw new Error('桌面窗口不可用。');
+      const image = await windowRef.webContents.capturePage();
+      const destination = typeof input?.destination === 'string' && input.destination.trim()
+        ? path.resolve(input.destination)
+        : path.join(app.getPath('temp'), `rdesktop-${Date.now()}.png`);
+      await fsp.mkdir(path.dirname(destination), { recursive: true });
+      await fsp.writeFile(destination, image.toPNG());
+      const size = image.getSize();
+      return { path: destination, format: 'png', width: size.width, height: size.height };
+    }
   } });
   try { await instanceBridge.start(); } catch(error) { post({type:'desktopError',error:`本地命令行接口启动失败：${error.message}`}); }
 });

@@ -16,6 +16,7 @@ const HELP = `Remote Desktop 命令行（复用正在运行的桌面实例和 SS
                    [--fingerprint SHA256:...] [--password-stdin] [--ask-passphrase]
   rdesktop upload LOCAL_PATH REMOTE_DIRECTORY
   rdesktop download REMOTE_PATH [LOCAL_DIRECTORY]
+  rdesktop screenshot [LOCAL_PATH]
   rdesktop exec [--cwd REMOTE_DIRECTORY] [--timeout SECONDS] -- "REMOTE COMMAND"
   rdesktop shell [--cwd REMOTE_DIRECTORY]
   rdesktop cancel TASK_ID
@@ -111,7 +112,7 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   const output = dependencies.stdout || process.stdout, errorOutput = dependencies.stderr || process.stderr, input = dependencies.stdin || process.stdin;
   const { args, options } = parseArgs(argv); const command = args.shift();
   if (!command || options.help || command === 'help') { output.write(HELP); return 0; }
-  if (!['list', 'launch', 'status', 'focus', 'connect', 'exec', 'shell', 'upload', 'download', 'cancel'].includes(command)) throw new Error(`未知命令：${command}`);
+  if (!['list', 'launch', 'status', 'focus', 'connect', 'exec', 'shell', 'upload', 'download', 'cancel', 'screenshot'].includes(command)) throw new Error(`未知命令：${command}`);
   const userDataDir = path.resolve(options['user-data-dir'] || defaultUserDataDir());
   const find = dependencies.listInstances || listInstances;
   const request = dependencies.requestInstance || requestInstance;
@@ -162,6 +163,9 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
     payload = { id: crypto.randomUUID(), remotePath: args[0], ...(args[1] ? { destination: path.resolve(args[1]) } : {}) };
   } else if (command === 'cancel') {
     if (args.length !== 1) throw new Error('cancel 需要任务 ID。'); payload = { id: args[0] };
+  } else if (command === 'screenshot') {
+    if (args.length > 1) throw new Error('screenshot 最多接受一个本地 PNG 路径。');
+    payload = args[0] ? { destination: path.resolve(args[0]), format: 'png' } : { format: 'png' };
   }
   const controller = new AbortController();
   const stop = () => controller.abort(); process.once('SIGINT', stop);
@@ -169,7 +173,7 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
     let lastProgress = 0;
     if (payload.id && command !== 'cancel') errorOutput.write(`任务 ${payload.id}\n`);
     const result = await request(entry, action, payload, {
-      timeoutMs: command === 'connect' ? 150000 : command === 'upload' || command === 'download' ? 24 * 60 * 60 * 1000 : 360000,
+      timeoutMs: command === 'connect' ? 150000 : command === 'upload' || command === 'download' ? 24 * 60 * 60 * 1000 : command === 'screenshot' ? 30000 : 360000,
       signal: controller.signal,
       onProgress: value => {
         if (command === 'exec') return; // Final buffers preserve split UTF-8 sequences.

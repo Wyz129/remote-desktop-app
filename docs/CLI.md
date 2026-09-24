@@ -10,11 +10,20 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 & $rdesktop list
 & $rdesktop status
 & $rdesktop focus
+& $rdesktop screenshot 'D:\Temp\rdesktop-ui.png'
 ```
 
 `launch` 在没有实例时启动应用，有实例时唤起窗口。`focus` 和 `connect` 也会在没有实例时尝试启动应用。若启动器已移出打包目录，应通过 `--exe '完整应用路径'` 指定 `Remote Desktop.exe`。启动 GUI 子进程时移除进程局部的 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。
 
 默认使用应用的数据目录（Windows 为 `%APPDATA%\remote-desktop-app`）。全局选项 `--user-data-dir '目录'` 可选择隔离的数据目录。存在多个实例时先 `list`，然后添加 `--instance '返回的实例 ID'`；命令行不会猜测目标实例。`list` 输出 ID、进程 ID、启动时间和连接状态，不输出本地接口认证令牌。
+
+## 软件内容截屏
+
+`screenshot` 通过本地实例接口截取 Remote Desktop 主窗口的当前内容，不建立 SSH 连接，也不会读取服务器文件或凭据。省略路径时写入本机临时目录；指定路径时输出 PNG，父目录会自动创建，返回 JSON 包含实际文件路径、尺寸和格式。该命令适合 Codex 或测试脚本复查 UI 显示；它截取的是应用窗口当前可见内容。
+
+```powershell
+& $rdesktop screenshot --instance 'list 返回的实例 ID' 'D:\Temp\rdesktop-ui.png'
+```
 
 ## 连接与认证
 

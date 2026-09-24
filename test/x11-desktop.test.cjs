@@ -4,11 +4,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { X11DesktopManager, shellScript, stopScript } = require('../lib/x11-desktop.cjs');
 
-function backend() {
+function backend(remotePort = 14500) {
   const commands = [];
   const client = { forwardOut() {} };
   return { connected: true, client, home: '/home/tester', commands,
-    async execText(command) { commands.push(command); return 'ready\n'; } };
+    async execText(command) { commands.push(command); return command.includes('remote-desktop-x11-v3') ? `ready\nport=${remotePort}\n` : 'stopped\n'; } };
 }
 
 test('X11 start script is user scoped and checks the three required components', async () => {
@@ -21,6 +21,8 @@ test('X11 start script is user scoped and checks the three required components',
   assert.match(script, /--bind-tcp=127\.0\.0\.1:14500/);
   assert.match(script, /--html=on/);
   assert.match(script, /-nolisten tcp -ac/);
+  assert.match(script, /port_open\(\)/);
+  assert.match(script, /ready\\nport=%s/);
   assert.doesNotMatch(script, /apt(-get)? install|sudo\b|dpkg -i/);
   const stop = stopScript({ run: '/home/u/.rdesktop/x11/run', display: ':99' });
   assert.match(stop, /kill "\$pid"/);
@@ -35,7 +37,8 @@ test('X11 manager starts a single local loopback forward and stops remote sessio
   assert.equal(state.width, 1024);
   assert.ok(Number.isInteger(state.localPort) && state.localPort > 0);
   assert.equal(source.commands.length, 1);
-  assert.match(source.commands[0], /remote-desktop-x11-v2/);
+  assert.match(source.commands[0], /remote-desktop-x11-v3/);
+  assert.equal(state.port, 14500);
   assert.equal(manager.status().active, true);
   await manager.stop();
   assert.equal(manager.status().active, false);
@@ -49,5 +52,13 @@ test('X11 manager rejects missing SSH and normalizes unsafe display values', asy
   const manager = new X11DesktopManager(source);
   const state = await manager.start({ display: ':99;rm' });
   assert.equal(state.display, ':99');
+  await manager.stop();
+});
+
+test('X11 manager forwards the actual port returned by the remote readiness probe', async () => {
+  const source = backend(14517);
+  const manager = new X11DesktopManager(source);
+  const state = await manager.start();
+  assert.equal(state.port, 14517);
   await manager.stop();
 });
