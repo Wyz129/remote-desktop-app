@@ -36,6 +36,7 @@ let serverInfo = null;
 let serverClockAnchor = null;
 let connectionStatus = '正在连接…';
 let authenticatedProfile = null, connectionProfiles = null, connectionPanelMode = 'login';
+let desktopMode = 'virtual', x11State = { active: false };
 const workbenchFrames = new Map();
 let appContextId = null;
 let appContextWindowId = null;
@@ -1101,7 +1102,7 @@ function scheduleBrowserLayout() {
     }
   });
 }
-async function openServerBrowser() {
+async function openServerBrowser(initialUrl = '') {
   if (!remoteMode) { notify('请先连接 SSH，再打开浏览器。'); return; }
   const existing = state.windows.find(win => win.kind === 'browser');
   if (existing) { focusWindow(existing.id); return; }
@@ -1109,7 +1110,7 @@ async function openServerBrowser() {
   const generation = connectionGeneration;
   browserOpening = (async () => {
     try {
-      const result = await api.openBrowser();
+      const result = await api.openBrowser(initialUrl || undefined);
       if (!remoteMode || generation !== connectionGeneration) { await api.closeBrowser(result.id); return; }
       const win = { id: `browser-${result.id}`, kind: 'browser', browserId: result.id, minimized: false, maximized: false, position: { x: 46, y: 24 }, size: { width: 1050, height: 700 }, z: ++nextLayer };
       const element = $('windowTemplate').content.firstElementChild.cloneNode(true);
@@ -1922,6 +1923,12 @@ function receiveHostMessage(message) { if (!message || typeof message.type !== '
   if (message.type === 'interfacePreferences') { applyInterfacePreferences(message.settings); return; }
   if (message.type === 'programPreferences') { applyProgramPreferences(message.preferences); return; }
   if (message.type === 'connectionInfo') { authenticatedProfile = message.profile || null; renderServerInfo(); if (authenticatedProfile && !connecting && $('connectionDialog').open) $('connectionDialog').close(); return; }
+  if (message.type === 'x11State') {
+    x11State = { ...message, active: Boolean(message.active || message.status === 'ready') };
+    updateX11Button();
+    if (x11State.active && x11State.url) showX11Desktop(x11State.url); else hideX11Desktop();
+    return;
+  }
   if (message.type === 'fullscreenResult') {
     clearTimeout(fullscreenTimer); $('fullscreen').disabled = false;
     notify(message.message || (message.ok ? '已切换全屏视图；F11 或顶栏图标退出' : '全屏请求失败'));
@@ -2183,7 +2190,7 @@ function clearRemoteDesktop(preserveTerminals = false) {
   directories = Object.create(null); directoryRequests.clear(); latestDirectoryRequests.clear(); pendingOperations.clear();
   state.shortcuts = []; state.pinnedApps = []; state.positions = {}; state.activeWindow = null; state.clipboard = null;
   selection = { scope: 'desktop', keys: new Set() };
-  remoteMode = false; desktopAvailable = false; desktopAccessError = ''; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null; authenticatedProfile = null;
+  remoteMode = false; desktopAvailable = false; desktopAccessError = ''; initialized = false; rootPath = '/'; homePath = null; serverInfo = null; serverClockAnchor = null; authenticatedProfile = null; x11State = { active: false }; hideX11Desktop();
   applyInterfacePreferences({ workspacePreferences: {}, workspaceIdentity: '', defaultUploadDirectory: '' });
   if (connectionProfiles && !connecting) setConnectionPanelMode('login');
   resetSystemInfo(); updateBuiltinShortcuts(); settingsBusy(false);
@@ -2206,6 +2213,7 @@ function setConnectionPanelMode(mode) {
   $('saveServer').hidden = $('advancedConnectSubmit').hidden = !advanced;
   $('reconnectButton').hidden = $('connectionExitButton').hidden = !connected;
   $('switchAccountButton').hidden = advanced;
+  $('x11ModeButton').hidden = advanced;
   $('connectionError').textContent = '';
   if (connected) {
     connectionProfiles?.clearSecrets();
@@ -2226,6 +2234,24 @@ function connectionAddress(profile) {
   const address = String(profile.address || profile.host || '').replace(/^::ffff:/, '');
   return `${profile.username}@${address.includes(':') ? `[${address}]` : address}:${profile.port}`;
 }
+function updateX11Button() {
+  const button = $('x11ModeButton');
+  if (!button) return;
+  const active = Boolean(x11State.active || desktopMode === 'x11');
+  button.setAttribute('aria-pressed', String(active));
+  button.title = active ? '使用虚拟 X11 桌面模式' : '使用 Remote Desktop 桌面模式';
+  button.setAttribute('aria-label', active ? '切换到虚拟桌面模式' : '切换到 X11 桌面模式');
+  button.classList.toggle('active', active);
+}
+function showX11Desktop(url) {
+  const element = $('x11DesktopWindow'), frame = $('x11DesktopFrame');
+  if (!element || !frame || !url) return;
+  frame.src = url;
+  element.hidden = false;
+  element.style.left = '36px'; element.style.top = '28px';
+  element.style.width = 'calc(100% - 72px)'; element.style.height = 'calc(100% - 56px)';
+}
+function hideX11Desktop() { const element = $('x11DesktopWindow'); if (element) element.hidden = true; }
 function renderConnectionSettings() {
   const profile = authenticatedProfile;
   $('settingsConnectionTarget').textContent = profile ? `${profile.alias || 'Unknown Server'} · ${connectionAddress(profile)}` : '请先连接 SSH';
@@ -2258,14 +2284,37 @@ async function initializeConnection() {
   $('connectSubmit').replaceChildren(toolIcon('ArrowRight')); $('backToLogin').replaceChildren(toolIcon('ArrowLeft')); $('closeConnection').replaceChildren(toolIcon('X'));
   $('closeDownloads').replaceChildren(toolIcon('X')); $('closeApplications').replaceChildren(toolIcon('X'));
   $('reconnectButton').replaceChildren(toolIcon('RotateCw')); $('connectionExitButton').replaceChildren(toolIcon('Power'));
+  $('switchAccountButton').replaceChildren(toolIcon('UsersRound')); $('x11ModeButton').replaceChildren(toolIcon('Monitor'));
+  updateX11Button();
   $('downloadsButton').replaceChildren(toolIcon('ArrowUpDown'));
   $('browserButton').replaceChildren(toolIcon('Globe'));
   $('browserButton').addEventListener('click', openServerBrowser);
+  for (const button of document.querySelectorAll('#x11DesktopWindow [data-x11-action]')) button.addEventListener('click', () => {
+    const window = $('x11DesktopWindow');
+    if (button.dataset.x11Action === 'close') { hideX11Desktop(); void api.stopX11().catch(error => notify(error.message)); }
+    else if (button.dataset.x11Action === 'minimize') window.hidden = true;
+    else if (button.dataset.x11Action === 'maximize') { window.style.left = '0'; window.style.top = '0'; window.style.width = '100%'; window.style.height = '100%'; }
+  });
   $('connectButton').addEventListener('click', showConnectionPanel);
   $('switchAccountButton').addEventListener('click', () => { if (connectionPanelMode === 'connected') profiles.fill(authenticatedProfile); else profiles.clearSecrets(); setConnectionPanelMode('advanced'); $('serverProfile').focus(); });
+  $('x11ModeButton').addEventListener('click', async () => {
+    if (connectionPanelMode === 'connected' && authenticatedProfile) {
+      try {
+        if (x11State.active) await api.stopX11();
+        else await api.startX11();
+      } catch (error) { notify(`X11 桌面切换失败：${error.message}`); }
+      return;
+    }
+    desktopMode = desktopMode === 'x11' ? 'virtual' : 'x11';
+    updateX11Button();
+    notify(desktopMode === 'x11' ? '登录后使用 X11 桌面模式' : '登录后使用 Remote Desktop 桌面模式');
+  });
   $('backToLogin').addEventListener('click', () => { profiles.clearSecrets(); setConnectionPanelMode('login'); (profiles.hasSaved() ? $('sshUsername') : $('switchAccountButton')).focus(); });
   $('reconnectButton').addEventListener('click', () => reconnectToProfile(authenticatedProfile));
-  $('connectionExitButton').addEventListener('click', async () => { try { await api.quit(); } catch (error) { $('connectionError').textContent = error.message; } });
+  $('connectionExitButton').addEventListener('click', async () => {
+    try { await api.disconnect(); $('connectionDialog').close(); }
+    catch (error) { $('connectionError').textContent = error.message; }
+  });
   $('connectionPortForm').addEventListener('submit', async event => {
     event.preventDefault();
     if (!$('connectionPortForm').reportValidity() || !authenticatedProfile) return;
@@ -2286,7 +2335,7 @@ async function initializeConnection() {
     if (!$('sshHost').checkValidity() || !$('sshPort').checkValidity()) setConnectionPanelMode('advanced');
     if (!$('connectionForm').reportValidity()) return;
     connecting = true; setConnectionBusy(true); $('connectionError').textContent = ''; $('connectionHint').textContent = '正在连接服务器…';
-    const input = profiles.input();
+    const input = { ...profiles.input(), desktopMode };
     if ($('sshPassword').value) input.password = $('sshPassword').value;
     if ($('sshPrivateKey').value) input.privateKeyPath = $('sshPrivateKey').value;
     if (connectionPanelMode !== 'advanced' && $('reconnectPassphrase').value) input.passphrase = $('reconnectPassphrase').value;

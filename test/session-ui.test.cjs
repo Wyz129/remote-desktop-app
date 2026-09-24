@@ -51,7 +51,7 @@ async function scenario(t, saved = false) {
         window.receive({ type: 'remoteState', status: 'ready', rootPath: '/home/tester/.rdesktop/desktop', homePath: '/home/tester', entries: [], config: { viewMode: 'details' } });
         return current;
       },
-      async disconnect() { window.receive({ type: 'remoteState', status: 'disconnected' }); },
+      async disconnect() { window.calls.push({ type: 'disconnect' }); window.receive({ type: 'remoteState', status: 'disconnected' }); },
       async quit() { window.calls.push({ type: 'quit' }); }, async choosePrivateKey() { return 'C:\\keys\\id'; },
       async listTransfers() { return []; }, async listDocuments() { return []; },
       send(message) { window.calls.push({ type: 'message', message }); }
@@ -90,14 +90,15 @@ test('connected account card contains only alias and endpoint, with inline recon
   assert.equal(await page.locator('#connectedAddress').textContent(), 'tester@192.0.2.10:2222');
   assert.equal(await page.locator('#connectionDialog #disconnectButton').count(), 0);
   assert.equal(await page.locator('#serverDisplayAddress').isVisible(), false);
-  assert.equal(await page.locator('.server-name-row #reconnectButton').isVisible(), true);
+  assert.equal(await page.locator('.login-actions #reconnectButton').isVisible(), true);
+  assert.equal(await page.locator('.login-actions #reconnectButton').evaluate(element => Boolean(element.compareDocumentPosition(document.getElementById('connectionExitButton')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
   await page.screenshot({ path: path.join(project, 'artifacts', 'session-connected-1.1.12.png') });
   await page.locator('#reconnectButton').click();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');
   assert.equal(await page.locator('#sshUsername').getAttribute('readonly'), '');
   await page.locator('#closeConnection').click(); await page.locator('#connectButton').click();
   await page.locator('#connectionExitButton').click();
-  assert.equal(await page.evaluate(() => window.calls.some(call => call.type === 'quit')), true);
+  assert.equal(await page.evaluate(() => window.calls.some(call => call.type === 'disconnect')), true);
   await page.evaluate(() => window.remoteDesktop.disconnect());
   assert.equal(await page.locator('#connectionIndicator.connected').count(), 0);
   assert.equal(await page.locator('#connection').textContent(), 'tester');
