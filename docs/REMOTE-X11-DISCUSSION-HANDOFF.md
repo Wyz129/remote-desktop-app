@@ -317,4 +317,5 @@ xpra.exe attach tcp://127.0.0.1:14500/
 - 登录界面中，切换账号按钮右侧的显示器符号用于选择 X11 模式；连接后再次点击可启动或停止 X11 会话。
 - 主进程复用当前 `ssh2` 连接的 `forwardOut` 建立本机回环临时端口，不会创建第二条 SSH 连接，也不会把密码、私钥或实例令牌交给 xpra。
 - 服务器端 Xvfb、XFCE 与 xpra 的运行目录为 `~/.rdesktop/x11/run`，日志目录为 `~/.rdesktop/log/x11`；xpra 只绑定远程 `127.0.0.1`。
+- 组件查找同时覆盖系统安装、`~/.rdesktop/opt/bin` 以及本次服务器验证使用的 `~/.rdesktop/opt/x11-validation/root/usr/bin` 和 `xpra-root/usr/bin`；解包版 xpra 会自动加入对应的 Python 模块路径。
 - 当前集成使用 xpra HTML5 页面嵌入虚拟桌面窗口。Windows 原生 xpra 客户端、完整剪贴板往返、断线重连策略和多实例并行仍需单独验证。

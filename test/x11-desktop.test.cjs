@@ -13,7 +13,8 @@ function backend() {
 
 test('X11 start script is user scoped and checks the three required components', async () => {
   const script = shellScript({ root: '/home/u/.rdesktop', run: '/home/u/.rdesktop/x11/run', log: '/home/u/.rdesktop/log/x11', display: ':99', port: 14500, width: 1280, height: 800, depth: 24 });
-  assert.match(script, /PATH="\$root\/opt\/bin:\$PATH"/);
+  assert.match(script, /PATH="\$root\/opt\/bin:\$validation\/xpra-root\/usr\/bin:\$validation\/root\/usr\/bin:\$PATH"/);
+  assert.match(script, /PYTHONPATH="\$validation\/xpra-root\/usr\/lib\/python3\/dist-packages/);
   assert.match(script, /command -v Xvfb/);
   assert.match(script, /command -v xfce4-session/);
   assert.match(script, /command -v xpra/);
@@ -34,7 +35,7 @@ test('X11 manager starts a single local loopback forward and stops remote sessio
   assert.equal(state.width, 1024);
   assert.ok(Number.isInteger(state.localPort) && state.localPort > 0);
   assert.equal(source.commands.length, 1);
-  assert.match(source.commands[0], /remote-desktop-x11-v1/);
+  assert.match(source.commands[0], /remote-desktop-x11-v2/);
   assert.equal(manager.status().active, true);
   await manager.stop();
   assert.equal(manager.status().active, false);
