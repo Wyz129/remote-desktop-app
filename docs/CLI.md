@@ -56,6 +56,8 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 
 `shell` 需要真正的交互终端，不支持管道输入或 `--json`；自动化命令使用 `exec`。Windows 控制台按原生终端方式显示文本和 ANSI，Markdown/公式阅读分栏仅存在于虚拟桌面的 RTerminal。启动器参数不含 SSH 密码、私钥内容或本地认证令牌。
 
+X11 模式启动时会先检查 xpra HTML5 页面所需的 JavaScript/CSS 资源；缺失资源会直接报错并清理会话，不会显示只有纯色背景的空窗口。若远程 XFCE 会话已经因闲置进入锁屏，画面会显示 XFCE 的解锁界面，这是服务器桌面会话本身的安全状态，需要输入该服务器账号密码解锁。
+
 监听归入 Activity Monitor 的第三方访问，原始 PTY 输入（包括控制字符）、启动命令、服务器回复及时间写入独立 CLI 日志；系统日志只保存连接信息及对应日志文件。不会把按键猜测重建为 shell 命令。日志遵循现有大小上限与轮换规则。
 
 ## 单次执行服务器命令

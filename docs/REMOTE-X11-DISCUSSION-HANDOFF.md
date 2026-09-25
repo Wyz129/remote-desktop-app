@@ -319,5 +319,6 @@ xpra.exe attach tcp://127.0.0.1:14500/
 - 服务器端 Xvfb、XFCE 与 xpra 的运行目录为 `~/.rdesktop/x11/run`，日志目录为 `~/.rdesktop/log/x11`；xpra 只绑定远程 `127.0.0.1`。
 - 组件查找同时覆盖系统安装、`~/.rdesktop/opt/bin` 以及本次服务器验证使用的 `~/.rdesktop/opt/x11-validation/root/usr/bin` 和 `xpra-root/usr/bin`；解包版 xpra 会自动加入对应的 Python 模块路径。
 - 当前集成使用 xpra HTML5 页面嵌入虚拟桌面窗口。Windows 原生 xpra 客户端、完整剪贴板往返、断线重连策略和多实例并行仍需单独验证。
-- X11 启动脚本使用 `remote-desktop-x11-v3`：启动 xpra 后会轮询其进程和回环端口，只有端口真正可连接才返回 `ready` 与 `port=<实际端口>`。默认端口被占用时会在后续 20 个端口中选择可用端口；启动失败不会再误报就绪，管理器也会清理已启动的 Xvfb、XFCE 和 xpra 进程。
+- X11 启动脚本使用 `remote-desktop-x11-v4`：启动前会检查用户级 xpra HTML5 包中的 `jquery.js`。如果解包产生失效符号链接，会从服务器现有的可读 JavaScript 包复制到用户目录；缺失时明确报错，不会再打开只有背景的假就绪页面。启动 xpra 后仍会轮询其进程和回环端口，只有端口真正可连接才返回 `ready` 与 `port=<实际端口>`。默认端口被占用时会在后续 20 个端口中选择可用端口；启动失败不会再误报就绪，管理器也会清理已启动的 Xvfb、XFCE 和 xpra 进程。
+- 管理器在建立本机端口转发后会检查 xpra 根 HTML 以及其中所有同源 JavaScript/CSS 资源的 HTTP 状态、MIME、大小和内容；资源不完整时会关闭转发、停止远程会话并显示明确错误。这样不会把“端口已监听但网页脚本缺失”误报为可用桌面。
 - 本地 CLI 增加 `rdesktop screenshot [本地 PNG 路径]`，通过实例接口截取应用主窗口，便于复查 X11 窗口和其他 UI；该操作不建立 SSH 连接，也不读取服务器凭据。
