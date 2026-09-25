@@ -10,20 +10,11 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 & $rdesktop list
 & $rdesktop status
 & $rdesktop focus
-& $rdesktop screenshot 'D:\Temp\rdesktop-ui.png'
 ```
 
 `launch` 在没有实例时启动应用，有实例时唤起窗口。`focus` 和 `connect` 也会在没有实例时尝试启动应用。若启动器已移出打包目录，应通过 `--exe '完整应用路径'` 指定 `Remote Desktop.exe`。启动 GUI 子进程时移除进程局部的 `ELECTRON_RUN_AS_NODE`，不会修改系统环境。
 
 默认使用应用的数据目录（Windows 为 `%APPDATA%\remote-desktop-app`）。全局选项 `--user-data-dir '目录'` 可选择隔离的数据目录。存在多个实例时先 `list`，然后添加 `--instance '返回的实例 ID'`；命令行不会猜测目标实例。`list` 输出 ID、进程 ID、启动时间和连接状态，不输出本地接口认证令牌。
-
-## 软件内容截屏
-
-`screenshot` 通过本地实例接口截取 Remote Desktop 主窗口的当前内容，不建立 SSH 连接，也不会读取服务器文件或凭据。省略路径时写入本机临时目录；指定路径时输出 PNG，父目录会自动创建，返回 JSON 包含实际文件路径、尺寸和格式。该命令适合 Codex 或测试脚本复查 UI 显示；它截取的是应用窗口当前可见内容。
-
-```powershell
-& $rdesktop screenshot --instance 'list 返回的实例 ID' 'D:\Temp\rdesktop-ui.png'
-```
 
 ## 连接与认证
 
@@ -55,8 +46,6 @@ $rdesktop = 'C:\0_myfiles\new_projects\remote-desktop-app\artifacts\electron-1.1
 这是持续的 SSH PTY：`cd`、环境变量与交互程序保留会话状态，键盘输入、ANSI 回复和窗口尺寸经本地命名管道转发。Ctrl+C 传给远程程序；Ctrl+] 仅关闭当前转发终端，也可正常输入 `exit` 退出。关闭本机窗口会释放对应远程 PTY，桌面连接保持；桌面断连、切换账号或退出后终端会话结束，不自动重新绑定其他实例。Windows 窗口保留会话结束信息，可手动关闭。多个本机与虚拟终端合计最多 8 个。
 
 `shell` 需要真正的交互终端，不支持管道输入或 `--json`；自动化命令使用 `exec`。Windows 控制台按原生终端方式显示文本和 ANSI，Markdown/公式阅读分栏仅存在于虚拟桌面的 RTerminal。启动器参数不含 SSH 密码、私钥内容或本地认证令牌。
-
-X11 模式启动时会先检查 xpra HTML5 页面所需的 JavaScript/CSS 资源；缺失资源会直接报错并清理会话，不会显示只有纯色背景的空窗口。若远程 XFCE 会话已经因闲置进入锁屏，画面会显示 XFCE 的解锁界面，这是服务器桌面会话本身的安全状态，需要输入该服务器账号密码解锁。
 
 监听归入 Activity Monitor 的第三方访问，原始 PTY 输入（包括控制字符）、启动命令、服务器回复及时间写入独立 CLI 日志；系统日志只保存连接信息及对应日志文件。不会把按键猜测重建为 shell 命令。日志遵循现有大小上限与轮换规则。
 

@@ -46,15 +46,12 @@
 .login-dialog #connectionError { color:#efa59f; }
 .login-dialog #connectionError:empty { display:none; }
 .login-actions { display:flex; justify-content:center; flex-wrap:wrap; gap:10px; margin-top:18px; padding:0; border:0; }
-.login-dialog #switchAccountButton { flex:none; display:grid; place-items:center; width:32px; height:32px; padding:0; color:#ddd6e1; border:0; border-radius:50%; background:transparent; }
-.login-dialog #switchAccountButton:hover, .login-dialog #switchAccountButton:focus-visible { background:#ffffff18; }
-.login-dialog #x11ModeButton[aria-pressed="true"] { color:#f1bd72; background:#ffffff18; }
-.login-dialog #x11ModeButton:hover, .login-dialog #x11ModeButton:focus-visible { background:#ffffff18; }
-.login-dialog #switchAccountButton .tool-icon, .login-dialog #x11ModeButton .tool-icon { display:block; width:18px; height:18px; }
+.login-dialog #switchAccountButton { min-height:34px; padding:7px 16px; color:#ded5e1; border:1px solid transparent; border-radius:18px; background:transparent; font-size:13px; }
+.login-dialog #switchAccountButton:hover { border-color:#68536d; background:#ffffff0b; }
 .connected-account { display:flex; align-items:center; flex-direction:column; gap:9px; margin:0; color:#bdb3c1; text-align:center; overflow-wrap:anywhere; }
 .connected-account strong { color:#eeeeee; font-size:22px; font-weight:500; }
 .connected-account > :last-child { font-size:12px; }
-.login-dialog[data-mode="connected"] .login-actions #switchAccountButton { border:0; border-radius:50%; background:transparent; color:#e6dfe8; }
+.login-dialog[data-mode="connected"] .login-actions #switchAccountButton { padding:8px 18px; border:1px solid #65576a; border-radius:18px; background:#413345; color:#e6dfe8; }
 .login-dialog[data-mode="connected"] #switchAccountButton { background:#554151; }
 .login-dialog[data-mode="connected"] .login-actions { align-items:center; gap:12px; margin-top:26px; }
 .login-dialog[data-mode="connected"] .connected-account { margin-top:14px; }

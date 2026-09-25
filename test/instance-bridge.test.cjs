@@ -94,19 +94,6 @@ test('CLI selects instances, forwards upload/exec and never prints auth token', 
   assert.equal(stdout.text, 'result\n'); assert.equal(stderr.text, 'warning\n'); assert.equal(calls[1].cwd, '/uploads');
 });
 
-test('CLI screenshot requests a local application capture without SSH arguments', options, async t => {
-  const calls = [], { entry, directory } = await bridge(t, {
-    screenshot: async args => { calls.push(args); return { path: args.destination || 'temp.png', format: 'png', width: 800, height: 600 }; }
-  });
-  const stdout = capture(), stderr = capture();
-  const target = path.join(directory, 'ui', 'capture.png');
-  assert.equal(await runCli(['--user-data-dir', directory, 'screenshot', target], { stdout, stderr }), 0);
-  assert.deepEqual(calls, [{ destination: path.resolve(target), format: 'png' }]);
-  const result = JSON.parse(stdout.text);
-  assert.equal(result.width, 800); assert.equal(result.height, 600); assert.equal(result.format, 'png');
-  assert.throws(() => parseArgs(['screenshot', '--password', 'secret']), /不能写入命令行/);
-});
-
 test('CLI uses hidden password callback, rejects secrets in arguments, and requires instance disambiguation', options, async () => {
   const entry = { instanceId: 'one', token: 'secret', status: {} }; let seen;
   const deps = { stdout: capture(), stderr: capture(), listInstances: async () => [entry], readPassword: async (_input, _out, prompt, stdin) => { assert.match(prompt, /密码/); assert.equal(stdin, false); return 'sensitive'; }, requestInstance: async (_entry, action, args) => { seen = { action, args: { ...args } }; return { connected: true }; } };

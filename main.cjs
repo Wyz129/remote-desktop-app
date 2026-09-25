@@ -24,7 +24,6 @@ const { createWorkbenchManager } = require('./lib/workbench-manager.cjs');
 const { createBrowserManager } = require('./lib/browser-manager.cjs');
 const { ensureRemoteStorage } = require('./lib/remote-storage.cjs');
 const { VideoService } = require('./lib/video-service.cjs');
-const { X11DesktopManager } = require('./lib/x11-desktop.cjs');
 const { serverProfile, profilesFromSettings, upsertProfile, storagePreferences, connectionTitle, automaticServerAlias } = require('./lib/server-profiles.cjs');
 const { normalizeProgramPreferences, updateProgramPreferences } = require('./lib/program-preferences.cjs');
 const { workspacePreferences, workspaceLocations, shellPreferences } = require('./lib/interface-preferences.cjs');
@@ -33,7 +32,7 @@ const { normalize: contextMenuPreferences } = require('./app/context-menu.js');
 const userDataArgument = process.argv.find(arg => arg.startsWith('--user-data-dir='));
 if (userDataArgument) app.setPath('userData', path.resolve(userDataArgument.slice('--user-data-dir='.length)));
 let windowRef, backend, desktopService, connecting = false;
-let uploader, instanceBridge, workbench, browserManager, localPicker, videoService, x11Desktop;
+let uploader, instanceBridge, workbench, browserManager, localPicker, videoService;
 const activityLog = new ActivityLog({ onEvent: value => send('activity:event', value) });
 const audit = createAuditor(activityLog);
 const cliActivity = new Map();
@@ -202,10 +201,10 @@ function quitSafely() {
   return quitPromise;
 }
 function closeConnectionResources() {
-  const previousUploader = uploader, previousVideo = videoService, previousX11 = x11Desktop;
-  uploader = null; videoService = null; x11Desktop = null; windowRef?.setTitle('Remote Desktop'); localPicker?.close(); selectedLocalPaths.clear(); selectedDownloadDirectories.clear();
+  const previousUploader = uploader, previousVideo = videoService;
+  uploader = null; videoService = null; windowRef?.setTitle('Remote Desktop'); localPicker?.close(); selectedLocalPaths.clear(); selectedDownloadDirectories.clear();
   const cleanup = connectionCleanup.then(async () => {
-    const results = await Promise.allSettled([previousX11?.stop(), browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close(), previousVideo?.disconnect()]);
+    const results = await Promise.allSettled([browserManager?.disconnect(), workbench?.disconnect(), previousUploader?.close(), previousVideo?.disconnect()]);
     const failure = results.find(result => result.status === 'rejected');
     if (failure) throw failure.reason;
     await workspacePreferenceQueue.catch(() => {});
@@ -439,7 +438,6 @@ async function connectSsh(input, trustedLocal = false) {
       desktopService = backend.desktopService();
       uploader = new UploadService(backend);
       videoService = new VideoService(backend);
-      x11Desktop = new X11DesktopManager(backend);
       backend.desktopIdentity = desktopIdentity({ host, port, username, hostFingerprint: result.hostFingerprint });
       if (profile.aliasAuto && profile.alias === 'Unknown Server') {
         try { profile.alias = automaticServerAlias(await desktopService.systemInfo()); }
@@ -449,18 +447,6 @@ async function connectSsh(input, trustedLocal = false) {
       result = { ...result, alias: profile.alias, aliasAuto: profile.aliasAuto, port, address: backend.client?._sock?.remoteAddress || host };
       windowRef.setTitle(connectionTitle(profile, result.address));
       backend.connectionProfile = { ...profile, address: result.address };
-      if (input.desktopMode === 'x11') {
-        try {
-          const x11 = await x11Desktop.start(input.x11 || {});
-          post({ type: 'x11State', status: 'ready', ...x11 });
-        } catch (error) {
-          await closeConnectionResources().catch(() => {});
-          await backend.disconnect().catch(() => {}); desktopService = null;
-          throw new Error(`X11 桌面启动失败：${error.message}`);
-        }
-      } else {
-        post({ type: 'x11State', status: 'stopped', active: false });
-      }
       post({ type: 'connectionInfo', profile: backend.connectionProfile });
       try { await inspect(false, true); } catch (error) { post({ type: 'remoteState', status: 'error', homePath: backend.home, message: accessMessage(error, settings.desktopLocations[backend.desktopIdentity]) }); }
       if (!trustedLocal) activityLog.system({ type: 'ssh-connected', host, port, username, home: backend.home, desktop: backend.desktop });
@@ -598,21 +584,6 @@ function registerIpc() {
     if (result.canceled) return null; const selected = result.filePaths[0]; selectedKeys.add(selected); return selected;
   });
   handle('ssh:connect', input => connectSsh(input));
-  handle('x11:start', async options => {
-    const source = requireBackend();
-    if (sessionTransition || !x11Desktop) throw new Error('SSH 连接正在切换。');
-    const state = await x11Desktop.start(options || {});
-    post({ type: 'x11State', status: 'ready', ...state });
-    return state;
-  });
-  handle('x11:stop', async () => {
-    const state = x11Desktop;
-    if (!state) return { stopped: true };
-    const result = await state.stop();
-    post({ type: 'x11State', status: 'stopped', active: false });
-    return result;
-  });
-  handle('x11:status', () => x11Desktop?.status() || { active: false });
   handle('ssh:disconnect', async () => {
     if (sessionTransition) return false; sessionTransition = true;
     try {
@@ -707,18 +678,7 @@ app.whenReady().then(async () => {
     exec: (input, context) => { if (sessionTransition) throw new Error('SSH 连接正在切换。'); return executeRemote(requireBackend(), input, { ...context, onCommand: command => context.onProgress({ kind: 'command', data: command }) }); },
     upload: (input, context) => upload(input.localPath, input.remoteDirectory, { id: input.id, ...context, auditCommands: false }),
     download: (input, context) => download(input.remotePath, { id: input.id, destination: input.destination, ...context, auditCommands: false }),
-    cancel: async input => browserManager.cancel(input.id) || transferCenter.cancel(input.id),
-    screenshot: async input => {
-      if (!windowRef || windowRef.isDestroyed()) throw new Error('桌面窗口不可用。');
-      const image = await windowRef.webContents.capturePage();
-      const destination = typeof input?.destination === 'string' && input.destination.trim()
-        ? path.resolve(input.destination)
-        : path.join(app.getPath('temp'), `rdesktop-${Date.now()}.png`);
-      await fsp.mkdir(path.dirname(destination), { recursive: true });
-      await fsp.writeFile(destination, image.toPNG());
-      const size = image.getSize();
-      return { path: destination, format: 'png', width: size.width, height: size.height };
-    }
+    cancel: async input => browserManager.cancel(input.id) || transferCenter.cancel(input.id)
   } });
   try { await instanceBridge.start(); } catch(error) { post({type:'desktopError',error:`本地命令行接口启动失败：${error.message}`}); }
 });
