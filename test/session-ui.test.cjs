@@ -91,6 +91,7 @@ test('connected account card contains only alias and endpoint, with inline recon
   assert.equal(await page.locator('#connectionDialog #disconnectButton').count(), 0);
   assert.equal(await page.locator('#serverDisplayAddress').isVisible(), false);
   assert.equal(await page.locator('.server-name-row #reconnectButton').isVisible(), true);
+  assert.deepEqual(await page.locator('.server-name-row').locator('button:visible').evaluateAll(buttons => buttons.map(button => button.id)), ['reconnectButton', 'connectionExitButton']);
   await page.screenshot({ path: path.join(project, 'artifacts', 'session-connected-1.1.12.png') });
   await page.locator('#reconnectButton').click();
   assert.equal(await page.locator('#sshPassword').inputValue(), '');

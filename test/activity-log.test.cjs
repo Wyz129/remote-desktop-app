@@ -190,6 +190,66 @@ test('records rotate at complete JSON lines and use private exclusive files', as
   await log.disconnect(); assert.equal(fixture.handles.size, 0);
 });
 
+test('all third-party requests in one server connection share a single archive', async () => {
+  const fixture = memoryBackend(), log = new ActivityLog();
+  await log.attach(fixture.backend, '/desktop');
+  const first = log.beginCli({ id: 'request-a', action: 'exec', ip: '192.0.2.10' });
+  const second = log.beginCli({ id: 'request-b', action: 'download', ip: '192.0.2.10' });
+  assert.equal(first.archiveId, second.archiveId);
+  assert.equal(first.logPath, second.logPath);
+  log.cli(first.id, { type: 'command', command: 'printf first' });
+  log.cli(second.id, { type: 'command', command: 'printf second' });
+  log.cli(first.id, { type: 'stdout', data: 'first reply' });
+  log.cli(second.id, { type: 'stdout', data: 'second reply' });
+  log.cli(first.id, { type: 'end', result: { code: 0 } });
+  log.cli(second.id, { type: 'end', result: { code: 0 } });
+  await log.flush();
+  const archive = log.snapshot().archives.find(item => item.id === first.archiveId);
+  assert.ok(archive);
+  assert.equal(archive.logPath, first.logPath);
+  const records = archive.logPaths.flatMap(name => fixture.lines(name));
+  assert.deepEqual(records.filter(record => record.type === 'connection').map(record => record.operationId), [first.id, second.id]);
+  assert.deepEqual(records.filter(record => record.type === 'command').map(record => record.operationId), [first.id, second.id]);
+  assert.ok(records.some(record => record.data === 'first reply' && record.archiveId === archive.id));
+  assert.ok(records.some(record => record.data === 'second reply' && record.archiveId === archive.id));
+  await log.disconnect();
+  assert.equal(log.snapshot().archives.find(item => item.id === archive.id).status, 'disconnected');
+});
+
+test('changing log directory retains one ordered archive for completed and later concurrent operations', async () => {
+  const fixture = memoryBackend(), log = new ActivityLog();
+  await log.attach(fixture.backend, '/desktop');
+  const first = log.beginCli({ id: 'before-log-change' });
+  log.cli(first.id, { type: 'command', command: 'printf before' });
+  await log.attach(fixture.backend, '/other');
+  log.cli(first.id, { type: 'stdout', data: 'before reply' });
+  log.cli(first.id, { type: 'end', result: { code: 0 } });
+  await log.flush();
+  const owner = [...log.archives.values()][0].writer.context;
+  assert.equal(owner.closed, false, 'ending the last active request does not close a reusable connection archive');
+  const beforeWrites = fixture.sftp.write;
+  let pending = 0, maximumPending = 0;
+  fixture.sftp.write = (...args) => {
+    pending++; maximumPending = Math.max(maximumPending, pending);
+    const callback = args.pop();
+    setImmediate(() => beforeWrites(...args, (error, value) => { pending--; callback(error, value); }));
+  };
+  const second = log.beginCli({ id: 'after-log-change' }), third = log.beginCli({ id: 'after-log-change-concurrent' });
+  for (const session of [second, third]) {
+    assert.equal(session.archiveId, first.archiveId); assert.equal(session.logPath, first.logPath);
+    log.cli(session.id, { type: 'command', command: session.id });
+    log.cli(session.id, { type: 'stdout', data: `${session.id} reply` });
+    log.cli(session.id, { type: 'end', result: { code: 0 } });
+  }
+  await log.flush();
+  assert.equal(maximumPending, 1, 'connection markers and output use one serialized archive-owner queue');
+  const records = fixture.lines(first.logPath);
+  assert.deepEqual(records.filter(record => record.type === 'connection').map(record => record.operationId), [first.id, second.id, third.id]);
+  for (const session of [first, second, third]) assert.deepEqual(records.filter(record => record.operationId === session.id).map(record => record.type), ['connection', 'command', 'stdout', 'end']);
+  assert.ok(!fixture.allLines('/other/.log/').some(record => record.archiveId === first.archiveId));
+  await log.disconnect(); assert.equal(fixture.handles.size, 0);
+});
+
 test('desktop change guards stale GUI results and running CLI stays in original log', async () => {
   const fixture = memoryBackend(), log = new ActivityLog();
   await log.attach(fixture.backend, '/desktop');

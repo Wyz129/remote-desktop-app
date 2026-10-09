@@ -1,6 +1,8 @@
 # Remote Desktop App 开发交接
 
-更新日期：2026-09-21。当前独立应用版本：0.9.1-beta.1（Beta 0.9.1）。
+更新日期：2026-10-09。当前独立应用版本：0.9.1-beta.1.1（Beta 0.9.1.1）。
+
+本版加固 Windows PowerShell 启动环境、工作目录与诊断；CLI 请求保留 operationId、按 SSH 连接共用 archiveId 和归档文件；Browser 支持受控 HTML/HTM/PDF 只读预览；Account 退出按钮位于重连右侧。checkpoint/pre-beta-0.9.1.1 为本轮回退点，打包至 artifacts/electron-beta-0.9.1.1。详细变更及实际验证范围见 docs/RELEASE-BETA-0.9.1.1.md，本轮不推送 GitHub。
 
 Beta 0.9.1：修复 Electron 44 异步剪贴板 IPC；快捷栏/目录空白右键“打开本机终端”调用固定 terminal:open-local IPC，lib/local-terminal.cjs 用隐藏 PowerShell 启动器与 Start-Process 分配独立 Windows 控制台，内层 -NoNewWindow -Wait 运行随包 rdesktop shell。直接 detached + stdio ignore 会失去 TTY，不能回退该实现。Electron GUI 子系统对 stdin 初始化不同；scripts/cli.cjs 的 interactiveInput 仅在 Electron/Windows、实际控制台输出、stdin 为字符设备时，以 r+ 重开 CONIN$ 获得 libuv 原始输入，不接管重定向文件/管道。lib/interactive-shell.cjs 复用现有 SSH PTY，instance-bridge 增加有大小/流量边界的双向 shell 帧，CLI raw mode、UTF-8 增量解码、resize、Ctrl+C 转发、Ctrl+] 关闭。日志进入第三方访问，系统日志仅保留连接引用。启动参数没有凭据/令牌。
 

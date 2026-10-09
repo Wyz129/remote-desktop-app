@@ -72,7 +72,7 @@ let directoryPicker = null;
 let fileAccessChoice = null;
 const fileAccessRequests = new Set();
 let transferPicker = null, transferWorkflow = null;
-const activity = { sessions: [], entries: [], systemLogPath: '', error: '', connected: false, selected: '', toastSession: '', revision: 0 };
+const activity = { sessions: [], archives: [], entries: [], systemLogPath: '', error: '', connected: false, selected: '', toastSession: '', revision: 0 };
 const ACTIVITY_ENTRY_LIMIT = 600, ACTIVITY_SESSION_LIMIT = 100, ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 let activityFrame = null;
 let shellUi = null, interfaceSettings = null;
@@ -834,6 +834,7 @@ async function openItem(item, scope = 'desktop', mode = 'auto') {
   } finally { if (generation === connectionGeneration) fileAccessRequests.delete(item.path); }
   if (mode === 'auto' && /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(item.name)) { openImage(item); return; }
   if (mode === 'auto' && /\.(mp4|m4v|webm|ogv|ogg|mov|mkv|avi)$/i.test(item.name)) { void openVideo(item); return; }
+  if (mode === 'browser') { void openBrowserFile(item.path); return; }
   if (mode === 'auto' && /\.(zip|gz|bz2|xz|7z|rar|tar|exe|dll|so|bin|odb|pdf|docx?|xlsx?|pptx?|mp4|mp3|wav|sqlite|db)$/i.test(item.name)) { notify('此文件适合下载后在本地打开，请右键选择“下载到本地”。'); return; }
   if (!access.writable) { showFileAccessDialog(item, true, access.error, mode); return; }
   await openDocument(item, mode, false);
@@ -1136,6 +1137,11 @@ async function openServerBrowser() {
   })();
   return browserOpening;
 }
+async function openBrowserFile(remotePath) {
+  if (!remoteMode) { notify('请先连接 SSH，再打开服务器文件。'); return; }
+  try { await openServerBrowser(); await api.openBrowserFile(remotePath); }
+  catch (error) { notify(error.message || String(error)); }
+}
 api.onBrowserEvent?.(event => {
   const win = state.windows.find(current => current.kind === 'browser' && current.browserId === event.id);
   if (!win) return;
@@ -1200,7 +1206,24 @@ function mergeActivitySessions(sessions, preferExisting = false) {
     merged.set(session.id, preferExisting ? { ...safe, ...merged.get(session.id) } : { ...merged.get(session.id), ...safe });
   }
   activity.sessions = [...merged.values()].slice(-ACTIVITY_SESSION_LIMIT);
-  if (activity.selected && !activity.sessions.some(session => session.id === activity.selected)) activity.selected = '';
+  const selectedSession = activity.sessions.find(session => session.id === activity.selected);
+  if (selectedSession?.archiveId) activity.selected = `archive:${selectedSession.archiveId}`;
+  if (activity.selected && !activity.selected.startsWith('archive:') && !activity.sessions.some(session => session.id === activity.selected)) activity.selected = '';
+}
+function mergeActivityArchives(archives, preferExisting = false) {
+  const merged = new Map(activity.archives.map(archive => [archive.id, archive]));
+  for (const archive of archives || []) {
+    if (!archive || typeof archive.id !== 'string') continue;
+    const safe = Object.fromEntries(Object.entries(archive).map(([key, value]) => [key, typeof value === 'string' ? activityText(value) : key === 'logPaths' && Array.isArray(value) ? value.slice(-100).map(activityText) : value]));
+    merged.set(archive.id, preferExisting ? { ...safe, ...merged.get(archive.id) } : { ...merged.get(archive.id), ...safe });
+  }
+  activity.archives = [...merged.values()].slice(-ACTIVITY_SESSION_LIMIT);
+}
+function archiveFromSession(session) {
+  if (!session?.archiveId) return;
+  mergeActivityArchives([{ id: session.archiveId, time: session.time, ip: session.ip, ipSource: session.ipSource,
+    transport: session.transport, logPath: session.archivePath || session.logPath, logPaths: session.logPaths,
+    status: session.status, error: session.error }]);
 }
 function mergeActivityEntries(entries) {
   const merged = new Map(activity.entries.map(entry => [entry.key, entry]));
@@ -1223,7 +1246,9 @@ function mergeActivityEntries(entries) {
 }
 function receiveActivitySnapshot(snapshot, preferExisting = false) {
   if (!snapshot || typeof snapshot !== 'object') return;
-  mergeActivitySessions(snapshot.sessions, preferExisting); mergeActivityEntries(snapshot.entries);
+  mergeActivitySessions(snapshot.sessions, preferExisting); mergeActivityArchives(snapshot.archives, preferExisting);
+  for (const session of snapshot.sessions || []) archiveFromSession(session);
+  mergeActivityEntries(snapshot.entries);
   if (!preferExisting) {
     activity.systemLogPath = activityText(snapshot.systemLogPath || '');
     activity.error = activityText(snapshot.error || ''); activity.connected = Boolean(snapshot.connected);
@@ -1246,23 +1271,30 @@ function renderActivityWindow() {
   }
   select.closest('label').hidden = category !== 'cli';
   select.replaceChildren();
-  const all = document.createElement('option'); all.value = ''; all.textContent = '全部第三方连接'; select.append(all);
-  for (const session of activity.sessions.slice().reverse()) {
+  const all = document.createElement('option'); all.value = ''; all.textContent = activity.archives.length ? '本次服务器连接（全部第三方操作）' : '全部第三方连接'; select.append(all);
+  if (activity.archives.length) for (const archive of activity.archives.slice().reverse()) {
+    const option = document.createElement('option'); option.value = `archive:${archive.id}`;
+    option.textContent = `${activityTime(archive.time)} · 本次服务器连接`; select.append(option);
+  }
+  else for (const session of activity.sessions.slice().reverse()) {
     const option = document.createElement('option'); option.value = session.id;
     option.textContent = `${activityTime(session.time)} · ${session.action || 'CLI'}`; select.append(option);
   }
   select.value = activity.selected; select.disabled = false;
-  const session = category === 'cli' && activity.sessions.find(current => current.id === activity.selected);
+  const selectedArchiveId = category === 'cli' && activity.selected.startsWith('archive:') ? activity.selected.slice(8) : '';
+  const archive = selectedArchiveId ? activity.archives.find(current => current.id === selectedArchiveId) : (category === 'cli' && activity.archives.length ? activity.archives.at(-1) : null);
+  const session = category === 'cli' && !archive && activity.sessions.find(current => current.id === activity.selected);
   element.querySelector('.activity-status').textContent = activity.connected ? '监听已自动开启 · 关闭窗口不停止记录' : '当前连接已断开 · 可查看本次应用运行期间的记录';
-  const paths = session?.logPaths?.length ? session.logPaths.join('\n') : session?.logPath || '尚无命令行日志';
+  const paths = archive?.logPaths?.length ? archive.logPaths.join('\n') : archive?.logPath || (session?.logPaths?.length ? session.logPaths.join('\n') : session?.logPath || '尚无命令行日志');
   const description = { system: '系统操作以操作名称、成功或失败及返回值显示。', terminal: '虚拟终端保留原始启动指令、按键与服务器回复。', cli: '第三方通过本应用发送的原始指令和回复，按连接单独记录。' }[category];
-  element.querySelector('.activity-metadata').textContent = session ? `IP：${activityIp(session)}\n连接时间：${activityTime(session.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `${description}\n系统日志：${activity.systemLogPath || '尚未创建'}`;
-  const error = element.querySelector('.activity-error'); error.textContent = [activity.error, session?.error].filter(Boolean).join('\n'); error.hidden = !error.textContent;
+  const metadata = archive || session;
+  element.querySelector('.activity-metadata').textContent = metadata ? `IP：${activityIp(metadata)}\n连接时间：${activityTime(metadata.time)}\n命令行日志：${paths}\n系统日志：${activity.systemLogPath || '尚未创建'}` : `${description}\n系统日志：${activity.systemLogPath || '尚未创建'}`;
+  const error = element.querySelector('.activity-error'); error.textContent = [activity.error, metadata?.error].filter(Boolean).join('\n'); error.hidden = !error.textContent;
   const events = element.querySelector('.activity-events');
   const follow = element.querySelector('.activity-follow').checked;
   const scrollTop = events.scrollTop;
   events.replaceChildren();
-  const entries = activity.entries.filter(entry => ActivityTranscript.category(entry) === category && (category !== 'cli' || !activity.selected || entry.sessionId === activity.selected));
+  const entries = activity.entries.filter(entry => ActivityTranscript.category(entry) === category && (category !== 'cli' || !activity.selected || (selectedArchiveId ? entry.archiveId === selectedArchiveId || entry.raw?.archiveId === selectedArchiveId : entry.sessionId === activity.selected)));
   if (!entries.length) {
     const empty = document.createElement('p'); empty.className = 'activity-empty'; empty.textContent = category === 'system' ? '通过应用执行操作后将在这里显示操作名称与结果。' : '等待指令与回复…'; events.append(empty);
   }
@@ -1271,7 +1303,10 @@ function renderActivityWindow() {
 }
 function openActivityWindow(sessionId) {
   $('activityToast').hidden = true; $('context').hidden = true; $('appContext').hidden = true;
-  if (typeof sessionId === 'string' && activity.sessions.some(session => session.id === sessionId)) { activity.selected = sessionId; activity.category = 'cli'; }
+  if (typeof sessionId === 'string' && activity.sessions.some(session => session.id === sessionId)) {
+    const session = activity.sessions.find(item => item.id === sessionId); archiveFromSession(session);
+    activity.selected = session.archiveId ? `archive:${session.archiveId}` : sessionId; activity.category = 'cli';
+  }
   let win = getWindow('activity-window');
   if (!win) {
     win = { id: 'activity-window', kind: 'activity', minimized: false, maximized: false, position: { x: 84, y: 42 }, size: { width: 850, height: 620 }, z: ++nextLayer };
@@ -1311,12 +1346,13 @@ function openActivityWindow(sessionId) {
 api.onActivityEvent?.(event => {
   activity.revision++;
   if (event?.type === 'connection' && event.session) {
-    mergeActivitySessions([event.session]); activity.toastSession = event.session.id; activity.connected = true;
+    mergeActivitySessions([event.session]); archiveFromSession(event.session); activity.toastSession = event.session.id; activity.connected = true;
     $('activityToastIp').textContent = `IP：${activityIp(event.session)}`;
     $('activityToastTime').textContent = `连接时间：${activityTime(event.session.time)}`;
     if (shellUi) { shellUi.toast.hidden = true; shellUi.add(`${$('activityToastIp').textContent}\n${$('activityToastTime').textContent}`, { title: '检测到本地命令行连接', popup: false, action: () => openActivityWindow(event.session.id) }); }
     $('activityToast').hidden = false; scheduleBrowserLayout();
-  } else if (event?.type === 'session' && event.session) mergeActivitySessions([event.session]);
+  } else if (event?.type === 'session' && event.session) { mergeActivitySessions([event.session]); archiveFromSession(event.session); }
+  else if (event?.type === 'archive' && event.archive) mergeActivityArchives([event.archive]);
   else if (event?.type === 'entry') mergeActivityEntries([event.entry]);
   else if (event?.type === 'state') receiveActivitySnapshot(event.snapshot || event);
   scheduleActivityRender();
@@ -1865,7 +1901,7 @@ function beginNameEditor(operation, context) {
 function performAction(action, context) {
   const selected = selectedItems(context.scope), paths = selectedFilePaths(context.scope);
   if (action === 'open') selected.forEach(item => openItem(item, context.scope));
-  else if (action === 'workbench') selected.forEach(item => openItem(item, context.scope, action));
+  else if (action === 'workbench' || action === 'browser') selected.forEach(item => openItem(item, context.scope, action));
   else if (action === 'new-file' || action === 'new-folder' || action === 'rename') beginNameEditor(action, context);
   else if (action === 'copy' || action === 'cut') {
     if (!paths.length) return;

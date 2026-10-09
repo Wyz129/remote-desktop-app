@@ -2,7 +2,7 @@
 // Shared by the trusted renderer and main process; preferences select built-ins only.
 (function (root) {
   const entries = [
-    ['open', '打开', 'item'], ['workbench', '打开方式 · Monaco Editor', 'item'],
+    ['open', '打开', 'item'], ['workbench', '打开方式 · Monaco Editor', 'item'], ['browser', '打开方式 · Browser', 'item'],
     ['new-file', '新建文件', 'empty'], ['new-folder', '新建文件夹', 'empty'],
     ['rename', '重命名', 'item'], ['cut', '剪切', 'item'], ['copy', '复制', 'item'],
     ['paste', '粘贴', 'empty'], ['delete', '删除', 'item'],
@@ -29,6 +29,7 @@
       if (entry.id === 'arrange') return desktop;
       if (entry.id === 'rename') return selected.length === 1;
       if (entry.id === 'workbench') return selected.length === 1 && files.length === 1 && files[0].type !== 'folder';
+      if (entry.id === 'browser') return selected.length === 1 && files.length === 1 && files[0].type !== 'folder' && /\.(?:html?|pdf)$/i.test(files[0].name);
       if (entry.id === 'extract') return selected.length === 1 && files.length === 1 && files[0].type !== 'folder' && /\.(?:zip|tar|tar\.gz|tgz)$/i.test(files[0].name);
       if (['cut', 'copy', 'shortcut', 'download', 'compress'].includes(entry.id)) return files.length > 0;
       return true;

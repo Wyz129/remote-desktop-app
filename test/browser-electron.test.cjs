@@ -210,3 +210,28 @@ test('embedded browser uses desktop child views, opens popup links and POST in f
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
 });
 
+test('server HTML and PDF files render in isolated browser tabs and expire when closed', { timeout: 60000 }, async t => {
+  const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-browser-files-'));
+  const env = { ...process.env, REMOTE_DESKTOP_BROWSER_EMBEDDED: '1' }; delete env.ELECTRON_RUN_AS_NODE;
+  const application = await electron.launch(await browserLaunch(userData, env));
+  t.after(async () => { await application.evaluate(() => closeBrowserFixture()).catch(() => {}); await application.close(); await fs.rm(userData, { recursive: true, force: true }); });
+  await application.firstWindow(); await waitFor(application, () => Boolean(globalThis.browserManager));
+  const files = await application.evaluate(() => prepareBrowserFileFixture());
+  await application.evaluate(() => browserManager.open('http://remote-only.invalid:8765/'));
+  await waitFor(application, () => [...browserManager.windows.values()][0].view.webContents.getTitle() === 'Remote fixture');
+  const html = await application.evaluate((_, file) => browserManager.openFile(file), files.html);
+  await waitFor(application, () => [...browserManager.windows.values()][0].view.webContents.getTitle() === 'Remote HTML');
+  assert.deepEqual(JSON.parse(await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.executeJavaScript('JSON.stringify({text:document.getElementById("ready").textContent,script:document.getElementById("ready").dataset.script,color:getComputedStyle(document.getElementById("ready")).color,api:typeof window.remoteDesktop,node:typeof require})'))), { text: 'HTML preview', script: 'loaded', color: 'rgb(0, 128, 0)', api: 'undefined', node: 'undefined' });
+  await assert.rejects(application.evaluate(() => { const state = [...browserManager.windows.values()][0]; return browserManager.action(state, 'navigate', { url: 'http://127.0.0.1:1/private' }); }), /仅允许/);
+  await assert.rejects(application.evaluate(() => browserManager.openFile('file:///C:/Windows/win.ini')), /路径无效/);
+  const pdf = await application.evaluate((_, file) => browserManager.openFile(file), files.pdf);
+  await application.evaluate(() => { const [id] = browserManager.windows.keys(); browserManager.setLayout(id, { x: 0, y: 0, width: 900, height: 700 }, false); });
+  await waitFor(application, () => [...browserManager.windows.values()][0].view.webContents.mainFrame.frames.some(frame => frame.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/')));
+  const pdfFrames = await application.evaluate(() => [...browserManager.windows.values()][0].view.webContents.mainFrame.frames.map(frame => ({url:frame.url,name:frame.name})));
+  assert.ok(pdfFrames.some(frame => frame.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/')));
+  await application.evaluate((_, id) => { const state = [...browserManager.windows.values()][0]; return browserManager.action(state, 'closeTab', { id }); }, pdf.id);
+  await application.evaluate((_, id) => { const state = [...browserManager.windows.values()][0]; return browserManager.action(state, 'closeTab', { id }); }, html.id);
+  await waitFor(application, () => browserManager.previews.size === 0);
+  await waitFor(application, () => [...browserManager.windows.values()][0].view.webContents.getTitle() === 'Remote fixture');
+});
+

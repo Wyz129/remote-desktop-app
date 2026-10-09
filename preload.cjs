@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('remoteDesktop', {
   listDocuments: () => ipcRenderer.invoke('workbench:list'),
   onWorkbenchEvent: callback => subscribe('workbench:event', callback),
   openBrowser: url => ipcRenderer.invoke('browser:open', url),
+  openBrowserFile: remotePath => ipcRenderer.invoke('browser:open-file', remotePath),
   layoutBrowser: (id, bounds, hidden, snapshot) => ipcRenderer.invoke('browser:layout', id, bounds, hidden, snapshot),
   closeBrowser: id => ipcRenderer.invoke('browser:close', id),
   onBrowserEvent: callback => subscribe('browser:event', callback),

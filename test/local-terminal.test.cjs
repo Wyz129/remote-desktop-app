@@ -9,7 +9,7 @@ const { spawn } = require('node:child_process');
 const { SshBackend } = require('../lib/ssh-backend.cjs');
 const { InstanceBridge, listInstances, requestInstance } = require('../lib/instance-bridge.cjs');
 const { openInteractiveShell } = require('../lib/interactive-shell.cjs');
-const { launchLocalTerminal } = require('../lib/local-terminal.cjs');
+const { launchLocalTerminal, windowsEnvironment } = require('../lib/local-terminal.cjs');
 const { runCli } = require('../scripts/cli.cjs');
 const { createSshFixture } = require('./helpers/ssh-fixture.cjs');
 
@@ -99,13 +99,33 @@ test('native launcher quotes literal PowerShell arguments and never passes authe
   const result = await launchLocalTerminal(input, (...args) => { launched = args; const child = new EventEmitter(); queueMicrotask(() => child.emit('exit', 0)); return child; });
   assert.equal(result.opened, true); assert.match(launched[0], /WindowsPowerShell.*powershell\.exe$/);
   assert.equal(launched[2].windowsHide, true); assert.equal(launched[2].env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(launched[2].cwd, 'C:\\app dir');
   const launcher = Buffer.from(launched[1].at(-1), 'base64').toString('utf16le');
   assert.match(launcher, /Start-Process.*-WindowStyle Normal/);
   const script = Buffer.from(launcher.match(/'-EncodedCommand', '([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf16le');
   assert.ok(script.includes('/home/it\'\' s/$(not-executed)')); assert.ok(script.includes('"shell" "--instance" "instance-1"'));
   assert.match(script, /-NoNewWindow -Wait/);
+  assert.match(script, /-WorkingDirectory 'C:\\app dir'/);
   assert.ok(!/password|passphrase|token/i.test(script));
   await assert.rejects(launchLocalTerminal(input, () => { const child = new EventEmitter(); queueMicrotask(() => child.emit('error', new Error('cannot launch'))); return child; }), /cannot launch/);
+});
+
+test('native launch uses a case-insensitive Windows PATH without mutating its parent environment', () => {
+  const input = { Path: 'C:\\Windows', PATH: 'C:\\alternate', APPDATA: 'C:\\profile', ELECTRON_RUN_AS_NODE: '' };
+  const environment = windowsEnvironment(input);
+  assert.equal(Object.keys(environment).filter(key => key.toLowerCase() === 'path').length, 1);
+  assert.equal(environment.Path, 'C:\\Windows');
+  assert.equal(environment.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(input.PATH, 'C:\\alternate'); assert.equal(input.ELECTRON_RUN_AS_NODE, '');
+});
+
+test('native launch reports bounded PowerShell failure details instead of a bare exit code', { skip: process.platform !== 'win32' }, async () => {
+  const input = { executable: 'C:\\app\\Remote Desktop.exe', cliPath: 'C:\\app\\cli.cjs', userDataDir: 'C:\\data', instanceId: 'test', cwd: '/home/test', identity: 'identity' };
+  await assert.rejects(launchLocalTerminal(input, () => {
+    const child = new EventEmitter(); child.stderr = new EventEmitter();
+    queueMicrotask(() => { child.stderr.emit('data', Buffer.from('The directory name is invalid.\r\n')); child.emit('exit', 1); });
+    return child;
+  }), /PowerShell 退出代码 1.*The directory name is invalid/);
 });
 
 test('Windows launcher allocates real native TTY handles (isolated hidden console)', { timeout: 20000, skip: process.platform !== 'win32' }, async t => {

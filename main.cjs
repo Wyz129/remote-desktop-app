@@ -647,6 +647,7 @@ function registerIpc() {
   handle('workbench:embedded-call', (id, action, payload) => workbench.call(id, action, payload));
   handle('workbench:list', () => workbench.list());
   handle('browser:open', url => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return browserManager.open(url); });
+  handle('browser:open-file', remotePath => { requireBackend(); if (sessionTransition) throw new Error('SSH 连接正在切换。'); return browserManager.openFile(remotePath); });
   handle('browser:layout', (id, bounds, hidden, snapshot) => browserManager.setLayout(id, bounds, Boolean(hidden), Boolean(snapshot)));
   handle('browser:close', id => browserManager.close(id));
   handle('ssh:open-local', filePath => { if (!completedDownloads.has(filePath)) throw new Error('只能定位当前应用完成下载的文件。'); shell.showItemInFolder(filePath); });

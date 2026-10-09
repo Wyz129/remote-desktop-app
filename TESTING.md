@@ -1,8 +1,10 @@
 # Remote Desktop App 测试与验收
 
-更新日期：2026-09-21。对象为 `remote-desktop-app` Beta 0.9.1（内部版本 0.9.1-beta.1），基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
+更新日期：2026-10-09。对象为 `remote-desktop-app` Beta 0.9.1.1（内部版本 0.9.1-beta.1.1），基于 Electron 的独立应用。原扩展 0.0.7 的测试记录已保存在 [docs/extension-007-TESTING.md](docs/extension-007-TESTING.md)；其 Extension Host 与历史真实 SSH 结果不算本应用验收。
 
 ## 当前验证记录
+
+Beta 0.9.1.1 的终端启动、连接归档、HTML/PDF 浏览器和 Account 调整以 [本版交付记录](docs/RELEASE-BETA-0.9.1.1.md) 为准；以下旧版本结果不代替本版验收。
 
 1.1.13 的源码各模块回归、最终包验收与具体边界见 [1.1.13 交付记录](docs/RELEASE-1.1.13.md)。新增终端鼠标/剪贴板/Markdown、传输窗口、上下文菜单设置、Exit/F11、本机持续终端转发测试。原生 Windows 控制台使用独立隐藏窗口验证真实 TTY 与 raw mode，窗口启动 IPC 另用受控替身检查固定实例和工作目录；不操控用户现有窗口。
 

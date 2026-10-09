@@ -14,8 +14,9 @@ async function fixture(t) {
   const map = value => path.join(directory, value.replace(/^\//, ''));
   await fsp.mkdir(map('/project/site'), { recursive: true }); await fsp.mkdir(map('/project/assets')); await fsp.mkdir(map('/private'));
   await fsp.writeFile(map('/project/site/index.html'), '<script src="../assets/app.js"></script><link rel="stylesheet" href="style.css?v=2"><img src="../assets/icon.svg">');
+  await fsp.writeFile(map('/project/site/report.pdf'), Buffer.from('%PDF-1.7\n0123456789\n%%EOF\n'));
   await fsp.writeFile(map('/project/site/style.css'), 'body{color:green}'); await fsp.writeFile(map('/project/assets/app.js'), 'document.body.dataset.loaded="yes"'); await fsp.writeFile(map('/project/assets/icon.svg'), '<svg/>'); await fsp.writeFile(map('/private/secret.txt'), 'outside root');
-  const backend = { connected: true, client: {}, desktopService: () => ({ call: async (method, value) => { assert.equal(method, 'realpath'); if (value === '/project/site/escape') return '/private/secret.txt'; await fsp.stat(map(value)); return value; } }), stat: value => fsp.stat(map(value)), sftp: { createReadStream: value => fs.createReadStream(map(value)) } };
+  const backend = { connected: true, client: {}, desktopService: () => ({ call: async (method, value) => { assert.equal(method, 'realpath'); if (value === '/project/site/escape') return '/private/secret.txt'; await fsp.stat(map(value)); return value; } }), stat: value => fsp.stat(map(value)), sftp: { createReadStream: (value, options) => fs.createReadStream(map(value), options) } };
   t.after(() => fsp.rm(directory, { recursive: true, force: true })); return backend;
 }
 test('HTML preview serves relative CSS, script and SVG paths inside explicitly selected project root', async t => {
@@ -38,4 +39,11 @@ test('preview denies symlink escape, methods and requests without capability, an
 });
 test('preview rejects an HTML file outside the selected root', async t => {
   const backend = await fixture(t); await assert.rejects(createPreview(backend, '/project/site/index.html', { root: '/private' }), /授权/);
+});
+test('preview serves PDF inline and honors single byte ranges used by Chromium PDF viewer', async t => {
+  const backend = await fixture(t), preview = await createPreview(backend, '/project/site/report.pdf'); t.after(() => preview.close());
+  const full = await request(preview.url); assert.equal(full.status, 200); assert.match(full.headers['content-type'], /^application\/pdf/); assert.equal(full.headers['content-disposition'], 'inline'); assert.equal(full.headers['accept-ranges'], 'bytes');
+  const range = await request(preview.url, { headers: { Range: 'bytes=5-10' } }); assert.equal(range.status, 206); assert.equal(range.headers['content-range'], 'bytes 5-10/26'); assert.equal(range.body, '1.7\n01');
+  const suffix = await request(preview.url, { headers: { Range: 'bytes=-5' } }); assert.equal(suffix.status, 206); assert.equal(suffix.body, '%EOF\n');
+  assert.equal((await request(preview.url, { headers: { Range: 'bytes=999-' } })).status, 416);
 });

@@ -159,7 +159,7 @@
 <form id="connectionForm" novalidate>
 <header class="login-heading"><button type="button" id="backToLogin" aria-label="返回登录" title="返回登录" hidden></button><h2 id="connectionTitle">SSH 登录</h2><button type="button" id="closeConnection" aria-label="关闭连接窗口" title="关闭"></button></header>
 <div class="login-identity"><div class="login-avatar" aria-hidden="true"><svg viewBox="0 0 100 100" focusable="false"><path d="M20 29v17c0 10 60 10 60 0V29M20 47v17c0 10 60 10 60 0V47M20 64v11c0 10 60 10 60 0V64"></path><ellipse cx="50" cy="28" rx="30" ry="10"></ellipse><circle cx="69" cy="43" r="2.2"></circle><circle cx="69" cy="61" r="2.2"></circle><circle cx="69" cy="77" r="2.2"></circle></svg></div>
-<div class="server-name-row"><h3 id="serverDisplayName">Remote Desktop</h3><button type="button" id="reconnectButton" class="login-symbol-button" aria-label="重新连接" title="重新连接" hidden></button></div><p id="serverDisplayAddress">选择服务器以登录</p></div>
+<div class="server-name-row"><h3 id="serverDisplayName">Remote Desktop</h3><button type="button" id="reconnectButton" class="login-symbol-button" aria-label="重新连接" title="重新连接" hidden></button><button type="button" id="connectionExitButton" class="login-symbol-button" aria-label="退出桌面" title="退出桌面" hidden></button></div><p id="serverDisplayAddress">选择服务器以登录</p></div>
 <div id="serverSwitcher" class="server-switcher" hidden><label for="serverProfile">已保存的服务器</label><div class="server-switcher-controls"><select id="serverProfile" aria-label="已保存服务器"><option value="">选择服务器</option></select><button type="button" id="newServer" title="添加服务器">新建</button></div></div>
 <div id="loginCredentials" class="login-credentials">
 <label class="login-input-label" for="sshUsername">用户名</label><div class="login-input"><span id="loginUserIcon" aria-hidden="true"></span><input id="sshUsername" autocomplete="username" required placeholder="用户名" aria-label="用户名"></div>
@@ -175,7 +175,7 @@
 <p class="settings-description">密码与私钥口令仅用于本次登录，不会保存在服务器配置中。</p></section>
 <div id="reconnectKeyCredentials" class="login-credentials" hidden><label for="reconnectPassphrase">私钥口令</label><input id="reconnectPassphrase" type="password" autocomplete="off" placeholder="私钥口令（可选）"></div>
 <p id="connectionError" role="alert"></p><p id="connectionHint" role="status">使用用户名和密码登录服务器</p>
-<footer class="login-actions"><button type="button" id="switchAccountButton">切换账号</button><button type="button" id="connectionExitButton" class="login-symbol-button" aria-label="退出桌面" title="退出桌面" hidden></button><button type="button" id="saveServer" hidden>保存配置</button><button type="submit" id="advancedConnectSubmit" class="primary" hidden>连接服务器</button></footer>
+<footer class="login-actions"><button type="button" id="switchAccountButton">切换账号</button><button type="button" id="saveServer" hidden>保存配置</button><button type="submit" id="advancedConnectSubmit" class="primary" hidden>连接服务器</button></footer>
 </form></dialog>
 <dialog id="missingDesktopDialog" class="connection-dialog" aria-labelledby="missingDesktopTitle"><h2 id="missingDesktopTitle">未找到远程桌面</h2><p id="missingDesktopText"></p><p>将在真实主目录中初始化 .rdesktop/desktop、log 和 download。</p><footer class="settings-footer"><button id="skipDesktop">暂不创建</button><button id="createDesktop" class="primary">重新初始化</button></footer></dialog>
 <dialog id="desktopPickerDialog" class="connection-dialog directory-picker" aria-labelledby="desktopPickerTitle"><h2 id="desktopPickerTitle">选择桌面目录</h2><form id="desktopPickerForm" class="directory-picker-address"><button type="button" id="desktopPickerUp" aria-label="上一级目录">↑</button><input id="desktopPickerPath" aria-label="选择目录地址" spellcheck="false" autocomplete="off"><button type="submit" id="desktopPickerGo">打开</button></form><p id="desktopPickerError" role="alert"></p><div id="desktopPickerEntries" class="directory-picker-entries" aria-label="可选目录"></div><footer class="settings-footer"><button type="button" id="desktopPickerCancel">取消</button><button type="button" id="desktopPickerSelect" class="primary">使用此目录</button></footer></dialog>
@@ -199,6 +199,7 @@
   <div id="context" class="context" role="menu" aria-label="文件操作" hidden>
     <button data-action="open" role="menuitem">打开</button>
     <button data-action="workbench" role="menuitem">打开方式 · Monaco Editor</button>
+    <button data-action="browser" role="menuitem">打开方式 · Browser</button>
     <div class="menu-divider"></div>
     <button data-action="new-file" role="menuitem">新建文件</button>
     <button data-action="new-folder" role="menuitem">新建文件夹</button>

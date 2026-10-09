@@ -39,6 +39,14 @@ app.whenReady().then(async () => {
   browserFixture.forwards = fixture.calls.forwards;
   const uploader = new UploadService(backend);
   const parent = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } }); await parent.loadURL('about:blank');
+  globalThis.prepareBrowserFileFixture = async () => {
+    const html = await fixture.put('workspace/index.html', '<!doctype html><title>Remote HTML</title><link rel="stylesheet" href="style.css"><p id="ready">HTML preview</p><script src="app.js"></script>');
+    await fixture.put('workspace/style.css', '#ready{color:rgb(0,128,0)}');
+    await fixture.put('workspace/app.js', 'document.getElementById("ready").dataset.script="loaded"');
+    await parent.loadURL('data:text/html,<html><body><h1>Xpra-independent PDF fixture</h1><p>REMOTE PDF PREVIEW</p></body></html>');
+    const pdf = await fixture.put('workspace/report.pdf', await parent.webContents.printToPDF({ pageSize: 'A4' }));
+    await parent.loadURL('about:blank'); return { html, pdf };
+  };
   dialog.showSaveDialog = async () => ({ canceled: false, filePath: browserFixture.savePath });
   globalThis.browserManager = createBrowserManager({ embedded: process.env.REMOTE_DESKTOP_BROWSER_EMBEDDED === '1', getBackend: () => backend, getParent: () => parent, onEvent: value => browserFixture.windowEvents.push(value), onTransfer: value => browserFixture.transfers.push(value), uploadFile: async options => { const result = await uploader.upload(options.localPath, options.remoteDirectory, { id: options.id, signal: options.signal, onProgress: options.onProgress }); const content = await fs.readFile(fixture.mapPath(result.path), 'utf8'); browserFixture.uploaded.push({ content, directory: options.remoteDirectory }); return result; } });
   globalThis.browserFixtureBackend = backend;

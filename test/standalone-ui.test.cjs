@@ -1158,6 +1158,30 @@ test('cli_activity_permission_errors_ip_truthful_and_session_selection', () => s
   assert.equal(await win.isVisible(), true, 'disconnect keeps recent monitor history available');
 }));
 
+test('cli_activity_connection_archive_shows_multiple_operations_without_session_switching', () => scenario('activity-connection-archive', async page => {
+  await connect(page);
+  await page.evaluate(() => {
+    const archive = { id: 'connection-1', time: '2026-10-09T01:02:03.000Z', logPath: '/home/tester/.rdesktop/log/cli-connection.log', logPaths: ['/home/tester/.rdesktop/log/cli-connection.log'] };
+    const first = { id: 'request-1', archiveId: archive.id, time: archive.time, action: 'exec', logPath: archive.logPath, logPaths: archive.logPaths };
+    const second = { ...first, id: 'request-2', action: 'shell' };
+    window.activityEvent({ type: 'connection', session: first });
+    window.activityEvent({ type: 'state', connected: true, archives: [archive], sessions: [first, second], entries: [
+      { id: 'a-command', seq: 1, sessionId: first.id, archiveId: archive.id, operationId: first.id, type: 'command', command: 'printf first' },
+      { id: 'a-result', seq: 2, sessionId: first.id, archiveId: archive.id, operationId: first.id, type: 'stdout', data: 'first reply' },
+      { id: 'b-command', seq: 3, sessionId: second.id, archiveId: archive.id, operationId: second.id, type: 'command', command: 'printf second' },
+      { id: 'b-result', seq: 4, sessionId: second.id, archiveId: archive.id, operationId: second.id, type: 'stdout', data: 'second reply' }
+    ] });
+  });
+  await page.locator('#openActivityToast').click();
+  const win = page.locator('.activity-window');
+  assert.equal(await win.locator('.activity-session').inputValue(), 'archive:connection-1');
+  assert.equal(await win.locator('.activity-session option').count(), 2, 'one all option and one server connection archive');
+  assert.equal(await win.locator('.activity-entry').count(), 2, 'independent operations remain separate In/Out cells');
+  assert.match(await win.locator('.activity-events').textContent(), /first reply/);
+  assert.match(await win.locator('.activity-events').textContent(), /second reply/);
+  assert.match(await win.locator('.activity-metadata').textContent(), /cli-connection\.log/);
+}));
+
 test('cli_activity_toast_and_monitor_hide_native_browser_surface', () => scenario('activity-browser', async page => {
   await connect(page); await page.locator('#applicationsButton').click(); await page.locator('[data-application=browser]').click();
   await page.waitForFunction(() => window.calls.filter(call => call.type === 'browserLayout').at(-1)?.hidden === false);
